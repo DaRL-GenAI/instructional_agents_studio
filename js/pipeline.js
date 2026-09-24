@@ -192,7 +192,7 @@ export class Pipeline {
       catch (e) {
         if (!json) throw e;
         // One strict retry: the model answered in an unexpected shape; ask for the bare array.
-        const strict = [...messages, { role: 'assistant', content: text }, { role: 'user', content: stageId === 'slides' ? `That reply could not be used (${e.message}). Reply again with ONLY the complete JSON object {"theme":…,"slides":[…]} requested above: one slide object for EVERY outline item, in order, with slides as a top-level array of objects, no prose, no code fences.` : `That reply could not be used (${e.message}). Reply again with ONLY the JSON array requested above, as a top-level array of objects with exactly the specified fields, no wrapper object, no prose, no code fences.` }];
+        const strict = [...messages, { role: 'assistant', content: text }, { role: 'user', content: stageId === 'slides' ? `That reply could not be used (${e.message}). Reply again with ONLY the complete JSON object {"theme":…,"slides":[…]} requested above: one slide object for EVERY outline item, in order, with slides as a top-level array of objects, no prose, no code fences.` : stageId === 'script' ? `That reply could not be used (${e.message}). Reply again with ONLY a JSON array containing one {"slide_id", "narration"} object for EVERY slide listed above, in order, no wrapper object, no prose, no code fences.` : `That reply could not be used (${e.message}). Reply again with ONLY the JSON array requested above, as a top-level array of objects with exactly the specified fields, no wrapper object, no prose, no code fences.` }];
         text = await this.stream(key, transcript, usage, { where: ch.title, stage: `${st.name} (retry)`, agent: prompt.agents[0].name, json: false, messages: strict });
         output = parse(text);
       }
@@ -239,9 +239,16 @@ const STOP = new Set('the and for with that this from are was were will have has
 
 function normalizeOutline(arr) { arr = toArray(arr); if (!arr.length) throw new Error('The model returned no outline items. Re-run, or check the Transcript tab for the raw response.'); return arr.filter(x => x && (x.title || x.slide_title)).map((x, i) => ({ slide_id: i + 1, title: String(x.title || x.slide_title), description: String(x.description || x.summary || '') })); }
 function normalizeScript(arr, slides) {
-  arr = toArray(arr);
-  const bySlide = new Map(arr.filter(x => x).map(x => [Number(x.slide_id), String(x.narration || x.script || x.text || '')]));
-  return slides.map((s, i) => ({ slide_id: s.slide_id, title: s.title, narration: bySlide.get(s.slide_id) || bySlide.get(i + 1) || arr[i]?.narration || '' }));
+  arr = toArray(arr).filter(x => x && typeof x === 'object');
+  const text = x => String(x.narration ?? x.script ?? x.text ?? x.speech ?? '');
+  const bySlide = new Map(arr.map((x, i) => [Number(x.slide_id ?? x.id ?? i + 1), text(x)]));
+  const n = Math.max(slides.length, arr.length);
+  const out = [];
+  for (let i = 0; i < n; i++) { const s = slides[i]; out.push({ slide_id: s?.slide_id ?? i + 1, title: s?.title ?? arr[i]?.title ?? `Slide ${i + 1}`, narration: bySlide.get(s?.slide_id ?? i + 1) || bySlide.get(i + 1) || text(arr[i] || {}) }); }
+  const filled = out.filter(x => x.narration.trim()).length;
+  if (!filled) throw new Error('The model returned no narration. Re-run, or check the Transcript tab for the raw response.');
+  if (slides.length > 1 && filled < Math.ceil(slides.length * 0.6)) throw new Error(`Narration was returned for only ${filled} of ${slides.length} slides`);
+  return out;
 }
 export function normalizeQuiz(arr) {
   arr = toArray(arr); if (!arr.length) throw new Error('The model returned no questions. Re-run, or check the Transcript tab for the raw response.');

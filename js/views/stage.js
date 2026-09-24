@@ -78,7 +78,7 @@ function feedbackPanel(ctx, o, ui) {
       last ? el('span', { class: 'meta' }, `Last comments (v${last.version + 1}): “${last.feedback.slice(0, 80)}${last.feedback.length > 80 ? '…' : ''}”`) : null));
 }
 
-function editorMode(ctx) { return ctx.ui.editorMode || (window.innerWidth > 1100 ? 'split' : 'preview'); }
+function editorMode(ctx) { return ctx.ui.editorMode || 'preview'; }
 function modeControl(ctx) {
   return segmented([['source', 'Source'], ['split', 'Split'], ['preview', 'Preview']], editorMode(ctx), v => { ctx.ui.editorMode = v; ctx.render(); });
 }
@@ -109,6 +109,7 @@ function outputEditor(ctx, o) {
   }
   if (!ctx.ui[o.key]?.forceRaw) {
     if (o.kind === 'slides') return deckEditor(ctx, o) || invalidOutput(ctx, o, 'slide deck');
+    if (o.kind === 'json' && o.file === 'outline.json') return outlineEditor(ctx, o) || invalidOutput(ctx, o, 'outline');
     if (o.kind === 'script') return scriptEditor(ctx, o);
     if (o.kind === 'quiz') return quizEditor(ctx, o);
   }
@@ -121,6 +122,28 @@ function outputEditor(ctx, o) {
   const save = () => { if (o.kind === 'json') { try { JSON.parse(ta.value); } catch (e) { return toast(`Invalid JSON: ${e.message}`, 'error'); } } if (ctx.store.userEdit(st, o.label, ta.value, o.where)) { toast('Edit saved and logged', 'ok'); ctx.render(); } else toast('No changes'); };
   const bar = el('div', { class: 'editor-bar', style: 'grid-column:1/-1' }, modeControl(ctx), el('span', {}), button({ label: 'Save edits', size: 'sm', variant: 'primary', onClick: save }), button({ label: 'Discard', size: 'sm', variant: 'ghost', onClick: () => { ta.value = st.output; refresh(); } }));
   box.append(bar, el('div', { class: 'editor-col source' }, ta), el('div', { class: 'editor-col preview-col' }, preview));
+  return box;
+}
+
+function outlineEditor(ctx, o) {
+  const st = o.stage; const raw = safeJson(st.output, null);
+  const items = Array.isArray(raw) ? raw.filter(x => x && typeof x === 'object').map((x, i) => ({ slide_id: i + 1, title: String(x.title || ''), description: String(x.description || '') })) : [];
+  if (!items.length) return null;
+  const box = el('div', {});
+  const save = () => { items.forEach((x, i) => { x.slide_id = i + 1; }); if (ctx.store.userEdit(st, o.label, JSON.stringify(items, null, 2), o.where)) { toast('Outline saved and logged', 'ok'); ctx.render(); } else toast('No changes'); };
+  const list = el('div', { class: 'list', style: 'border:1px solid var(--line-soft);border-radius:var(--r-2);overflow:hidden' });
+  const draw = () => {
+    list.innerHTML = '';
+    items.forEach((x, i) => {
+      const title = input({ value: x.title, placeholder: 'Slide title' }); title.oninput = () => { x.title = title.value; };
+      const desc = textarea({ rows: 2, placeholder: 'What this slide covers' }, x.description); desc.oninput = () => { x.description = desc.value; };
+      list.append(el('div', { class: 'list-row', style: 'grid-template-columns:28px 1fr auto;align-items:start' }, el('span', { class: 'mono', style: 'color:var(--text-3);padding-top:8px' }, i + 1), el('div', { style: 'display:flex;flex-direction:column;gap:6px' }, title, desc),
+        el('div', { class: 'btn-row' }, button({ icon: 'arrow-up', size: 'sm', variant: 'ghost', title: 'Move up', disabled: i === 0, onClick: () => { items.splice(i - 1, 0, items.splice(i, 1)[0]); draw(); } }), button({ icon: 'arrow-down', size: 'sm', variant: 'ghost', title: 'Move down', disabled: i === items.length - 1, onClick: () => { items.splice(i + 1, 0, items.splice(i, 1)[0]); draw(); } }), button({ icon: 'trash', size: 'sm', variant: 'ghost', title: 'Remove', disabled: items.length < 2, onClick: () => { items.splice(i, 1); draw(); } }))));
+    });
+  };
+  draw();
+  box.append(el('div', { class: 'editor-bar' }, el('span', {}, `${items.length} slides planned · the Slides stage writes one slide per item`), button({ label: 'Save edits', size: 'sm', variant: 'primary', onClick: save }), button({ label: 'Discard', size: 'sm', variant: 'ghost', onClick: () => ctx.render() })), list,
+    el('div', { class: 'btn-row', style: 'margin-top:10px' }, button({ label: 'Add slide', icon: 'plus', size: 'sm', onClick: () => { items.push({ slide_id: items.length + 1, title: '', description: '' }); draw(); } })));
   return box;
 }
 

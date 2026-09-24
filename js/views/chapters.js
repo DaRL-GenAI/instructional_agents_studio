@@ -37,7 +37,7 @@ export function chapterStages(ctx, module, stageIds, chapterId) {
   box.append(body);
   return box;
 }
-const firstOpen = (ch, ids) => ids.find(s => ch.stages[s]?.status !== 'done') || ids[0];
+const firstOpen = (ch, ids) => (ids.includes('slides') && ch.stages.slides?.status === 'done' ? 'slides' : null) || ids.find(s => ch.stages[s]?.status !== 'done') || ids[0];
 
 export function runAllChapters(ctx, module, stageIds) {
   const { store, pipe } = ctx; const p = store.project;
