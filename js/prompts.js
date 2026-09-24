@@ -354,7 +354,7 @@ For every slide return the LaTeX that goes INSIDE \\begin{frame}[fragile]{Title}
 Guidelines:
 1. Use itemize/enumerate for the bullets; at most 3 nesting levels, prefer 2.
 2. Write formulas in proper math mode (inline $…$ or equation/align*); never nest display-math environments.
-3. Put code in ONE lstlisting environment per slide, inside a two-column layout when there are bullets as well (\\begin{columns}[T] with 0.55/0.45 widths).
+3. Slides without code: plain itemize/enumerate, no columns. Slides with code: ONE lstlisting environment in a two-column layout next to the bullets (\\begin{columns}[T] with \\begin{column}{0.55\\textwidth}…\\end{column} and \\begin{column}{0.45\\textwidth}…\\end{column}); never leave an empty column.
 4. The preamble is fixed: no \\usepackage, no \\definecolor; only standard colors or \\textcolor[HTML]{RRGGBB}{…}.
 5. Escape special characters in prose (\\& \\% \\_ \\#); use $\\gamma$ instead of γ; keep each frame within one screen.
 
