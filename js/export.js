@@ -1,6 +1,6 @@
 // export.js — downloads and the project ZIP bundle.
 import { FOUNDATION, CHAPTER_STAGES, EXAMS } from './prompts.js';
-import { toBeamer, toHtmlDeck } from './slides.js';
+import { deckOf, deckToPptx, resolveTheme } from './deck.js';
 import { safeJson } from './pipeline.js';
 
 export function download(blob, name) {
@@ -35,9 +35,9 @@ export async function buildZip(project, media = {}) {
     if (st?.transcript?.length) course.file(`transcripts/${f.id}.md`, transcriptMarkdown(f.name, st));
   }
   if (project.chapters.length) course.file('chapters.json', JSON.stringify(project.chapters.map(c => ({ title: c.title, description: c.description })), null, 2));
-  project.chapters.forEach((ch, i) => {
+  for (const [i, ch] of project.chapters.entries()) {
     const dir = root.folder(`chapters/${String(i + 1).padStart(2, '0')}_${slug(ch.title)}`);
-    const slides = safeJson(ch.stages.slides?.output, null);
+    const slides = deckOf(ch.stages.slides?.output).slides.length ? true : null;
     const script = safeJson(ch.stages.script?.output, []);
     for (const s of CHAPTER_STAGES) {
       const st = ch.stages[s.id]; if (!st?.output) continue;
@@ -48,19 +48,19 @@ export async function buildZip(project, media = {}) {
       if (st.transcript?.length) dir.file(`transcripts/${s.id}.md`, transcriptMarkdown(s.name, st));
     }
     if (slides) {
-      dir.file('slides.tex', toBeamer(project.course, ch, slides, script));
-      dir.file('slides.html', toHtmlDeck(project.course, ch, slides, script));
+      try { const deck = deckOf(ch.stages.slides.output); if (deck.slides.length) dir.file('slides.pptx', await deckToPptx(deck, resolveTheme(deck.theme, project.deck), { course: project.course.name, chapter: ch.title }, script)); }
+      catch (e) { dir.file('slides_pptx_error.txt', String(e.message || e)); }
     }
     const m = media[ch.id];
     if (m?.vtt) dir.file('captions.vtt', m.vtt);
     if (m?.video?.blob) dir.file(`lecture.${m.video.mime.includes('mp4') ? 'mp4' : 'webm'}`, m.video.blob);
     if (m?.audios) m.audios.forEach((a, j) => { if (a?.buffer) dir.file(`narration/slide_${String(j + 1).padStart(2, '0')}.mp3`, a.buffer); });
-  });
+  }
   for (const ex of EXAMS) { const st = project.exams?.[ex.id]; if (st?.output) course.file(ex.file, st.output); if (st?.transcript?.length) course.file(`transcripts/${ex.id}.md`, transcriptMarkdown(ex.name, st)); }
   root.file('audit_log.json', JSON.stringify(project.audit, null, 2));
   root.file('audit_log.md', auditMarkdown(project));
   root.file('project.json', JSON.stringify(project, null, 2));
-  root.file('README.md', `# ${project.course.name}\n\nGenerated with Instructional Agents Studio (browser edition) on ${new Date().toISOString()}.\n\n- course/: ADDIE foundation deliverables and the full agent transcripts\n- chapters/: per-chapter outline, slides (json/html/tex), script, homework, lab, captions, narration and video\n- audit_log.*: every model call, edit and export with hashes\n- project.json: re-importable project state\n`);
+  root.file('README.md', `# ${project.course.name}\n\nGenerated with Instructional Agents Studio (browser edition) on ${new Date().toISOString()}.\n\n- course/: ADDIE foundation deliverables and the full agent transcripts\n- chapters/: per-chapter outline, slides (json + pptx), script, homework, lab, quiz, captions, narration and video\n- audit_log.*: every model call, edit and export with hashes\n- project.json: re-importable project state\n`);
   return await zip.generateAsync({ type: 'blob' });
 }
 

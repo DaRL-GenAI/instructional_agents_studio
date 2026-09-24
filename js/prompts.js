@@ -209,35 +209,42 @@ The outline should be a JSON array with the following structure:
 ]
 Start with a title/agenda slide and end with a summary slide. Your response must be valid JSON that can be parsed programmatically.`,
 
-  slides: (course, chapter, outline, prior, textbook) => `Please create the detailed content for every slide in the outline below.
+  slides: (course, chapter, outline, prior, textbook, paletteRule) => `Design the slide deck for this chapter as a JSON specification. A layout engine renders it into PowerPoint, so describe content and layout, not styling.
 
 ${courseContext(course)}
 
 Chapter: ${chapter.title}
 Description: ${chapter.description}
 
-Slides outline:
+Slides outline (one slide per item, same order):
 ${JSON.stringify(outline, null, 2)}
 
 ${prior ? `Course context:\n${prior}\n` : ''}${textbook ? `${textbook}\n` : ''}
-For each slide produce comprehensive, detailed, and easy-to-understand educational content that includes:
-1. Clear explanations of concepts
-2. Examples or illustrations where appropriate
-3. Key points to emphasize
-4. Any formulas or short code snippets that would be helpful
+Design rules (follow all):
+- Slide 1 uses layout "title" (chapter title + one-line subtitle); the last slide uses layout "summary" (3–5 takeaways). In between, vary layouts: never the same layout on two consecutive slides, and at most a third of the content slides may be "bullets".
+- Every content slide carries a visual element: a callout panel, a two-column contrast, numbered rows, a grid, stat callouts, a process flow, a code block or a chart.
+- Bullets: 3–5 per slide, each under 14 words, no full sentences ending in periods. Titles under 8 words. Text must fit on one slide.
+- Use "chart" only when the topic has genuine quantitative data you can state; put illustrative numbers in the notes as "illustrative" if they are not real measurements.
+- Use "code" only for topics where code or formulas are essential; keep snippets under 14 lines.
+- "notes" for every slide: 2–4 sentences of teaching notes (what to say, common misconceptions).
+${paletteRule}
 
-Return a JSON array, one object per slide, in the same order as the outline:
-[
-  {
-    "slide_id": 1,
-    "title": "Slide title",
-    "bullets": ["3 to 6 concise bullet points, each under 20 words"],
-    "code": "optional short code snippet or formula (plain text, no markdown fences) or empty string",
-    "code_language": "python|latex|text or empty string",
-    "notes": "2-4 sentences of teaching notes explaining the slide in depth"
-  }
-]
-Keep each slide's content short enough to fit on a single slide. Your response must be valid JSON.`,
+Layouts and their fields:
+- title: {"layout":"title","title","subtitle"}
+- bullets: {"layout":"bullets","title","bullets":[…],"callout":{"label":"Key idea|Example|Definition|Why it matters","text":"1–2 sentences"}}
+- two_column: {"layout":"two_column","title","left":{"heading","bullets":[…]},"right":{"heading","bullets":[…]}}  (comparisons, before/after, pros/cons)
+- icon_rows: {"layout":"icon_rows","title","items":[{"header","text"}]}  (3–4 rows)
+- grid: {"layout":"grid","title","items":[{"header","text"}]}  (exactly 4 blocks)
+- stats: {"layout":"stats","title","stats":[{"value":"92%","label":"…"}],"note":"one-line context"}  (2–4 stats)
+- process: {"layout":"process","title","steps":[{"header","text"}]}  (3–5 steps)
+- code: {"layout":"code","title","code":"…","language":"python","bullets":[…]}
+- chart: {"layout":"chart","title","chart":{"type":"bar|line|pie","title","labels":[…],"series":[{"name","values":[…]}],"unit":"%"},"bullets":[…],"source":"…"}
+- quote: {"layout":"quote","quote":"one memorable statement","attribution":"…"}
+- summary: {"layout":"summary","title","bullets":[…],"next":"what the next chapter covers"}
+
+Return ONLY this JSON object:
+{"theme":{"palette":"<palette name or {\"name\",\"primary\",\"secondary\",\"accent\"} hex without #>","motif":"numbered circles"},"slides":[{"slide_id":1,"layout":"title",…,"notes":"…"}]}
+Your response must be valid JSON.`,
 
   script: (course, chapter, slides, prior) => `Write the spoken lecture script for the slide deck below.
 
@@ -341,25 +348,6 @@ Write the exam in Markdown with these sections:
 6. **Answer key and rubric** under a heading "Instructor only"
 Balance coverage across the chapters listed above. Questions must be answerable from the course material.`,
 
-  beamer: (course, chapter, slides) => `Write the LaTeX Beamer frame body for each slide below.
-
-${courseContext(course)}
-
-Chapter: ${chapter.title}
-
-Slides (JSON):
-${JSON.stringify(slides.map(s => ({ slide_id: s.slide_id, title: s.title, bullets: s.bullets, code: s.code, code_language: s.code_language })), null, 2)}
-
-For every slide return the LaTeX that goes INSIDE \\begin{frame}[fragile]{Title} … \\end{frame} (do not include the frame environment or the title).
-Guidelines:
-1. Use itemize/enumerate for the bullets; at most 3 nesting levels, prefer 2.
-2. Write formulas in proper math mode (inline $…$ or equation/align*); never nest display-math environments.
-3. Slides without code: plain itemize/enumerate, no columns. Slides with code: ONE lstlisting environment in a two-column layout next to the bullets (\\begin{columns}[T] with \\begin{column}{0.55\\textwidth}…\\end{column} and \\begin{column}{0.45\\textwidth}…\\end{column}); never leave an empty column.
-4. The preamble is fixed: no \\usepackage, no \\definecolor; only standard colors or \\textcolor[HTML]{RRGGBB}{…}.
-5. Escape special characters in prose (\\& \\% \\_ \\#); use $\\gamma$ instead of γ; keep each frame within one screen.
-
-Return a JSON array: [{"slide_id": 1, "latex": "…"}]. Your response must be valid JSON.`,
-
   review: (kind, text) => `Review the following ${kind} for factual accuracy, alignment with the stated objectives, appropriate difficulty and clarity.
 
 ${text}
@@ -373,3 +361,6 @@ export function revisionBlock(feedback, previous, kind = 'text') {
   const prev = previous ? `\n\nPrevious version (revise it; keep everything that was not criticized${kind === 'json' ? ', and return the same JSON structure' : ''}):\n${previous.slice(0, 20000)}` : '';
   return `\n\n---\nRevision request from the instructor. Apply these comments to the previous version:\n${feedback}${prev}`;
 }
+
+export const PALETTE_RULE_AUTO = (names) => `- Colour: choose ONE palette that fits this subject from this list and put its exact name in theme.palette: ${names.join('; ')}. If none fits, give a custom {"name","primary","secondary","accent"} with 6-digit hex values: a dark dominant primary, a light secondary tint and one sharp accent.`;
+export const PALETTE_RULE_FIXED = (name) => `- Colour: the instructor's template "${name}" is applied automatically; set theme.palette to "${name}" and do not choose colours.`;

@@ -1,23 +1,51 @@
-// views/slides.js — per-chapter outline, slides and lecture script.
-import { el, segmented, toast } from '../ui.js';
+// views/slides.js — per-chapter outline, slides and lecture script, plus the deck template chooser.
+import { el, button, field, input, notice, toast, icon, confirmDialog } from '../ui.js';
 import { chapterRail, chapterStages, noChapters, runAllChapters } from './chapters.js';
+import { PALETTES, PALETTE_NAMES, resolveTheme, slideToHtml, DECK_CSS, DECK_CSS_SCALE } from '../deck.js';
+import { parseTemplate } from '../template.js';
 const IDS = ['outline', 'slides', 'script'];
-const FMT = { html: 'HTML deck', latex: 'LaTeX Beamer', pptx: 'PowerPoint' };
-const FMT_HELP = {
-  html: 'HTML deck rendered in the browser; “Save as PDF” opens it in print view (landscape, one slide per page). Nothing leaves your browser.',
-  latex: 'The agents also write a Beamer frame body per slide (one extra call per chapter). Download the .tex and compile it with pdflatex or Overleaf; each frame is editable in the Slides stage.',
-  pptx: 'Editable PowerPoint built in the browser with PptxGenJS (title master, bullets, code block, speaker notes from the script).',
-};
+
+let cssInjected = false;
+function ensureCss() { if (cssInjected) return; const st = document.createElement('style'); st.textContent = DECK_CSS + DECK_CSS_SCALE; document.head.append(st); cssInjected = true; }
+
 export function render(ctx) {
-  const p = ctx.store.project;
-  if (!p.chapters.length) return noChapters(ctx, 'Slides');
-  const chId = ctx.store.chapter(ctx.route.a) ? ctx.route.a : p.chapters[0].id;
+  ensureCss();
+  const p = ctx.store.project; const ui = ctx.ui.slidesPage ||= {};
   const page = el('div', { class: 'page wide' });
-  const fmt = ctx.store.settings.slideFormat || 'pptx';
-  const setFmt = v => { ctx.store.project.overrides = { ...(ctx.store.project.overrides || {}), slideFormat: v }; ctx.store.log({ type: 'settings', overrides: { slideFormat: v } }); ctx.store.save(); toast(`Deck format: ${FMT[v]}`); ctx.render(); };
-  page.append(el('div', { class: 'page-head' }, el('div', {}, el('h1', {}, 'Slides'), el('p', {}, 'Outline → slides → lecture script for each chapter. The deck format decides how slides are written and exported; content stays editable in one place.')),
-    el('div', { class: 'btn-row' }, el('div', { class: 'field' }, el('span', { class: 'label' }, 'Deck format'), segmented([['pptx', 'PowerPoint'], ['html', 'HTML → PDF'], ['latex', 'LaTeX → PDF']], fmt, setFmt)), runAllChapters(ctx, 'slides', IDS))));
-  page.append(el('p', { class: 'meta', style: 'margin:-12px 0 16px' }, FMT_HELP[fmt]));
+  const deck = p.deck || (p.deck = { template: 'auto' });
+  const theme = resolveTheme(null, deck);
+  const tplLabel = deck.template === 'auto' ? 'Auto: the agents choose a palette per chapter' : deck.template.startsWith('builtin:') ? `Template: ${theme.name}` : `Your template: ${theme.name}`;
+  page.append(el('div', { class: 'page-head' }, el('div', {}, el('h1', {}, 'Slides'), el('p', {}, 'Outline → slides → lecture script for each chapter. Slides are designed as PowerPoint decks: preview them here, edit any slide, download the .pptx.')),
+    el('div', { class: 'btn-row' }, button({ label: tplLabel, icon: 'sliders', variant: ui.templateOpen ? 'ghost' : '', onClick: () => { ui.templateOpen = !ui.templateOpen; ctx.render(); } }), p.chapters.length ? runAllChapters(ctx, 'slides', IDS) : null)));
+  if (ui.templateOpen) page.append(templatePanel(ctx, ui));
+  if (!p.chapters.length) { page.append(noChapters(ctx, 'Slides').firstChild); return page; }
+  const chId = ctx.store.chapter(ctx.route.a) ? ctx.route.a : p.chapters[0].id;
   page.append(el('div', { class: 'two-pane' }, chapterRail(ctx, 'slides', IDS, chId), el('div', { class: 'panel', style: 'padding:24px 28px;min-height:60vh' }, chapterStages(ctx, 'slides', IDS, chId))));
   return page;
+}
+
+const SAMPLE = [
+  { slide_id: 1, layout: 'title', title: 'Chapter title', subtitle: 'What this session covers' },
+  { slide_id: 2, layout: 'icon_rows', title: 'Three ideas', items: [{ header: 'First', text: 'A short explanation' }, { header: 'Second', text: 'A short explanation' }, { header: 'Third', text: 'A short explanation' }] },
+];
+function mini(themeObj, meta) { return el('div', { class: 'tpl-mini' }, ...SAMPLE.map((s, i) => el('div', { class: 'tpl-mini-slide', html: slideToHtml(s, themeObj, i, 2, meta) }))); }
+
+function templatePanel(ctx, ui) {
+  const { store } = ctx; const p = store.project; const deck = p.deck; const meta = { course: p.course.name || 'Course', chapter: 'Chapter' };
+  const set = (patch, note) => { Object.assign(deck, patch); store.log({ type: 'settings', deck: { template: deck.template, name: deck.name } , note }); store.save(); toast(note, 'ok'); ctx.render(); };
+  const box = el('section', { class: 'panel', style: 'padding:22px 24px;margin-bottom:22px' });
+  box.append(el('h2', {}, 'Deck template'), el('p', { class: 'section-desc' }, 'Applies to every chapter of this project. Changing it re-themes existing decks immediately (no regeneration needed); the agents are told which palette is in use.'));
+  const grid = el('div', { class: 'tpl-grid' });
+  const card = (key, name, themeObj, sub, extra) => el('button', { class: 'tpl-card', 'aria-pressed': String(deck.template === key), onClick: () => set({ template: key }, `Template: ${name}`) }, mini(themeObj, meta), el('b', {}, name), sub ? el('small', {}, sub) : null, extra);
+  grid.append(card('auto', 'Auto', resolveTheme({ palette: 'Midnight Executive' }, null), 'The agents pick a palette that fits each chapter’s subject'));
+  for (const n of PALETTE_NAMES) grid.append(card(`builtin:${n}`, n, resolveTheme({ palette: n }, null), `${PALETTES[n].primary} · ${PALETTES[n].accent}`));
+  if (deck.palette) grid.append(card('custom', deck.name || 'Your template', resolveTheme(null, { ...deck, template: 'custom' }), `${deck.palette.primary} · ${deck.palette.accent}${deck.fonts?.body ? ` · ${deck.fonts.body}` : ''}${deck.background ? ' · background image' : ''}`));
+  box.append(grid);
+  // upload
+  const file = el('input', { type: 'file', accept: '.pptx,.potx', class: 'input', style: 'max-width:360px' });
+  const status = el('span', { class: 'meta' });
+  file.onchange = async () => { const f = file.files[0]; if (!f) return; status.textContent = 'Reading template…'; try { const t = await parseTemplate(f); set({ template: 'custom', name: t.name, palette: t.palette, fonts: t.fonts, background: t.background, scheme: t.scheme }, `Template “${t.name}” applied`); } catch (e) { status.textContent = ''; toast(`Could not read the template: ${e.message}`, 'error'); } };
+  box.append(el('div', { class: 'section', style: 'margin-top:20px' }, el('h3', {}, 'Use your own PowerPoint template'), el('p', { class: 'section-desc', style: 'font-size:var(--fs-2)' }, 'Upload a .pptx or .potx. Studio reads its theme colours, theme fonts and the slide master background in your browser (the file is not uploaded anywhere) and applies them to generated decks. Slide layouts stay Studio’s; placeholders and logos on your master are not reproduced.'),
+    el('div', { class: 'btn-row' }, file, status, deck.palette ? button({ label: 'Remove uploaded template', size: 'sm', variant: 'danger', onClick: async () => { if (await confirmDialog({ title: 'Remove the uploaded template?', confirmLabel: 'Remove', danger: true })) { delete deck.palette; delete deck.fonts; delete deck.background; delete deck.scheme; delete deck.name; set({ template: 'auto' }, 'Template removed'); } } }) : null)));
+  return box;
 }

@@ -17,7 +17,6 @@ export const DEFAULT_SETTINGS = {
   deliberation: 'full',
   slidesPerChapter: 10,
   quizQuestions: 8,
-  slideFormat: 'pptx',     // pptx | html | latex
   theme: 'system',
   rememberKey: false,
   language: 'en',
@@ -45,6 +44,7 @@ export function newProject(fields = {}) {
     course: { name: '', subject: '', level: 'Undergraduate', audience: '', weeks: 14, language: 'English', notes: '', ...(fields.course || {}) },
     textbook: { name: '', chars: 0, chunks: [] },
     overrides: {},                // per-project overrides of account settings (model, deliberation, slidesPerChapter)
+    deck: { template: 'auto' },  // 'auto' | 'builtin:<palette>' | 'custom' (+ palette, fonts, background from an uploaded .pptx)
     foundation: {}, chaptersStage: emptyStage(), chapters: [],
     exams: { midterm: emptyStage(), final: emptyStage() },
     audit: [],
@@ -61,6 +61,8 @@ export function migrate(p) {
     delete p.settings;
   }
   p.exams.midterm ||= emptyStage(); p.exams.final ||= emptyStage();
+  p.deck ||= { template: 'auto' };
+  if (p.overrides) delete p.overrides.slideFormat;
   return p;
 }
 

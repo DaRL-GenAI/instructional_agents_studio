@@ -14,7 +14,7 @@ Every **project** is one course. Its modules, in the order you normally work:
 |---|---|
 | **Course basics** | Course facts, learner profile, instructor requirements, optional textbook / notes for grounding, per-project model overrides |
 | **Course design** | The six ADDIE deliberations (instructional goals, learner analysis, resources & constraints, syllabus, assessment plan, final project) and the chapter list extracted from the syllabus |
-| **Slides** | Per chapter: outline → slides → lecture script; export as HTML deck, Beamer `.tex` or `.pptx` |
+| **Slides** | Per chapter: outline → slides → lecture script. Decks are designed as PowerPoint: a layout engine renders each slide (title, bullets + callout, two columns, numbered rows, 2×2 grid, stat callouts, process flow, code, native charts, statement, summary) into a live preview, the `.pptx` download and the lecture video. Deck template per project: automatic palette, ten built-in palettes, or your own `.pptx`/`.potx` (theme colours, fonts and master background are read in the browser) |
 | **Assessments** | Per chapter: homework, hands-on lab, quiz (structured editor); course level: midterm and final exams with blueprints and answer keys |
 | **Lecture videos** | Per chapter: narration (TTS) and an in-browser recording with WebVTT captions; audio and video are kept in the browser |
 | **Audit trail** | Every model call, TTS call, edit, prompt change, approval and export, with hashes |
@@ -31,7 +31,8 @@ Each foundation stage runs the same three-agent deliberation as the Python pipel
 
 - **Prompt tab**: the exact system and user prompts, editable before every run; defaults are rebuilt from the current inputs.
 - **Transcript tab**: every agent response streamed and kept, with model, tokens and latency.
-- **Output tab**: every deliverable is editable (structured editors for slides, script and quiz), with version history and restore.
+- **Output tab**: every deliverable is editable (slide-by-slide deck editor with preview, script and quiz editors, Markdown/JSON editors with Source / Split / Preview layouts), with version history and restore.
+- **Re-run with comments**: every stage can be revised from instructor comments; the request is logged and shown in the Prompt tab.
 - **Provenance tab**: hashes of every input a stage consumed; stages whose inputs changed are flagged as stale.
 - **Audit trail**: exportable as JSON/Markdown and bundled into the project ZIP.
 
@@ -60,8 +61,9 @@ python -m http.server 8000
 Layout: `index.html` (shell + SVG icon sprite), `css/tokens.css` (design tokens), `css/app.css`,
 `js/app.js` (shell, routing), `js/router.js`, `js/ui.js` (components), `js/db.js` (IndexedDB),
 `js/state.js` (account, projects, audit), `js/llm.js` (API client), `js/prompts.js` (agent prompts),
-`js/pipeline.js` (stage runners, retrieval), `js/slides.js` (HTML / Beamer / PPTX), `js/video.js`
-(TTS + recording), `js/export.js` (ZIP), `js/views/*` (one file per module and the account pages).
+`js/pipeline.js` (stage runners, retrieval), `js/deck.js` (slide layout engine: HTML preview, pptxgenjs, canvas),
+`js/template.js` (reads a user's .pptx/.potx theme), `js/video.js` (TTS + recording), `js/export.js` (ZIP),
+`js/views/*` (one file per module, the deck editor and the account pages).
 Third-party libraries are loaded on demand: JSZip, pdf.js and marked from cdnjs, PptxGenJS from jsDelivr.
 
 ## Citation

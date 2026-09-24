@@ -1,6 +1,7 @@
 // pipeline.js — runs the ADDIE stages in the browser and records everything in the audit trail.
 import { LLMClient, extractJson, sha1Short, toArray } from './llm.js';
-import { AGENTS, FOUNDATION, CHAPTER_STAGES, EXAMS, PROMPTS, courseContext, priorContext, textbookContext, revisionBlock } from './prompts.js';
+import { AGENTS, FOUNDATION, CHAPTER_STAGES, EXAMS, PROMPTS, courseContext, priorContext, textbookContext, revisionBlock, PALETTE_RULE_AUTO, PALETTE_RULE_FIXED } from './prompts.js';
+import { normalizeDeck, deckOf, PALETTE_NAMES, resolveTheme } from './deck.js';
 
 export class Pipeline {
   constructor(store) {
@@ -86,13 +87,19 @@ export class Pipeline {
     const slides = itemsOf(ch.stages.slides?.output); const outline = itemsOf(ch.stages.outline?.output);
     let user = '';
     if (stageId === 'outline') user = PROMPTS.outline(p.course, ch, this.settings.slidesPerChapter, priorContext([{ label: 'Learning objectives', text: out('objectives') }]), tb);
-    if (stageId === 'slides') user = PROMPTS.slides(p.course, ch, outline, priorContext([{ label: 'Learning objectives', text: out('objectives') }]), tb);
-    if (stageId === 'script') user = PROMPTS.script(p.course, ch, slides, '');
-    if (stageId === 'homework') user = PROMPTS.homework(p.course, ch, slides, out('assessment_plan'), tb);
-    if (stageId === 'lab') user = PROMPTS.lab(p.course, ch, slides, out('resources'), tb);
-    if (stageId === 'quiz') user = PROMPTS.quiz(p.course, ch, slides, this.settings.quizQuestions || 8, out('assessment_plan'), tb);
+    if (stageId === 'slides') user = PROMPTS.slides(p.course, ch, outline, priorContext([{ label: 'Learning objectives', text: out('objectives') }]), tb, this.paletteRule());
+    if (stageId === 'script') user = PROMPTS.script(p.course, ch, slides.map(slideSummary), '');
+    if (stageId === 'homework') user = PROMPTS.homework(p.course, ch, slides.map(slideSummary), out('assessment_plan'), tb);
+    if (stageId === 'lab') user = PROMPTS.lab(p.course, ch, slides.map(slideSummary), out('resources'), tb);
+    if (stageId === 'quiz') user = PROMPTS.quiz(p.course, ch, slides.map(slideSummary), this.settings.quizQuestions || 8, out('assessment_plan'), tb);
     const a = AGENTS[st.agent];
     return { custom: false, agents: [{ key: st.agent, name: a.name, role: a.role, system: a.system }], user };
+  }
+  /** Palette instruction for the slides prompt: fixed when the project uses a template, else the model chooses. */
+  paletteRule() {
+    const d = this.store.project.deck || {};
+    if (d.template && d.template !== 'auto') return PALETTE_RULE_FIXED(resolveTheme(null, d).name);
+    return PALETTE_RULE_AUTO(PALETTE_NAMES);
   }
   defaultExamPrompt(kind) {
     const p = this.store.project; const ex = EXAMS.find(e => e.id === kind); const a = AGENTS.teaching_assistant;
@@ -168,7 +175,14 @@ export class Pipeline {
       let text = await this.stream(key, transcript, usage, { where: ch.title, stage: st.name, agent: prompt.agents[0].name, json, messages });
       const parse = (t) => {
         if (stageId === 'outline') return JSON.stringify(normalizeOutline(extractJson(t, 'array')), null, 2);
-        if (stageId === 'slides') return normalizeSlides(extractJson(t, 'array'), itemsOf(ch.stages.outline?.output));
+        if (stageId === 'slides') {
+          const outline = itemsOf(ch.stages.outline?.output);
+          const d = normalizeDeck(extractJson(t, 'object'), outline);
+          if (!d.slides.length) throw new Error('The model returned no slides. Re-run, or check the Transcript tab for the raw response.');
+          const expected = Math.max(3, Math.ceil(outline.length * 0.6));
+          if (d.slides.length < expected) throw new Error(`Only ${d.slides.length} of ${outline.length} outline slides were returned`);
+          return JSON.stringify(d, null, 2);
+        }
         if (stageId === 'script') return JSON.stringify(normalizeScript(extractJson(t, 'array'), itemsOf(ch.stages.slides?.output)), null, 2);
         if (stageId === 'quiz') return JSON.stringify(normalizeQuiz(extractJson(t, 'array')), null, 2);
         return t.trim();
@@ -178,15 +192,11 @@ export class Pipeline {
       catch (e) {
         if (!json) throw e;
         // One strict retry: the model answered in an unexpected shape; ask for the bare array.
-        const strict = [...messages, { role: 'assistant', content: text }, { role: 'user', content: `That reply could not be used (${e.message}). Reply again with ONLY the JSON array requested above, as a top-level array of objects with exactly the specified fields, no wrapper object, no prose, no code fences.` }];
+        const strict = [...messages, { role: 'assistant', content: text }, { role: 'user', content: stageId === 'slides' ? `That reply could not be used (${e.message}). Reply again with ONLY the complete JSON object {"theme":…,"slides":[…]} requested above: one slide object for EVERY outline item, in order, with slides as a top-level array of objects, no prose, no code fences.` : `That reply could not be used (${e.message}). Reply again with ONLY the JSON array requested above, as a top-level array of objects with exactly the specified fields, no wrapper object, no prose, no code fences.` }];
         text = await this.stream(key, transcript, usage, { where: ch.title, stage: `${st.name} (retry)`, agent: prompt.agents[0].name, json: false, messages: strict });
         output = parse(text);
       }
-      if (stageId === 'slides') {
-        let slides = output;
-        if (this.settings.slideFormat === 'latex') slides = await this.beamerFrames(ch, slides, key, transcript, usage);
-        output = JSON.stringify(slides, null, 2);
-      }
+
       this.store.applyResult(stage, st.name, { output, usage, durationMs: Math.round(performance.now() - t0), transcript, prompt, inputHash: this.inputHash(inputs), provenance: inputs.map(i => ({ label: i.label, hash: sha1Short(i.text), version: i.version, chunks: i.chunks })) }, ch.title);
     } catch (e) { stage.status = 'error'; stage.error = String(e.message || e); stage.transcript = transcript; this.store.save(); throw e; }
     finally { this.live = null; this.onLive(); }
@@ -202,26 +212,6 @@ export class Pipeline {
       const text = await this.stream(`exam:${kind}`, transcript, usage, { where: 'course', stage: ex.name, agent: prompt.agents[0].name, messages: [{ role: 'system', content: prompt.agents[0].system }, { role: 'user', content: prompt.user }] });
       this.store.applyResult(stage, ex.name, { output: text.trim(), usage, durationMs: Math.round(performance.now() - t0), transcript, prompt, inputHash: this.inputHash(inputs), provenance: inputs.map(i => ({ label: i.label, hash: sha1Short(i.text), version: i.version })) }, 'course');
     } catch (e) { stage.status = 'error'; stage.error = String(e.message || e); stage.transcript = transcript; this.store.save(); throw e; }
-    finally { this.live = null; this.onLive(); }
-  }
-
-  /** Second pass for the LaTeX deck format: the model writes each frame body; merged into the slide objects. */
-  async beamerFrames(ch, slides, key, transcript, usage) {
-    const a = AGENTS.slides_faculty;
-    const text = await this.stream(key, transcript, usage, { where: ch.title, stage: 'Slides (LaTeX frames)', agent: a.name, json: true, messages: [{ role: 'system', content: a.system + ' You write clean, compilable LaTeX Beamer.' }, { role: 'user', content: PROMPTS.beamer(this.store.project.course, ch, slides) }] });
-    const frames = new Map(toArray(extractJson(text, 'array')).filter(x => x && x.latex).map(x => [Number(x.slide_id), String(x.latex)]));
-    return slides.map((s, i) => ({ ...s, latex: frames.get(s.slide_id) || frames.get(i + 1) || s.latex || '' }));
-  }
-  /** Add LaTeX frame bodies to an existing slide deck (when switching a chapter to the LaTeX format). */
-  async runBeamerFrames(chapterId) {
-    const ch = this.store.chapter(chapterId); const stage = this.store.chapterStage(chapterId, 'slides');
-    const slides = itemsOf(stage.output); if (!slides.length) throw new Error('Generate the slides first.');
-    stage.status = 'running'; this.store.save();
-    const transcript = [...(stage.transcript || [])], usage = { ...(stage.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }) }, t0 = performance.now();
-    try {
-      const out = await this.beamerFrames(ch, slides, `chapter:${chapterId}:slides`, transcript, usage);
-      this.store.applyResult(stage, `${ch.title} / Slides (LaTeX frames)`, { output: JSON.stringify(out, null, 2), usage, durationMs: (stage.durationMs || 0) + Math.round(performance.now() - t0), transcript, prompt: stage.prompt, inputHash: stage.inputHash, provenance: stage.provenance }, ch.title);
-    } catch (e) { stage.status = 'done'; stage.error = String(e.message || e); this.store.save(); throw e; }
     finally { this.live = null; this.onLive(); }
   }
 
@@ -243,26 +233,11 @@ export class Pipeline {
 
 export function safeJson(text, fallback) { try { return JSON.parse(text); } catch { return fallback; } }
 /** Saved stage output as a clean array of objects (tolerates empty, malformed or object-shaped saves). */
-export function itemsOf(text) { const v = safeJson(text, null); const a = Array.isArray(v) ? v : toArray(v); return a.filter(x => x && typeof x === 'object'); }
+export function itemsOf(text) { const v = safeJson(text, null); if (v && typeof v === 'object' && !Array.isArray(v) && Array.isArray(v.slides)) return normalizeDeck(v).slides; const a = Array.isArray(v) ? v : toArray(v); return a.filter(x => x && typeof x === 'object'); }
 function tokenize(s) { return (s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 2 && !STOP.has(w)); }
 const STOP = new Set('the and for with that this from are was were will have has into you your can not but our their they them what when where which who why how about than then over under between each also more most such use used using'.split(' '));
 
 function normalizeOutline(arr) { arr = toArray(arr); if (!arr.length) throw new Error('The model returned no outline items. Re-run, or check the Transcript tab for the raw response.'); return arr.filter(x => x && (x.title || x.slide_title)).map((x, i) => ({ slide_id: i + 1, title: String(x.title || x.slide_title), description: String(x.description || x.summary || '') })); }
-function normalizeSlides(arr, outline) {
-  arr = toArray(arr).filter(x => x && typeof x === 'object');
-  if (!arr.length) throw new Error('The model returned no slides. Re-run, or check the Transcript tab for the raw response.');
-  const pick = (x, ...keys) => { for (const k of keys) if (x[k] !== undefined && x[k] !== null && x[k] !== '') return x[k]; return undefined; };
-  const asList = v => Array.isArray(v) ? v.map(b => typeof b === 'string' ? b : (b?.text || b?.point || JSON.stringify(b))).slice(0, 8) : (typeof v === 'string' ? v.split('\n').map(t => t.replace(/^[-*•]\s*/, '').trim()).filter(Boolean) : []);
-  return arr.map((x, i) => ({
-    slide_id: i + 1,
-    title: String(pick(x, 'title', 'slide_title', 'slideTitle', 'heading', 'name') || outline[i]?.title || `Slide ${i + 1}`),
-    bullets: asList(pick(x, 'bullets', 'points', 'bullet_points', 'key_points', 'content', 'body')),
-    code: typeof pick(x, 'code', 'snippet', 'formula') === 'string' ? pick(x, 'code', 'snippet', 'formula') : '',
-    code_language: typeof x.code_language === 'string' ? x.code_language : (typeof x.language === 'string' ? x.language : ''),
-    notes: typeof pick(x, 'notes', 'speaker_notes', 'teaching_notes') === 'string' ? pick(x, 'notes', 'speaker_notes', 'teaching_notes') : '',
-    ...(typeof x.latex === 'string' && x.latex ? { latex: x.latex } : {}),
-  }));
-}
 function normalizeScript(arr, slides) {
   arr = toArray(arr);
   const bySlide = new Map(arr.filter(x => x).map(x => [Number(x.slide_id), String(x.narration || x.script || x.text || '')]));
@@ -283,4 +258,15 @@ export function chunkText(text, { size = 1400, overlap = 200 } = {}) {
   for (const c of chunks) { c.tokens = tokenize(c.text); for (const w of new Set(c.tokens)) df.set(w, (df.get(w) || 0) + 1); }
   for (const c of chunks) { c.df = Math.max(...c.tokens.map(w => df.get(w) || 1), 1); delete c.tokens; }
   return chunks;
+}
+
+/** Flatten any layout into {slide_id, title, bullets, code, notes} for downstream prompts (script, homework, lab, quiz). */
+export function slideSummary(s) {
+  const b = [];
+  const push = v => { if (Array.isArray(v)) for (const x of v) b.push(typeof x === 'string' ? x : `${x?.header || x?.label || x?.value || ''}${x?.text ? ': ' + x.text : ''}`); };
+  push(s.bullets); if (s.callout?.text) b.push(`${s.callout.label || 'Key idea'}: ${s.callout.text}`);
+  if (s.left) { b.push(`${s.left.heading || 'Left'}:`); push(s.left.bullets); } if (s.right) { b.push(`${s.right.heading || 'Right'}:`); push(s.right.bullets); }
+  push(s.items); push(s.steps); push(s.stats); if (s.quote) b.push(s.quote); if (s.subtitle) b.push(s.subtitle);
+  if (s.chart?.labels) b.push(`Chart (${s.chart.type || 'bar'}): ${s.chart.labels.join(', ')}`);
+  return { slide_id: s.slide_id, title: s.title, bullets: b.filter(Boolean).slice(0, 12), code: s.code || '', notes: s.notes || '' };
 }

@@ -1,6 +1,7 @@
 // video.js — narrated lecture video, produced entirely in the browser:
 // TTS per slide (OpenAI /audio/speech) → canvas slides → MediaRecorder (WebM) + WebVTT captions.
-import { drawSlide, W, H, THEMES } from './slides.js';
+import { drawSlideCanvas, resolveTheme } from './deck.js';
+export const W = 1280, H = 720;
 
 export const TTS_INSTRUCTIONS = 'Warm, clear teacher voice. Speak at a measured lecture pace, with natural emphasis on key terms.';
 
@@ -71,7 +72,7 @@ export function pickMime() {
  * AudioContext destination; both streams are captured with MediaRecorder.
  * Returns { blob, mime, seconds, timeline:[{slide_id,start,end}] }.
  */
-export async function recordVideo({ slides, script, audios, meta, theme = 'studio', pad = 0.8, fps = 30, onProgress, signal }) {
+export async function recordVideo({ slides, script, audios, meta, theme, pad = 0.8, fps = 30, onProgress, signal }) {
   const mime = pickMime();
   if (!mime) throw new Error('This browser cannot record video (MediaRecorder unsupported). Try Chrome, Edge or Firefox.');
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
@@ -85,11 +86,11 @@ export async function recordVideo({ slides, script, audios, meta, theme = 'studi
   const chunks = []; rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
   const stopped = new Promise(res => { rec.onstop = res; });
   const timeline = [];
-  const t = THEMES[theme] || THEMES.studio;
+  const t = theme; const images = await loadThemeImages(t);
   // keep the canvas ticking even when nothing changes (captureStream only emits on paint)
-  let tick = setInterval(() => { ctx.fillStyle = t.bg; ctx.fillRect(0, 0, 1, 1); drawCurrent(); }, 1000 / fps);
+  let tick = setInterval(() => { drawCurrent(); }, 1000 / fps);
   let current = 0;
-  const drawCurrent = () => drawSlide(ctx, slides[current], current, slides.length, meta, t);
+  const drawCurrent = () => drawSlideCanvas(ctx, slides[current], t, current, slides.length, meta, W, H, images);
   rec.start(500);
   const startedAt = audioCtx.currentTime;
   try {
@@ -123,7 +124,7 @@ const sleep = (ms, signal) => new Promise((res, rej) => { const id = setTimeout(
 const abortPromise = signal => new Promise((_, rej) => signal?.addEventListener('abort', () => rej(new Error('Recording cancelled')), { once: true }));
 
 /** Build a simple preview player (slides + audio, no recording) inside a container element. */
-export function mountPreview(container, { slides, script, audios, meta, theme = 'studio' }) {
+export function mountPreview(container, { slides, script, audios, meta, theme }) {
   container.innerHTML = '';
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H; canvas.className = 'video-canvas';
   const ctx = canvas.getContext('2d');
@@ -132,10 +133,10 @@ export function mountPreview(container, { slides, script, audios, meta, theme = 
   const stop = document.createElement('button'); stop.className = 'button small'; stop.textContent = '■ Stop';
   const pos = document.createElement('span'); pos.className = 'mono';
   bar.append(play, stop, pos); container.append(canvas, bar);
-  const t = THEMES[theme] || THEMES.studio;
+  const t = theme; let images = {};
   let i = 0, playing = false, src = null;
-  const draw = () => { drawSlide(ctx, slides[i], i, slides.length, meta, t); pos.textContent = `${i + 1} / ${slides.length}`; };
-  draw();
+  const draw = () => { drawSlideCanvas(ctx, slides[i], t, i, slides.length, meta, W, H, images); pos.textContent = `${i + 1} / ${slides.length}`; };
+  draw(); loadThemeImages(t).then(im => { images = im; draw(); });
   canvas.onclick = () => { if (!playing) { i = (i + 1) % slides.length; draw(); } };
   play.onclick = async () => {
     if (playing) return; playing = true; const actx = getAudioContext(); if (actx.state === 'suspended') await actx.resume();
@@ -148,4 +149,11 @@ export function mountPreview(container, { slides, script, audios, meta, theme = 
   };
   stop.onclick = () => { playing = false; try { src?.stop(); } catch { /* ignore */ } };
   return { redraw: draw };
+}
+
+/** Preload the template background (data URL) for the canvas backend. */
+export async function loadThemeImages(theme) {
+  const out = {};
+  if (theme?.background) { try { out[theme.background] = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = theme.background; }); } catch { /* ignore */ } }
+  return out;
 }

@@ -43,9 +43,8 @@ function overridesSection(ctx) {
   const model = input({ value: o.model || '', placeholder: `default: ${account.settings.model}` });
   const delib = select([['', `default: ${account.settings.deliberation === 'full' ? 'full deliberation' : 'quick'}`], ['full', 'Full deliberation (3 calls per stage)'], ['quick', 'Quick (1 call per stage)']], o.deliberation || '');
   const per = input({ type: 'number', min: 4, max: 30, value: o.slidesPerChapter || '', placeholder: `default: ${account.settings.slidesPerChapter}` });
-  const fmt = select([['', `default: ${account.settings.slideFormat || 'pptx'}`], ['html', 'HTML deck → PDF'], ['latex', 'LaTeX Beamer → PDF'], ['pptx', 'PowerPoint']], o.slideFormat || '');
-  const save = () => { const n = {}; if (model.value.trim()) n.model = model.value.trim(); if (delib.value) n.deliberation = delib.value; if (per.value) n.slidesPerChapter = Number(per.value); if (fmt.value) n.slideFormat = fmt.value; store.project.overrides = n; store.log({ type: 'settings', overrides: n }); store.save(); toast('Overrides saved', 'ok'); ctx.render(); };
-  return section('Generation overrides for this project', 'Leave empty to use your account defaults.', el('div', {}, el('div', { class: 'form-grid' }, field('Text model', model), field('Deliberation mode', delib), field('Slides per chapter', per), field('Deck format', fmt)), el('div', { class: 'btn-row', style: 'margin-top:14px' }, button({ label: 'Save overrides', size: 'sm', onClick: save }))));
+  const save = () => { const n = {}; if (model.value.trim()) n.model = model.value.trim(); if (delib.value) n.deliberation = delib.value; if (per.value) n.slidesPerChapter = Number(per.value); store.project.overrides = n; store.log({ type: 'settings', overrides: n }); store.save(); toast('Overrides saved', 'ok'); ctx.render(); };
+  return section('Generation overrides for this project', 'Leave empty to use your account defaults.', el('div', {}, el('div', { class: 'form-grid' }, field('Text model', model), field('Deliberation mode', delib), field('Slides per chapter', per)), el('div', { class: 'btn-row', style: 'margin-top:14px' }, button({ label: 'Save overrides', size: 'sm', onClick: save }))));
 }
 
 let pdfReady;

@@ -2,7 +2,7 @@
 import { el, button, badge, tabs, field, textarea, input, notice, empty, renderMarkdown, fmtDate, fmtMs, toast, icon, confirmDialog, segmented } from '../ui.js';
 import { safeJson } from '../pipeline.js';
 import { sha1Short as hashOf } from '../llm.js';
-import { slideHTML, toBeamer, toHtmlDeck, toPptx, openDeckForPrint } from '../slides.js';
+import { deckEditor, downloadPptx } from './deckeditor.js';
 import { download, textBlob, slug, scriptMarkdown, quizMarkdown } from '../export.js';
 
 export function stageStatus(pipe, stage, inputs) {
@@ -37,9 +37,8 @@ export function stageDetail(ctx, o) {
     o.runAll ? button({ label: o.runAllLabel || 'Generate remaining', icon: 'fast-forward', disabled: !!ctx.busy, onClick: o.runAll }) : null,
     running ? button({ label: 'Cancel', variant: 'danger', onClick: () => pipe.cancel() }) : null,
     stage.output ? button({ label: stage.reviewed ? 'Reviewed' : 'Mark reviewed', icon: 'check', variant: stage.reviewed ? 'ghost' : '', onClick: () => { stage.reviewed = !stage.reviewed; store.log({ type: stage.reviewed ? 'approve' : 'unapprove', stage: o.label, where: o.where, version: stage.version }); store.save(); ctx.render(); } }) : null,
-    stage.output && o.kind === 'slides' ? button({ label: { html: 'Download HTML deck', latex: 'Download .tex', pptx: 'Download .pptx' }[store.settings.slideFormat || 'pptx'], icon: 'download', onClick: () => downloadStage(ctx, o, { html: 'html', latex: 'tex', pptx: 'pptx' }[store.settings.slideFormat || 'pptx']) }) : null,
-    stage.output && o.kind === 'slides' && (store.settings.slideFormat || 'pptx') === 'html' ? button({ label: 'Save as PDF', icon: 'file', onClick: () => downloadStage(ctx, o, 'print') }) : null,
-    stage.output && o.kind === 'slides' ? button({ label: 'Other formats', variant: 'ghost', onClick: () => downloadStage(ctx, o) }) : null,
+    stage.output && o.kind === 'slides' ? button({ label: 'Download .pptx', icon: 'download', onClick: () => downloadStage(ctx, o, 'pptx') }) : null,
+    stage.output && o.kind === 'slides' ? button({ label: 'JSON', variant: 'ghost', size: 'sm', onClick: () => downloadStage(ctx, o, 'json') }) : null,
     stage.output && o.kind !== 'slides' ? button({ label: 'Download', icon: 'download', onClick: () => downloadStage(ctx, o) }) : null,
     stage.output && o.kind !== 'json' ? button({ label: 'Program Chair review', icon: 'search', disabled: !!ctx.busy, onClick: () => ctx.guarded('Reviewing', async () => { if (!ctx.requireKey()) return; stage.review = await pipe.review(o.title, stageText(o), o.where); store.save(); ui.tab = 'review'; }) }) : null,
     stage.output && o.next ? button({ label: 'Next', icon: 'arrow-right', variant: 'ghost', onClick: o.next }) : null);
@@ -92,36 +91,15 @@ export function stageText(o) {
 }
 
 async function downloadStage(ctx, o, forced) {
-  const st = o.stage; const course = ctx.store.project.course;
+  const st = o.stage;
   if (o.kind === 'slides') {
-    const slides = safeJson(st.output, []); const script = safeJson(o.chapter.stages.script?.output, []);
-    const fmt = ctx.store.settings.slideFormat || 'pptx';
-    const primary = { html: 'html', latex: 'tex', pptx: 'pptx' }[fmt];
-    const choice = forced || await pickFormat(...[[primary, `${{ html: 'HTML deck', tex: 'Beamer .tex', pptx: 'PowerPoint .pptx' }[primary]} (project format)`], ['print', 'Print / save as PDF (HTML deck)'], ['html', 'HTML deck'], ['tex', 'Beamer .tex'], ['pptx', 'PowerPoint .pptx'], ['json', 'JSON']].filter(([v], i, arr) => arr.findIndex(x => x[0] === v) === i));
-    if (!choice) return;
-    const base = slug(o.chapter.title);
-    try {
-      if (choice === 'html') download(textBlob(toHtmlDeck(course, o.chapter, slides, script), 'text/html'), `${base}_slides.html`);
-      if (choice === 'print') openDeckForPrint(course, o.chapter, slides, script);
-      if (choice === 'tex') download(textBlob(toBeamer(course, o.chapter, slides, script), 'text/x-tex'), `${base}_slides.tex`);
-      if (choice === 'pptx') download(await toPptx(course, o.chapter, slides, script), `${base}_slides.pptx`);
-      if (choice === 'json') download(textBlob(st.output, 'application/json'), `${base}_slides.json`);
-      ctx.store.log({ type: 'export', stage: o.label, file: `${base}_slides.${choice}` });
-    } catch (e) { toast(e.message, 'error'); }
-    return;
+    if (forced === 'json') { download(textBlob(st.output, 'application/json'), `${slug(o.chapter.title)}_slides.json`); return; }
+    await downloadPptx(ctx, o); return;
   }
   const name = o.chapter ? `${slug(o.chapter.title)}_${o.file.replace('.json', o.kind === 'quiz' ? '.md' : '.json')}` : o.file;
   download(textBlob(stageText(o), o.kind === 'json' ? 'application/json' : 'text/markdown'), name);
   ctx.store.log({ type: 'export', stage: o.label, file: name });
 }
-function pickFormat(...opts) {
-  return new Promise(resolve => {
-    const dlg = el('dialog', { class: 'dlg' });
-    dlg.append(el('div', { class: 'dlg-body' }, el('h3', {}, 'Download slides as'), el('div', { class: 'btn-row' }, ...opts.map(([v, l]) => button({ label: l, onClick: () => { dlg.close(); resolve(v); } }))), el('div', { class: 'dlg-actions' }, button({ label: 'Cancel', variant: 'ghost', onClick: () => { dlg.close(); resolve(null); } }))));
-    dlg.addEventListener('close', () => { dlg.remove(); resolve(null); }); document.body.append(dlg); dlg.showModal();
-  });
-}
-
 // ---------------------------------------------------------------- editors
 function outputEditor(ctx, o) {
   const st = o.stage;
@@ -130,7 +108,7 @@ function outputEditor(ctx, o) {
     return empty({ icon: 'file', title: 'Nothing generated yet', body: 'Review the Prompt tab if you want to adjust what the agents are asked, then press Generate.', actions: [button({ label: 'Generate', icon: 'play', variant: 'primary', disabled: !!ctx.busy, onClick: () => o.run({}) }), button({ label: 'View prompt', variant: 'ghost', onClick: () => { ctx.ui[o.key].tab = 'prompt'; ctx.render(); } })] });
   }
   if (!ctx.ui[o.key]?.forceRaw) {
-    if (o.kind === 'slides') return slidesEditor(ctx, o);
+    if (o.kind === 'slides') return deckEditor(ctx, o) || invalidOutput(ctx, o, 'slide deck');
     if (o.kind === 'script') return scriptEditor(ctx, o);
     if (o.kind === 'quiz') return quizEditor(ctx, o);
   }
@@ -144,46 +122,6 @@ function outputEditor(ctx, o) {
   const bar = el('div', { class: 'editor-bar', style: 'grid-column:1/-1' }, modeControl(ctx), el('span', {}), button({ label: 'Save edits', size: 'sm', variant: 'primary', onClick: save }), button({ label: 'Discard', size: 'sm', variant: 'ghost', onClick: () => { ta.value = st.output; refresh(); } }));
   box.append(bar, el('div', { class: 'editor-col source' }, ta), el('div', { class: 'editor-col preview-col' }, preview));
   return box;
-}
-
-const FORMAT_LABEL = { html: 'HTML deck (print to PDF)', latex: 'LaTeX Beamer (.tex → PDF)', pptx: 'PowerPoint (.pptx)' };
-function invalidOutput(ctx, o, what) {
-  const st = o.stage;
-  const ta = textarea({ class: 'textarea editor', spellcheck: 'false', style: 'min-height:40vh' }, st.output || '');
-  return el('div', { style: 'display:flex;flex-direction:column;gap:12px' },
-    notice('warn', `The saved ${what} is empty or not in the expected format, so the editor cannot show it. Re-run the stage, or fix the JSON below and save.`),
-    el('div', { class: 'btn-row' }, button({ label: 'Re-run', icon: 'refresh', variant: 'primary', disabled: !!ctx.busy, onClick: () => o.run({}) }), button({ label: 'Save JSON', size: 'sm', onClick: () => { try { JSON.parse(ta.value); } catch (e) { return toast(`Invalid JSON: ${e.message}`, 'error'); } if (ctx.store.userEdit(st, o.label, ta.value, o.where)) { toast('Saved', 'ok'); ctx.render(); } } })),
-    ta);
-}
-
-function slidesEditor(ctx, o) {
-  const st = o.stage; const ch = o.chapter; const fmt = ctx.store.settings.slideFormat || 'pptx';
-  const raw = safeJson(st.output, null);
-  const slides = Array.isArray(raw) ? raw.filter(x => x && typeof x === 'object').map((x, i) => ({ slide_id: i + 1, title: String(x.title || `Slide ${i + 1}`), bullets: Array.isArray(x.bullets) ? x.bullets.map(String) : [], code: typeof x.code === 'string' ? x.code : '', code_language: x.code_language || '', notes: typeof x.notes === 'string' ? x.notes : '', ...(x.latex ? { latex: String(x.latex) } : {}) })) : [];
-  if (!slides.length) return invalidOutput(ctx, o, 'slide deck');
-  const ui = ctx.ui[o.key]; let current = Math.min(ui.slide || 0, slides.length - 1);
-  const meta = { course: ctx.store.project.course.name, chapter: ch.title };
-  const list = el('div', { class: 'slide-list', role: 'listbox', 'aria-label': 'Slides' }); const preview = el('div', { class: 'slide-preview' }); const form = el('div', { class: 'slide-form' });
-  const showPreview = () => { preview.innerHTML = slideHTML(slides[current], current, slides.length, meta); };
-  const rebuildList = () => { list.innerHTML = ''; slides.forEach((s, i) => list.append(el('button', { class: 'slide-thumb', role: 'option', 'aria-current': String(i === current), onClick: () => { current = i; ui.slide = i; rebuildList(); showPreview(); buildForm(); } }, el('b', {}, i + 1), el('span', {}, s.title)))); };
-  const renumber = () => slides.forEach((s, i) => { s.slide_id = i + 1; });
-  const buildForm = () => {
-    const s = slides[current]; form.innerHTML = '';
-    const title = input({ value: s.title }); const bullets = textarea({ rows: 6 }, (s.bullets || []).join('\n')); const code = textarea({ rows: 5, class: 'textarea mono', placeholder: 'optional code or formula' }, s.code || ''); const notes = textarea({ rows: 3 }, s.notes || '');
-    const latexTa = fmt === 'latex' ? textarea({ rows: 8, class: 'textarea mono', placeholder: 'Frame body (inside \\begin{frame}…\\end{frame}). Empty = generated from bullets and code.' }, s.latex || '') : null;
-    const upd = () => { s.title = title.value; s.bullets = bullets.value.split('\n').map(x => x.trim()).filter(Boolean); s.code = code.value; s.notes = notes.value; if (latexTa) s.latex = latexTa.value; showPreview(); rebuildList(); };
-    for (const i of [title, bullets, code, notes, latexTa].filter(Boolean)) i.oninput = upd;
-    form.append(field('Title', title), field('Bullets, one per line', bullets), field('Code or formula', code), latexTa ? field('LaTeX frame body', latexTa, { hint: 'Used verbatim in the .tex export for this slide.' }) : null, field('Teaching notes', notes),
-      el('div', { class: 'btn-row' }, button({ label: 'Insert slide after', icon: 'plus', size: 'sm', onClick: () => { slides.splice(current + 1, 0, { slide_id: 0, title: 'New slide', bullets: [], code: '', code_language: '', notes: '' }); current++; renumber(); rebuildList(); showPreview(); buildForm(); } }),
-        button({ label: 'Delete slide', icon: 'trash', size: 'sm', variant: 'danger', disabled: slides.length < 2, onClick: () => { slides.splice(current, 1); current = Math.max(0, current - 1); renumber(); rebuildList(); showPreview(); buildForm(); } })));
-  };
-  const save = () => { if (ctx.store.userEdit(st, o.label, JSON.stringify(slides, null, 2), o.where)) { toast('Slides saved and logged', 'ok'); ctx.render(); } else toast('No changes'); };
-  const missingLatex = fmt === 'latex' && slides.some(s => !s.latex);
-  const box = el('div', {},
-    el('div', { class: 'editor-bar' }, el('span', {}, `${slides.length} slides · ${FORMAT_LABEL[fmt]} · select a slide to edit`), button({ label: 'Save edits', size: 'sm', variant: 'primary', onClick: save }), button({ label: 'Discard', size: 'sm', variant: 'ghost', onClick: () => ctx.render() })),
-    missingLatex ? el('div', { style: 'margin-bottom:12px' }, notice('info', 'This chapter has no model-written LaTeX frames yet; the .tex export uses a plain itemize fallback. ', button({ label: 'Write LaTeX frames', size: 'sm', icon: 'play', disabled: !!ctx.busy, onClick: () => ctx.guarded('Writing LaTeX frames', async () => { if (!ctx.requireKey()) return; await ctx.pipe.runBeamerFrames(ch.id); toast('LaTeX frames added', 'ok'); }) }))) : null,
-    el('div', { class: 'slides-grid' }, list, el('div', {}, preview, form)));
-  rebuildList(); showPreview(); buildForm(); return box;
 }
 
 function scriptEditor(ctx, o) {

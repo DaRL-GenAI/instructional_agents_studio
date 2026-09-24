@@ -3,6 +3,7 @@ import { el, button, badge, field, select, notice, empty, icon, toast, fmtBytes 
 import { chapterRail, noChapters } from './chapters.js';
 import { stageStatus } from './stage.js';
 import { safeJson } from '../pipeline.js';
+import { deckOf, resolveTheme } from '../deck.js';
 import { synthesize, recordVideo, buildVtt, mountPreview, pickMime, getAudioContext } from '../video.js';
 import { download, textBlob, slug, scriptMarkdown, loadJSZip } from '../export.js';
 import { sha1Short } from '../llm.js';
@@ -23,8 +24,9 @@ export function render(ctx) {
 function videoView(ctx, chId) {
   const { store, pipe } = ctx; const p = store.project; const ch = store.chapter(chId); const idx = p.chapters.indexOf(ch);
   const stage = store.chapterStage(chId, 'video'); const inputs = pipe.chapterInputs(chId, 'video');
-  const slidesRaw = safeJson(ch.stages.slides?.output, null); const scriptRaw = safeJson(ch.stages.script?.output, null);
-  const slides = Array.isArray(slidesRaw) && slidesRaw.length ? slidesRaw : null; const script = Array.isArray(scriptRaw) && scriptRaw.length ? scriptRaw : null;
+  const deck = deckOf(ch.stages.slides?.output); const scriptRaw = safeJson(ch.stages.script?.output, null);
+  const slides = deck.slides.length ? deck.slides : null; const script = Array.isArray(scriptRaw) && scriptRaw.length ? scriptRaw : null;
+  const theme = resolveTheme(deck.theme, p.deck);
   const m = ctx.media[chId] ||= { audios: null, video: null, vtt: null, cache: new Map(), loaded: false };
   const box = el('div', {});
   box.append(el('div', { class: 'stage-head' }, el('div', {}, el('span', { class: 'meta' }, `Chapter ${idx + 1} of ${p.chapters.length}`), el('h2', { style: 'margin-top:2px' }, ch.title)), el('div', { class: 'meta-col' }, badge(stageStatus(pipe, stage, inputs)), stage.output ? el('small', {}, stage.output) : null)));
@@ -34,7 +36,6 @@ function videoView(ctx, chId) {
   // lazy-load persisted media once per view
   if (!m.loaded) { m.loaded = true; (async () => { const saved = await store.getMedia(chId, 'audios'); if (saved?.length && !m.audios) { const actx = getAudioContext(); m.audios = []; for (const a of saved) m.audios.push(a.buffer ? { ...a, decoded: await actx.decodeAudioData(a.buffer.slice(0)) } : a); m.vtt = buildVtt(script, m.audios); } const vid = await store.getMedia(chId, 'video'); if (vid?.blob && !m.video) m.video = vid; if (saved || vid) ctx.render(); })(); }
 
-  const themeSel = select([['studio', 'Studio light'], ['dark', 'Academic dark']], m.theme || 'studio'); themeSel.onchange = () => { m.theme = themeSel.value; };
   const voiceSel = select(['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'], m.voice || store.settings.voice); voiceSel.onchange = () => { m.voice = voiceSel.value; };
   const progress = el('p', { class: 'meta', style: 'margin:8px 0' }, `${slides.length} slides · ${script.reduce((a, s) => a + (s.narration || '').length, 0).toLocaleString()} narration characters`);
   const previewBox = el('div', { style: 'margin:12px 0' }); const meta = { course: p.course.name, chapter: ch.title }; const mime = pickMime();
@@ -50,7 +51,7 @@ function videoView(ctx, chId) {
   });
   const record = () => ctx.guarded('Recording video', async () => {
     const ctrl = new AbortController(); pipe.abort = ctrl; progress.textContent = 'Recording. Keep this tab visible until it finishes.';
-    const res = await recordVideo({ slides, script, audios: m.audios, meta, theme: themeSel.value, signal: ctrl.signal, onProgress: e => { progress.textContent = e.text; } });
+    const res = await recordVideo({ slides, script, audios: m.audios, meta, theme, signal: ctrl.signal, onProgress: e => { progress.textContent = e.text; } });
     m.video = { blob: res.blob, mime: res.mime, seconds: res.seconds, timeline: res.timeline };
     await store.putMedia(chId, 'video', m.video);
     store.log({ type: 'video', where: ch.title, seconds: res.seconds, bytes: res.blob.size, mime: res.mime, slides: slides.length });
@@ -58,7 +59,7 @@ function videoView(ctx, chId) {
     toast('Video recorded', 'ok');
   });
 
-  box.append(el('div', { class: 'stage-actions', style: 'align-items:flex-end' }, field('Theme', themeSel), field('Voice', voiceSel),
+  box.append(el('div', { class: 'stage-actions', style: 'align-items:flex-end' }, field('Voice', voiceSel), el('span', { class: 'meta', style: 'align-self:center' }, `Deck theme: ${theme.name}`),
     button({ label: m.audios ? 'Re-synthesize narration' : '1 · Synthesize narration', icon: 'mic', variant: m.audios ? '' : 'primary', disabled: !!ctx.busy, onClick: synth }),
     button({ label: m.video ? 'Re-record video' : '2 · Record video', icon: 'video', variant: m.audios && !m.video ? 'primary' : '', disabled: !!ctx.busy || !m.audios || !mime, onClick: record }),
     ctx.busy ? button({ label: 'Cancel', variant: 'danger', onClick: () => pipe.cancel() }) : null));
@@ -74,8 +75,8 @@ function videoView(ctx, chId) {
     button({ label: 'Script', icon: 'download', variant: 'ghost', onClick: () => download(textBlob(scriptMarkdown(ch, script), 'text/markdown'), `${slug(ch.title)}_script.md`) })));
   box.append(el('details', { class: 'turn', style: 'margin-top:20px' }, el('summary', {}, icon('chevron-right', 'sm chev'), 'How the video is made'), el('div', { class: 'turn-body' }, el('ol', { style: 'margin:0;padding-left:18px;font-size:var(--fs-2);color:var(--text-2);line-height:1.7' },
     el('li', {}, `Each narration block is sent to ${store.settings.ttsModel}; every call is logged with slide number, characters and duration.`),
-    el('li', {}, 'Slides are drawn deterministically from the slide JSON you can edit under Slides.'),
+    el('li', {}, 'Slides are drawn from the same deck specification and theme as the PowerPoint export, so the video matches the .pptx.'),
     el('li', {}, 'Canvas and decoded audio are captured with the MediaRecorder API into WebM; captions are timed proportionally to sentence length.'),
-    el('li', {}, 'For an MP4 from LaTeX-Beamer slides with the same script, export the .tex and run the Python pipeline with --video.')))));
+    el('li', {}, 'For an MP4 rendered server-side, download the .pptx and script and use the Python pipeline with --video.')))));
   return box;
 }
