@@ -131,12 +131,23 @@ export function extractJson(text, want = 'any') {
 }
 
 function unwrap(v, want) {
-  if (want === 'array' && !Array.isArray(v) && v && typeof v === 'object') {
-    // json_object mode forces an object; accept {"slides":[...]} / {"items":[...]} / first array value.
-    const arr = Object.values(v).find(x => Array.isArray(x));
-    if (arr) return arr;
-  }
+  if (want === 'array') return toArray(v);
   return v;
+}
+
+/** Coerce the many shapes models return in JSON mode into an array of items. */
+export function toArray(v) {
+  if (Array.isArray(v)) return v;
+  if (!v || typeof v !== 'object') return [];
+  const values = Object.values(v);
+  const arrays = values.filter(Array.isArray);
+  if (arrays.length) return arrays.reduce((a, b) => (a.length >= b.length ? a : b));   // {"slides": [...]}
+  if (values.length && values.every(x => x && typeof x === 'object')) {
+    if (values.length === 1) return toArray(values[0]);                                   // {"slides": {"1": {...}, "2": {...}}}
+    return values;                                                                        // {"1": {...}, "2": {...}}
+  }
+  if ('title' in v || 'question' in v || 'slide_id' in v || 'narration' in v || 'latex' in v) return [v]; // a single item
+  return [];
 }
 
 function repairJson(s) {

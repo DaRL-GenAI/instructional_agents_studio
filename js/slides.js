@@ -171,12 +171,26 @@ addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key===' ')go(i+1);if(e
 if(location.search.includes('print=1')){setTimeout(()=>window.print(),400)}
 `;
 
+// PptxGenJS is not published on cdnjs; load it from jsDelivr with unpkg as a fallback.
+const PPTX_SOURCES = ['https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js', 'https://unpkg.com/pptxgenjs@3.12.0/dist/pptxgen.bundle.js'];
 let pptxLoading;
+function loadPptx() {
+  if (window.PptxGenJS) return Promise.resolve();
+  pptxLoading ||= (async () => {
+    let lastErr;
+    for (const src of PPTX_SOURCES) {
+      try {
+        await new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error(`Could not load ${src}`)); document.head.appendChild(s); });
+        if (window.PptxGenJS) return;
+      } catch (e) { lastErr = e; }
+    }
+    pptxLoading = null;
+    throw new Error(`The PowerPoint library could not be loaded (${lastErr?.message || 'network'}). Check your connection or content blockers, then try again.`);
+  })();
+  return pptxLoading;
+}
 export async function toPptx(course, chapter, slides, script = []) {
-  if (!window.PptxGenJS) {
-    pptxLoading ||= new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/PptxGenJS/3.12.0/pptxgen.bundle.js'; s.onload = res; s.onerror = () => rej(new Error('Could not load PptxGenJS from cdnjs')); document.head.appendChild(s); });
-    await pptxLoading;
-  }
+  await loadPptx();
   const pptx = new window.PptxGenJS();
   pptx.layout = 'LAYOUT_16x9';
   pptx.defineSlideMaster({ title: 'IA', background: { color: 'FFFEFA' }, objects: [

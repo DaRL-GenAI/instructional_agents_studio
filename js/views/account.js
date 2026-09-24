@@ -27,7 +27,7 @@ function settingsTab(ctx, body) {
   const delib = select([['full', 'Full deliberation: faculty → reviewer → summarizer (3 calls per stage, as in the paper)'], ['quick', 'Quick: one call per stage']], s.deliberation);
   const per = input({ type: 'number', min: 4, max: 30, value: s.slidesPerChapter });
   const quizN = input({ type: 'number', min: 3, max: 25, value: s.quizQuestions });
-  const slideFmt = select([['html', 'HTML deck (print to PDF in the browser)'], ['latex', 'LaTeX Beamer (.tex, compile to PDF yourself)'], ['pptx', 'PowerPoint (.pptx)']], s.slideFormat || 'html');
+  const slideFmt = select([['html', 'HTML deck (print to PDF in the browser)'], ['latex', 'LaTeX Beamer (.tex, compile to PDF yourself)'], ['pptx', 'PowerPoint (.pptx)']], s.slideFormat || 'pptx');
   const temp = input({ type: 'number', step: '0.1', min: 0, max: 2, value: s.temperature, placeholder: 'model default' });
   const seed = input({ type: 'number', value: s.seed, placeholder: 'none' });
   const tts = select(['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'], s.ttsModel);
@@ -52,7 +52,7 @@ function privacyTab(ctx, body) {
     section('What leaves your browser', null, el('ul', { style: 'margin:0;padding-left:18px;color:var(--text-2);font-size:var(--fs-2);line-height:1.7;max-width:68ch' },
       el('li', {}, 'Prompts (course basics, prior deliverables, retrieved textbook excerpts) and narration text go to your API endpoint.'),
       el('li', {}, 'Nothing is sent to the host of this page. There is no analytics or telemetry.'),
-      el('li', {}, 'Third-party libraries (JSZip, PptxGenJS, pdf.js, marked) load from cdnjs.cloudflare.com on demand.'),
+      el('li', {}, 'Third-party libraries load on demand from public CDNs: JSZip, pdf.js and marked from cdnjs.cloudflare.com, PptxGenJS from cdn.jsdelivr.net (fallback unpkg.com).'),
       el('li', {}, 'Projects, media and the audit trail live in this browser’s IndexedDB; use Export to move them.'))));
 }
 

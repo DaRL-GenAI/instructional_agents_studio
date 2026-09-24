@@ -62,7 +62,7 @@ Layout: `index.html` (shell + SVG icon sprite), `css/tokens.css` (design tokens)
 `js/state.js` (account, projects, audit), `js/llm.js` (API client), `js/prompts.js` (agent prompts),
 `js/pipeline.js` (stage runners, retrieval), `js/slides.js` (HTML / Beamer / PPTX), `js/video.js`
 (TTS + recording), `js/export.js` (ZIP), `js/views/*` (one file per module and the account pages).
-Third-party libraries are loaded on demand from cdnjs: JSZip, PptxGenJS, pdf.js, marked.
+Third-party libraries are loaded on demand: JSZip, pdf.js and marked from cdnjs, PptxGenJS from jsDelivr.
 
 ## Citation
 

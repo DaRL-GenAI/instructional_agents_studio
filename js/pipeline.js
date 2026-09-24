@@ -1,5 +1,5 @@
 // pipeline.js — runs the ADDIE stages in the browser and records everything in the audit trail.
-import { LLMClient, extractJson, sha1Short } from './llm.js';
+import { LLMClient, extractJson, sha1Short, toArray } from './llm.js';
 import { AGENTS, FOUNDATION, CHAPTER_STAGES, EXAMS, PROMPTS, courseContext, priorContext, textbookContext, revisionBlock } from './prompts.js';
 
 export class Pipeline {
@@ -144,7 +144,7 @@ export class Pipeline {
     const transcript = [], usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, t0 = performance.now();
     try {
       const text = await this.stream('chapters', transcript, usage, { where: 'course', stage: 'Chapter extraction', agent: 'Syllabus Processor', json: true, messages: [{ role: 'system', content: prompt.agents[0].system }, { role: 'user', content: prompt.user }] });
-      const chapters = extractJson(text, 'array').filter(c => c && c.title).map(c => ({ title: String(c.title), description: String(c.description || '') }));
+      const chapters = toArray(extractJson(text, 'array')).filter(c => c && c.title).map(c => ({ title: String(c.title), description: String(c.description || '') }));
       if (!chapters.length) throw new Error('The model returned no chapters.');
       const old = p.chapters;
       p.chapters = chapters.map(c => { const prev = old.find(o => o.title === c.title); return { id: prev?.id || 'ch' + Math.random().toString(36).slice(2, 10), title: c.title, description: c.description, stages: prev?.stages || {} }; });
@@ -196,7 +196,7 @@ export class Pipeline {
   async beamerFrames(ch, slides, key, transcript, usage) {
     const a = AGENTS.slides_faculty;
     const text = await this.stream(key, transcript, usage, { where: ch.title, stage: 'Slides (LaTeX frames)', agent: a.name, json: true, messages: [{ role: 'system', content: a.system + ' You write clean, compilable LaTeX Beamer.' }, { role: 'user', content: PROMPTS.beamer(this.store.project.course, ch, slides) }] });
-    const frames = new Map(extractJson(text, 'array').filter(x => x && x.latex).map(x => [Number(x.slide_id), String(x.latex)]));
+    const frames = new Map(toArray(extractJson(text, 'array')).filter(x => x && x.latex).map(x => [Number(x.slide_id), String(x.latex)]));
     return slides.map((s, i) => ({ ...s, latex: frames.get(s.slide_id) || frames.get(i + 1) || s.latex || '' }));
   }
   /** Add LaTeX frame bodies to an existing slide deck (when switching a chapter to the LaTeX format). */
@@ -232,15 +232,18 @@ export function safeJson(text, fallback) { try { return JSON.parse(text); } catc
 function tokenize(s) { return (s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 2 && !STOP.has(w)); }
 const STOP = new Set('the and for with that this from are was were will have has into you your can not but our their they them what when where which who why how about than then over under between each also more most such use used using'.split(' '));
 
-function normalizeOutline(arr) { return arr.filter(x => x && (x.title || x.slide_title)).map((x, i) => ({ slide_id: i + 1, title: String(x.title || x.slide_title), description: String(x.description || x.summary || '') })); }
+function normalizeOutline(arr) { arr = toArray(arr); if (!arr.length) throw new Error('The model returned no outline items. Re-run, or check the Transcript tab for the raw response.'); return arr.filter(x => x && (x.title || x.slide_title)).map((x, i) => ({ slide_id: i + 1, title: String(x.title || x.slide_title), description: String(x.description || x.summary || '') })); }
 function normalizeSlides(arr, outline) {
+  arr = toArray(arr); if (!arr.length) throw new Error('The model returned no slides. Re-run, or check the Transcript tab for the raw response.');
   return arr.filter(x => x && (x.title || x.slide_id)).map((x, i) => ({ slide_id: i + 1, title: String(x.title || outline[i]?.title || `Slide ${i + 1}`), bullets: Array.isArray(x.bullets) ? x.bullets.map(String).slice(0, 8) : (typeof x.bullets === 'string' ? x.bullets.split('\n').filter(Boolean) : []), code: typeof x.code === 'string' ? x.code : '', code_language: typeof x.code_language === 'string' ? x.code_language : '', notes: typeof x.notes === 'string' ? x.notes : '', ...(typeof x.latex === 'string' && x.latex ? { latex: x.latex } : {}) }));
 }
 function normalizeScript(arr, slides) {
+  arr = toArray(arr);
   const bySlide = new Map(arr.filter(x => x).map(x => [Number(x.slide_id), String(x.narration || x.script || x.text || '')]));
   return slides.map((s, i) => ({ slide_id: s.slide_id, title: s.title, narration: bySlide.get(s.slide_id) || bySlide.get(i + 1) || arr[i]?.narration || '' }));
 }
 export function normalizeQuiz(arr) {
+  arr = toArray(arr); if (!arr.length) throw new Error('The model returned no questions. Re-run, or check the Transcript tab for the raw response.');
   return arr.filter(x => x && x.question).map((x, i) => ({ id: i + 1, type: ['multiple_choice', 'true_false', 'short_answer'].includes(x.type) ? x.type : (Array.isArray(x.options) && x.options.length ? 'multiple_choice' : 'short_answer'), question: String(x.question), options: Array.isArray(x.options) ? x.options.map(String) : [], answer: String(x.answer ?? x.correct_answer ?? ''), explanation: String(x.explanation || ''), objective: String(x.objective || ''), difficulty: String(x.difficulty || 'medium') }));
 }
 

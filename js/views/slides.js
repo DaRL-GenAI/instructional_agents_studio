@@ -13,10 +13,10 @@ export function render(ctx) {
   if (!p.chapters.length) return noChapters(ctx, 'Slides');
   const chId = ctx.store.chapter(ctx.route.a) ? ctx.route.a : p.chapters[0].id;
   const page = el('div', { class: 'page wide' });
-  const fmt = ctx.store.settings.slideFormat || 'html';
+  const fmt = ctx.store.settings.slideFormat || 'pptx';
   const setFmt = v => { ctx.store.project.overrides = { ...(ctx.store.project.overrides || {}), slideFormat: v }; ctx.store.log({ type: 'settings', overrides: { slideFormat: v } }); ctx.store.save(); toast(`Deck format: ${FMT[v]}`); ctx.render(); };
   page.append(el('div', { class: 'page-head' }, el('div', {}, el('h1', {}, 'Slides'), el('p', {}, 'Outline → slides → lecture script for each chapter. The deck format decides how slides are written and exported; content stays editable in one place.')),
-    el('div', { class: 'btn-row' }, el('div', { class: 'field' }, el('span', { class: 'label' }, 'Deck format'), segmented([['html', 'HTML → PDF'], ['latex', 'LaTeX → PDF'], ['pptx', 'PowerPoint']], fmt, setFmt)), runAllChapters(ctx, 'slides', IDS))));
+    el('div', { class: 'btn-row' }, el('div', { class: 'field' }, el('span', { class: 'label' }, 'Deck format'), segmented([['pptx', 'PowerPoint'], ['html', 'HTML → PDF'], ['latex', 'LaTeX → PDF']], fmt, setFmt)), runAllChapters(ctx, 'slides', IDS))));
   page.append(el('p', { class: 'meta', style: 'margin:-12px 0 16px' }, FMT_HELP[fmt]));
   page.append(el('div', { class: 'two-pane' }, chapterRail(ctx, 'slides', IDS, chId), el('div', { class: 'panel', style: 'padding:24px 28px;min-height:60vh' }, chapterStages(ctx, 'slides', IDS, chId))));
   return page;

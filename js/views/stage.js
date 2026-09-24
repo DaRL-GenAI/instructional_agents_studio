@@ -37,8 +37,8 @@ export function stageDetail(ctx, o) {
     o.runAll ? button({ label: o.runAllLabel || 'Generate remaining', icon: 'fast-forward', disabled: !!ctx.busy, onClick: o.runAll }) : null,
     running ? button({ label: 'Cancel', variant: 'danger', onClick: () => pipe.cancel() }) : null,
     stage.output ? button({ label: stage.reviewed ? 'Reviewed' : 'Mark reviewed', icon: 'check', variant: stage.reviewed ? 'ghost' : '', onClick: () => { stage.reviewed = !stage.reviewed; store.log({ type: stage.reviewed ? 'approve' : 'unapprove', stage: o.label, where: o.where, version: stage.version }); store.save(); ctx.render(); } }) : null,
-    stage.output && o.kind === 'slides' ? button({ label: { html: 'Download HTML deck', latex: 'Download .tex', pptx: 'Download .pptx' }[store.settings.slideFormat || 'html'], icon: 'download', onClick: () => downloadStage(ctx, o, { html: 'html', latex: 'tex', pptx: 'pptx' }[store.settings.slideFormat || 'html']) }) : null,
-    stage.output && o.kind === 'slides' && (store.settings.slideFormat || 'html') === 'html' ? button({ label: 'Save as PDF', icon: 'file', onClick: () => downloadStage(ctx, o, 'print') }) : null,
+    stage.output && o.kind === 'slides' ? button({ label: { html: 'Download HTML deck', latex: 'Download .tex', pptx: 'Download .pptx' }[store.settings.slideFormat || 'pptx'], icon: 'download', onClick: () => downloadStage(ctx, o, { html: 'html', latex: 'tex', pptx: 'pptx' }[store.settings.slideFormat || 'pptx']) }) : null,
+    stage.output && o.kind === 'slides' && (store.settings.slideFormat || 'pptx') === 'html' ? button({ label: 'Save as PDF', icon: 'file', onClick: () => downloadStage(ctx, o, 'print') }) : null,
     stage.output && o.kind === 'slides' ? button({ label: 'Other formats', variant: 'ghost', onClick: () => downloadStage(ctx, o) }) : null,
     stage.output && o.kind !== 'slides' ? button({ label: 'Download', icon: 'download', onClick: () => downloadStage(ctx, o) }) : null,
     stage.output && o.kind !== 'json' ? button({ label: 'Program Chair review', icon: 'search', disabled: !!ctx.busy, onClick: () => ctx.guarded('Reviewing', async () => { if (!ctx.requireKey()) return; stage.review = await pipe.review(o.title, stageText(o), o.where); store.save(); ui.tab = 'review'; }) }) : null,
@@ -90,7 +90,7 @@ async function downloadStage(ctx, o, forced) {
   const st = o.stage; const course = ctx.store.project.course;
   if (o.kind === 'slides') {
     const slides = safeJson(st.output, []); const script = safeJson(o.chapter.stages.script?.output, []);
-    const fmt = ctx.store.settings.slideFormat || 'html';
+    const fmt = ctx.store.settings.slideFormat || 'pptx';
     const primary = { html: 'html', latex: 'tex', pptx: 'pptx' }[fmt];
     const choice = forced || await pickFormat(...[[primary, `${{ html: 'HTML deck', tex: 'Beamer .tex', pptx: 'PowerPoint .pptx' }[primary]} (project format)`], ['print', 'Print / save as PDF (HTML deck)'], ['html', 'HTML deck'], ['tex', 'Beamer .tex'], ['pptx', 'PowerPoint .pptx'], ['json', 'JSON']].filter(([v], i, arr) => arr.findIndex(x => x[0] === v) === i));
     if (!choice) return;
@@ -141,7 +141,7 @@ function outputEditor(ctx, o) {
 
 const FORMAT_LABEL = { html: 'HTML deck (print to PDF)', latex: 'LaTeX Beamer (.tex → PDF)', pptx: 'PowerPoint (.pptx)' };
 function slidesEditor(ctx, o) {
-  const st = o.stage; const ch = o.chapter; const slides = safeJson(st.output, []); const fmt = ctx.store.settings.slideFormat || 'html';
+  const st = o.stage; const ch = o.chapter; const slides = safeJson(st.output, []); const fmt = ctx.store.settings.slideFormat || 'pptx';
   const ui = ctx.ui[o.key]; let current = Math.min(ui.slide || 0, slides.length - 1);
   const meta = { course: ctx.store.project.course.name, chapter: ch.title };
   const list = el('div', { class: 'slide-list', role: 'listbox', 'aria-label': 'Slides' }); const preview = el('div', { class: 'slide-preview' }); const form = el('div', { class: 'slide-form' });
