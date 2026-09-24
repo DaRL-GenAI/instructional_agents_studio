@@ -12,11 +12,11 @@ export async function synthesize(client, store, script, { where, voice, onProgre
     const s = script[i];
     const text = (s.narration || '').trim();
     if (!text) { out.push({ slide_id: s.slide_id, buffer: null, seconds: 3 }); continue; }
-    const key = `${store.project.settings.ttsModel}|${voice}|${text}`;
+    const key = `${store.settings.ttsModel}|${voice}|${text}`;
     let item = cache.get(key);
     if (!item) {
       onProgress?.({ phase: 'tts', index: i, total: script.length, text: `Synthesizing narration for slide ${i + 1}…` });
-      const entry = store.log({ type: 'tts_call', where, stage: 'Lecture video', model: store.project.settings.ttsModel, voice, slide: s.slide_id, chars: text.length, status: 'running' });
+      const entry = store.log({ type: 'tts_call', where, stage: 'Lecture video', model: store.settings.ttsModel, voice, slide: s.slide_id, chars: text.length, status: 'running' });
       const t0 = performance.now();
       try {
         const buffer = await client.speak(text, { voice, instructions: TTS_INSTRUCTIONS });

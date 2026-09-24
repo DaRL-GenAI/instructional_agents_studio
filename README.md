@@ -6,11 +6,22 @@ A browser-only edition of [Instructional Agents](https://github.com/DaRL-GenAI/i
 (EACL 2026). Bring your own OpenAI-compatible API key and generate a complete course without installing
 anything. The key is stored in your browser and sent only to the API endpoint you configure.
 
-## What it generates
+## How it is organised
 
-| Course level (ADDIE deliberations) | Per chapter |
+Every **project** is one course. Its modules, in the order you normally work:
+
+| Module | What lives there |
 |---|---|
-| Instructional goals · Learner analysis · Resource & constraints · Syllabus · Assessment plan · Final project | Slides outline · Slides (HTML deck, Beamer `.tex`, `.pptx`) · Lecture script · Homework · Hands-on lab · Narrated lecture video (WebM + `.vtt` captions) |
+| **Course basics** | Course facts, learner profile, instructor requirements, optional textbook / notes for grounding, per-project model overrides |
+| **Course design** | The six ADDIE deliberations (instructional goals, learner analysis, resources & constraints, syllabus, assessment plan, final project) and the chapter list extracted from the syllabus |
+| **Slides** | Per chapter: outline → slides → lecture script; export as HTML deck, Beamer `.tex` or `.pptx` |
+| **Assessments** | Per chapter: homework, hands-on lab, quiz (structured editor); course level: midterm and final exams with blueprints and answer keys |
+| **Lecture videos** | Per chapter: narration (TTS) and an in-browser recording with WebVTT captions; audio and video are kept in the browser |
+| **Audit trail** | Every model call, TTS call, edit, prompt change, approval and export, with hashes |
+
+**Account** (personal center): generation defaults (model, endpoint, deliberation mode, sizes, voice, theme),
+API key & privacy (what leaves the browser), project management (rename, duplicate, import/export, delete),
+data & storage (IndexedDB usage, persistent-storage request, delete everything).
 
 Each foundation stage runs the same three-agent deliberation as the Python pipeline
 (Teaching Faculty → Instructional Designer / Committee → Summarizer; prompts mirrored from
@@ -20,10 +31,16 @@ Each foundation stage runs the same three-agent deliberation as the Python pipel
 
 - **Prompt tab**: the exact system and user prompts, editable before every run; defaults are rebuilt from the current inputs.
 - **Transcript tab**: every agent response streamed and kept, with model, tokens and latency.
-- **Output tab**: every deliverable is editable (structured editors for slides and script), with version history and restore.
+- **Output tab**: every deliverable is editable (structured editors for slides, script and quiz), with version history and restore.
 - **Provenance tab**: hashes of every input a stage consumed; stages whose inputs changed are flagged as stale.
-- **Audit trail**: every model call, TTS call, edit, prompt change, approval and export, exportable as JSON/Markdown and bundled into the project ZIP.
-- **Textbook grounding (optional)**: upload a PDF/text; excerpts are retrieved per chapter and shown in Provenance.
+- **Audit trail**: exportable as JSON/Markdown and bundled into the project ZIP.
+
+## Storage
+
+Projects, narration audio and recorded videos are saved in the browser's IndexedDB (with an in-memory
+fallback). Coming back in the same browser restores everything; use *Account → Projects* to export a
+project as JSON and import it elsewhere. *Account → Data & storage* can request persistent storage so the
+browser does not evict the data.
 
 ## Video
 
@@ -40,9 +57,11 @@ python -m http.server 8000
 # http://localhost:8000/
 ```
 
-Layout: `index.html`, `studio.css`, `js/llm.js` (API client), `js/prompts.js` (agent prompts),
+Layout: `index.html` (shell + SVG icon sprite), `css/tokens.css` (design tokens), `css/app.css`,
+`js/app.js` (shell, routing), `js/router.js`, `js/ui.js` (components), `js/db.js` (IndexedDB),
+`js/state.js` (account, projects, audit), `js/llm.js` (API client), `js/prompts.js` (agent prompts),
 `js/pipeline.js` (stage runners, retrieval), `js/slides.js` (HTML / Beamer / PPTX), `js/video.js`
-(TTS + recording), `js/export.js` (ZIP), `js/state.js` (persistence + audit), `js/app.js` (UI).
+(TTS + recording), `js/export.js` (ZIP), `js/views/*` (one file per module and the account pages).
 Third-party libraries are loaded on demand from cdnjs: JSZip, PptxGenJS, pdf.js, marked.
 
 ## Citation

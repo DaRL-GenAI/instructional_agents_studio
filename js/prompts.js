@@ -123,12 +123,17 @@ export const FOUNDATION = [
 ];
 
 export const CHAPTER_STAGES = [
-  { id: 'outline', name: 'Slides outline', kind: 'json', file: 'outline.json', agent: 'slides_designer' },
-  { id: 'slides', name: 'Slides', kind: 'slides', file: 'slides.json', agent: 'slides_faculty' },
-  { id: 'script', name: 'Lecture script', kind: 'script', file: 'script.md', agent: 'script_writer' },
-  { id: 'homework', name: 'Homework', kind: 'md', file: 'homework.md', agent: 'teaching_assistant' },
-  { id: 'lab', name: 'Lab', kind: 'md', file: 'lab.md', agent: 'teaching_assistant' },
-  { id: 'video', name: 'Lecture video', kind: 'video', file: 'video.webm', agent: null },
+  { id: 'outline', name: 'Slides outline', kind: 'json', file: 'outline.json', agent: 'slides_designer', module: 'slides' },
+  { id: 'slides', name: 'Slides', kind: 'slides', file: 'slides.json', agent: 'slides_faculty', module: 'slides' },
+  { id: 'script', name: 'Lecture script', kind: 'script', file: 'script.md', agent: 'script_writer', module: 'slides' },
+  { id: 'homework', name: 'Homework', kind: 'md', file: 'homework.md', agent: 'teaching_assistant', module: 'assessments' },
+  { id: 'lab', name: 'Lab', kind: 'md', file: 'lab.md', agent: 'teaching_assistant', module: 'assessments' },
+  { id: 'quiz', name: 'Quiz', kind: 'quiz', file: 'quiz.json', agent: 'teaching_assistant', module: 'assessments' },
+  { id: 'video', name: 'Lecture video', kind: 'video', file: 'video.webm', agent: null, module: 'videos' },
+];
+export const EXAMS = [
+  { id: 'midterm', name: 'Midterm exam', file: 'midterm_exam.md', scope: 'first half' },
+  { id: 'final', name: 'Final exam', file: 'final_exam.md', scope: 'whole course' },
 ];
 
 export function courseContext(course) {
@@ -296,6 +301,45 @@ Write the lab in Markdown with these sections:
 7. **Grading rubric** (table)
 8. **Instructor notes** (common errors, timing, solutions sketch) under a heading "Instructor only"
 Make every step concrete enough that a student can follow it without the instructor.`,
+
+  quiz: (course, chapter, slides, n, assessmentPlan, textbook) => `Create a ${n}-question quiz for this chapter.
+
+${courseContext(course)}
+
+Chapter: ${chapter.title}
+Description: ${chapter.description}
+
+Slide titles and key points:
+${slides.map(s => `- ${s.title}: ${(s.bullets || []).join('; ')}`).join('\n')}
+
+${assessmentPlan ? `Course assessment plan (follow its question formats and difficulty):\n${assessmentPlan}\n` : ''}${textbook ? `${textbook}\n` : ''}
+Mix question types: mostly multiple choice (4 options, exactly one correct), plus 1–2 true/false and 1–2 short-answer items.
+Each question must test understanding, not recall of wording; include distractors that reflect common misconceptions.
+
+Return a JSON array:
+[
+  {"id": 1, "type": "multiple_choice", "question": "...", "options": ["A) ...", "B) ...", "C) ...", "D) ..."], "answer": "B", "explanation": "why B is correct and the others are not", "objective": "the learning objective assessed", "difficulty": "easy|medium|hard"},
+  {"id": 2, "type": "true_false", "question": "...", "options": ["True", "False"], "answer": "True", "explanation": "...", "objective": "...", "difficulty": "easy"},
+  {"id": 3, "type": "short_answer", "question": "...", "options": [], "answer": "model answer in 1–3 sentences", "explanation": "grading notes", "objective": "...", "difficulty": "medium"}
+]
+Your response must be valid JSON.`,
+
+  exam: (course, exam, chapters, assessmentPlan, finalProject) => `Write the ${exam.name.toLowerCase()} for this course, covering the ${exam.scope}.
+
+${courseContext(course)}
+
+Chapters covered (with key points):
+${chapters.map((c, i) => `${i + 1}. ${c.title}: ${c.points.join('; ') || c.description}`).join('\n')}
+
+${assessmentPlan ? `Course assessment plan (follow its weighting, formats and academic-integrity policy):\n${assessmentPlan}\n` : ''}${exam.id === 'final' && finalProject ? `Note: the course also has a final project; the exam should complement it, not duplicate it:\n${finalProject.slice(0, 1500)}\n` : ''}
+Write the exam in Markdown with these sections:
+1. **Exam information** (duration, total points, allowed materials, instructions)
+2. **Part A – Multiple choice** (10 questions, 2 points each; options A–D)
+3. **Part B – Short answer** (5 questions, 6 points each)
+4. **Part C – Problem solving / analysis** (2–3 extended problems, 15–20 points each; may include code or data analysis)
+5. **Blueprint table** mapping every question to a chapter and a learning objective with its point value
+6. **Answer key and rubric** under a heading "Instructor only"
+Balance coverage across the chapters listed above. Questions must be answerable from the course material.`,
 
   review: (kind, text) => `Review the following ${kind} for factual accuracy, alignment with the stated objectives, appropriate difficulty and clarity.
 

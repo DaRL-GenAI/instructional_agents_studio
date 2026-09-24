@@ -1,5 +1,5 @@
 // export.js — downloads and the project ZIP bundle.
-import { FOUNDATION, CHAPTER_STAGES } from './prompts.js';
+import { FOUNDATION, CHAPTER_STAGES, EXAMS } from './prompts.js';
 import { toBeamer, toHtmlDeck } from './slides.js';
 import { safeJson } from './pipeline.js';
 
@@ -42,6 +42,7 @@ export async function buildZip(project, media = {}) {
     for (const s of CHAPTER_STAGES) {
       const st = ch.stages[s.id]; if (!st?.output) continue;
       if (s.kind === 'md' || s.kind === 'json') dir.file(s.file, st.output);
+      if (s.kind === 'quiz') { dir.file('quiz.json', st.output); dir.file('quiz.md', quizMarkdown(ch, safeJson(st.output, []))); }
       if (s.kind === 'slides') dir.file('slides.json', st.output);
       if (s.kind === 'script') { dir.file('script.json', st.output); dir.file('script.md', scriptMarkdown(ch, script)); }
       if (st.transcript?.length) dir.file(`transcripts/${s.id}.md`, transcriptMarkdown(s.name, st));
@@ -55,6 +56,7 @@ export async function buildZip(project, media = {}) {
     if (m?.video?.blob) dir.file(`lecture.${m.video.mime.includes('mp4') ? 'mp4' : 'webm'}`, m.video.blob);
     if (m?.audios) m.audios.forEach((a, j) => { if (a?.buffer) dir.file(`narration/slide_${String(j + 1).padStart(2, '0')}.mp3`, a.buffer); });
   });
+  for (const ex of EXAMS) { const st = project.exams?.[ex.id]; if (st?.output) course.file(ex.file, st.output); if (st?.transcript?.length) course.file(`transcripts/${ex.id}.md`, transcriptMarkdown(ex.name, st)); }
   root.file('audit_log.json', JSON.stringify(project.audit, null, 2));
   root.file('audit_log.md', auditMarkdown(project));
   root.file('project.json', JSON.stringify(project, null, 2));
@@ -73,4 +75,10 @@ export function transcriptMarkdown(name, stage) {
 export function auditMarkdown(project) {
   const rows = project.audit.map(a => `| ${a.id} | ${a.ts} | ${a.type} | ${a.where || ''} | ${a.stage || ''} | ${a.agent || a.model || ''} | ${a.status || ''} | ${a.tokens ?? a.chars ?? ''} | ${a.ms ?? ''} | ${a.hash || a.responseHash || ''} |`);
   return `# Audit log — ${project.course.name}\n\n| # | time | type | where | stage | agent/model | status | tokens/chars | ms | hash |\n|---|---|---|---|---|---|---|---|---|---|\n${rows.join('\n')}\n`;
+}
+
+export function quizMarkdown(chapter, quiz) {
+  const q = quiz.map((x, i) => `### ${i + 1}. ${x.question}\n\n${x.options.map(o => `- ${o}`).join('\n')}${x.options.length ? '\n' : ''}`).join('\n');
+  const key = quiz.map((x, i) => `${i + 1}. **${x.answer}** — ${x.explanation}${x.objective ? ` _(objective: ${x.objective})_` : ''}`).join('\n');
+  return `# Quiz — ${chapter.title}\n\n${q}\n\n---\n\n## Answer key (instructor only)\n\n${key}\n`;
 }
