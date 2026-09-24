@@ -108,6 +108,17 @@ export class LLMClient {
   }
 }
 
+/** Image generation (OpenAI images API). Returns a data URL. */
+LLMClient.prototype.image = async function (prompt, { model = 'gpt-image-1', size = '1536x1024', quality = 'low', signal } = {}) {
+  const body = { model, prompt, size, quality, n: 1, output_format: 'png' };
+  const r = await fetch(`${this.base}/images/generations`, { method: 'POST', headers: this.headers, body: JSON.stringify(body), signal });
+  if (!r.ok) throw new LLMError(`Image error ${r.status}`, await r.text());
+  const j = await r.json(); const item = j.data?.[0];
+  if (item?.b64_json) return `data:image/png;base64,${item.b64_json}`;
+  if (item?.url) return item.url;
+  throw new LLMError('Image API returned no image');
+};
+
 export function estimateTokens(s) { return Math.ceil((s || '').length / 4); }
 
 /** Extract the first JSON array/object from a model response (mirrors the Python regex fallbacks). */

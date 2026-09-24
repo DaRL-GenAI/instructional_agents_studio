@@ -71,6 +71,10 @@ export const AGENTS = {
     name: 'Teaching Assistant', role: 'Assessment and lab author',
     system: 'You are a Teaching Assistant who writes homework, quizzes and hands-on labs. Your questions are unambiguous, aligned with the stated learning objectives, and come with model answers, rubrics and common pitfalls.',
   },
+  lesson_planner: {
+    name: 'Lesson Director', role: 'Main agent of the teaching-media pipeline (EduCast)',
+    system: 'You are the Main Agent (director) of a teaching-media pipeline. You turn lecture material into an ordered set of animated teaching scenes that a renderer can draw without further interpretation: every scene has a spoken narration, short lecture lines that light up as they are spoken, one visual beat whose elements build step by step, and a takeaway. You plan content, not styling.',
+  },
   reviewer: {
     name: 'Program Chair', role: 'Quality reviewer',
     system: 'You are a Program Chair reviewing generated teaching materials for accuracy, alignment with objectives, appropriate difficulty and clarity. You give a short, specific list of issues and a 1–10 score.',
@@ -129,6 +133,7 @@ export const CHAPTER_STAGES = [
   { id: 'homework', name: 'Homework', kind: 'md', file: 'homework.md', agent: 'teaching_assistant', module: 'assessments' },
   { id: 'lab', name: 'Lab', kind: 'md', file: 'lab.md', agent: 'teaching_assistant', module: 'assessments' },
   { id: 'quiz', name: 'Quiz', kind: 'quiz', file: 'quiz.json', agent: 'teaching_assistant', module: 'assessments' },
+  { id: 'storyboard', name: 'Storyboard', kind: 'storyboard', file: 'storyboard.json', agent: 'lesson_planner', module: 'videos' },
   { id: 'video', name: 'Lecture video', kind: 'video', file: 'video.webm', agent: null, module: 'videos' },
 ];
 export const EXAMS = [
@@ -347,6 +352,39 @@ Write the exam in Markdown with these sections:
 5. **Blueprint table** mapping every question to a chapter and a learning objective with its point value
 6. **Answer key and rubric** under a heading "Instructor only"
 Balance coverage across the chapters listed above. Questions must be answerable from the course material.`,
+
+  storyboard: (course, chapter, slides, script, { illustrations = true, sceneCount = '6–8' } = {}) => `Plan the animated lesson for this chapter as a storyboard of teaching scenes.
+
+${courseContext(course)}
+
+Chapter: ${chapter.title}
+Description: ${chapter.description}
+
+Lecture material (slides with the lecturer's narration):
+${slides.map((s, i) => `--- Slide ${s.slide_id || i + 1}: ${s.title}\n${(s.bullets || []).map(b => `- ${b}`).join('\n')}${s.code ? `\ncode: ${s.code.slice(0, 300)}` : ''}\nnarration: ${(script.find(x => x.slide_id === (s.slide_id || i + 1)) || script[i] || {}).narration || ''}`).join('\n')}
+
+Rules:
+1. Split the material into ${sceneCount} ordered scenes of 15–40 seconds each. Scene 1 is a "title_card"; the last scene is a "recap".
+2. Give every scene exactly one beat and fill its "visual" fields:
+   - title_card: {"subtitle","accent_label"}  (opener; no lecture lines)
+   - bullets: {"bullets":[3–4 short lines],"highlights":[key terms that appear in the bullets]}
+   - formula: {"formula":"the key equation or rule in plain text","bullets":[2–3 lines explaining its parts],"highlights":[symbols]}
+   - compare: {"left_title","left_items":[2–4],"right_title","right_items":[2–4],"formula":"optional rule both sides obey"}
+   - steps: {"steps":[3–5 numbered actions]}
+   - stat_row: {"stats":[{"value":"92","unit":"%","name":"what it measures"}]}  (2–4; only real or clearly illustrative numbers)
+   - diagram: {"nodes":[{"id","label","kind":"input|process|result|danger"}],"edges":[{"from","to","label"}],"caption"}  (3–7 nodes; use for structures, flows, relationships — this is the drawing scene)
+   - chart: {"type":"bar|line|pie","labels":[…],"series":[{"name","values":[…]}],"unit","highlight":"label to emphasise"}
+   - recap: {"bullets":[3–5 takeaways],"formula":"optional"}
+   ${illustrations ? '- illustration: {"prompt":"a complete, concrete description of one teaching illustration (central concept, 3–5 labelled components, visual flow, no text other than the labels)","labels":[the 3–5 labels],"caption"}  (use for intuition/metaphor scenes; at most 2 per lesson)' : '- (illustration scenes are disabled: use diagram, formula or compare for intuition scenes)'}
+   Use at least three different beats; never the same beat on consecutive scenes; include at least one diagram or chart scene when the topic has structure or data.
+3. "lecture_lines": 3 short plain teaching sentences per scene (5 for at most two scenes marked "key_scene": true). "animations": one entry per lecture line saying what appears, moves or changes while that line is spoken.
+4. "narration": the spoken teacher voice for the scene, 3–6 natural sentences, no markdown, written in ${course.language || 'English'}; "target_seconds" ≈ words ÷ 2.6.
+5. "takeaway": one sentence (≤ 18 words) shown in the result strip near the end of the scene.
+6. "key_elements": 2–5 checkable things that must be visible in the visual.
+
+Return ONLY this JSON object:
+{"scenes":[{"id":"s1-title","title":"…","beat":"title_card","narration":"…","lecture_lines":[],"animations":[],"takeaway":"…","key_scene":false,"target_seconds":18,"key_elements":[],"visual":{…}}]}
+Your response must be valid JSON.`,
 
   review: (kind, text) => `Review the following ${kind} for factual accuracy, alignment with the stated objectives, appropriate difficulty and clarity.
 

@@ -16,7 +16,7 @@ Every **project** is one course. Its modules, in the order you normally work:
 | **Course design** | The six ADDIE deliberations (instructional goals, learner analysis, resources & constraints, syllabus, assessment plan, final project) and the chapter list extracted from the syllabus |
 | **Slides** | Per chapter: outline → slides → lecture script. Decks are designed as PowerPoint: a layout engine renders each slide (title, bullets + callout, two columns, numbered rows, 2×2 grid, stat callouts, process flow, code, native charts, statement, summary) into a live preview, the `.pptx` download and the lecture video. Deck template per project: automatic palette, ten built-in palettes, or your own `.pptx`/`.potx` (theme colours, fonts and master background are read in the browser) |
 | **Assessments** | Per chapter: homework, hands-on lab, quiz (structured editor); course level: midterm and final exams with blueprints and answer keys |
-| **Lecture videos** | Per chapter: narration (TTS) and an in-browser recording with WebVTT captions; audio and video are kept in the browser |
+| **Lecture videos** | Per chapter, two options: (1) narrated slides — each PowerPoint slide shown while its script narration plays; (2) animated lesson (EduCast-style) — a Lesson Director agent plans 6–8 teaching scenes (title card, bullets, formula, compare, steps, stat counters, diagram, chart, illustration, recap) that animate on the EduCast teaching board in sync with the narration, with optional AI illustrations and character accents. Both are recorded in the browser with WebVTT captions |
 | **Audit trail** | Every model call, TTS call, edit, prompt change, approval and export, with hashes |
 
 **Account** (personal center): generation defaults (model, endpoint, deliberation mode, sizes, voice, theme),
@@ -45,8 +45,10 @@ browser does not evict the data.
 
 ## Video
 
-Narration is synthesized per slide with the OpenAI speech API; the deck is drawn on a canvas and recorded with
-the MediaRecorder API into WebM, with proportional WebVTT captions. For MP4 output from LaTeX-Beamer decks use
+Narration is synthesized per slide or per scene with the OpenAI speech API; frames are drawn on a canvas in sync
+with the audio clock and recorded with the MediaRecorder API into WebM, with proportional WebVTT captions. The
+animated option follows EduCast's EduHarness design (scene planning prompt, teaching-board layout, lecture lines
+that light up, one visual beat per scene, takeaway strip, characters); illustrations use the OpenAI image API. For MP4 output from LaTeX-Beamer decks use
 the Python pipeline's `--video` option ([docs](https://github.com/DaRL-GenAI/instructional_agents/blob/upgrade/docs/VIDEO_GENERATION.md)).
 
 ## Development

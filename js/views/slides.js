@@ -28,7 +28,7 @@ const SAMPLE = [
   { slide_id: 1, layout: 'title', title: 'Chapter title', subtitle: 'What this session covers' },
   { slide_id: 2, layout: 'icon_rows', title: 'Three ideas', items: [{ header: 'First', text: 'A short explanation' }, { header: 'Second', text: 'A short explanation' }, { header: 'Third', text: 'A short explanation' }] },
 ];
-function mini(themeObj, meta) { return el('div', { class: 'tpl-mini' }, ...SAMPLE.map((s, i) => el('div', { class: 'tpl-mini-slide', html: slideToHtml(s, themeObj, i, 2, meta) }))); }
+function mini(themeObj, meta) { return el('div', { class: 'tpl-mini' }, ...SAMPLE.map((s, i) => el('div', { class: 'tpl-mini-slide' }, el('div', { class: 'thumb-scale', html: slideToHtml(s, themeObj, i, 2, meta) })))); }
 
 function templatePanel(ctx, ui) {
   const { store } = ctx; const p = store.project; const deck = p.deck; const meta = { course: p.course.name || 'Course', chapter: 'Chapter' };

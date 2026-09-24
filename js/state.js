@@ -17,6 +17,9 @@ export const DEFAULT_SETTINGS = {
   deliberation: 'full',
   slidesPerChapter: 10,
   quizQuestions: 8,
+  characters: true,        // EduCast character accents in animated lessons
+  illustrations: true,     // allow illustration scenes (image API)
+  imageQuality: 'low',
   theme: 'system',
   rememberKey: false,
   language: 'en',

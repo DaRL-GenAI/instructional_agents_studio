@@ -1,6 +1,7 @@
 // video.js — narrated lecture video, produced entirely in the browser:
 // TTS per slide (OpenAI /audio/speech) → canvas slides → MediaRecorder (WebM) + WebVTT captions.
 import { drawSlideCanvas, resolveTheme } from './deck.js';
+import { drawScene, W as SW, H as SH } from './scenes.js';
 export const W = 1280, H = 720;
 
 export const TTS_INSTRUCTIONS = 'Warm, clear teacher voice. Speak at a measured lecture pace, with natural emphasis on key terms.';
@@ -156,4 +157,68 @@ export async function loadThemeImages(theme) {
   const out = {};
   if (theme?.background) { try { out[theme.background] = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = theme.background; }); } catch { /* ignore */ } }
   return out;
+}
+
+// ---------------------------------------------------------------- animated lesson (EduCast-style)
+/**
+ * Record the storyboard: each scene is drawn frame by frame (rAF) while its narration plays; the scene's
+ * progress p = elapsed / (narration + tail). audios: [{decoded, seconds}] aligned with scenes.
+ */
+export async function recordAnimated({ scenes, audios, theme, meta, assets, pad = 0.6, fps = 30, onProgress, signal }) {
+  const mime = pickMime();
+  if (!mime) throw new Error('This browser cannot record video (MediaRecorder unsupported). Try Chrome, Edge or Firefox.');
+  const canvas = document.createElement('canvas'); canvas.width = SW; canvas.height = SH;
+  const ctx = canvas.getContext('2d');
+  const audioCtx = getAudioContext(); if (audioCtx.state === 'suspended') await audioCtx.resume();
+  const dest = audioCtx.createMediaStreamDestination();
+  const stream = new MediaStream([...canvas.captureStream(fps).getVideoTracks(), ...dest.stream.getAudioTracks()]);
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 5_000_000 });
+  const chunks = []; rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  const stopped = new Promise(res => { rec.onstop = res; });
+  const timeline = []; rec.start(500); const t0 = audioCtx.currentTime;
+  try {
+    for (let i = 0; i < scenes.length; i++) {
+      if (signal?.aborted) throw new Error('Recording cancelled');
+      const a = audios[i]; const dur = (a?.decoded?.duration || Math.max(4, scenes[i].target_seconds || 8)) + pad;
+      onProgress?.({ phase: 'record', index: i, total: scenes.length, text: `Recording scene ${i + 1} of ${scenes.length}: ${scenes[i].title}` });
+      const start = audioCtx.currentTime;
+      if (a?.decoded) { const src = audioCtx.createBufferSource(); src.buffer = a.decoded; src.connect(dest); src.start(); }
+      await new Promise((res, rej) => {
+        const tick = () => { if (signal?.aborted) return rej(new Error('Recording cancelled')); const el = audioCtx.currentTime - start; drawScene(ctx, scenes[i], theme, Math.min(1, el / Math.max(dur - pad, 0.1)), { index: i, total: scenes.length, assets, meta }); if (el >= dur) res(); else requestAnimationFrame(tick); };
+        tick();
+      });
+      timeline.push({ id: scenes[i].id, title: scenes[i].title, start: +(start - t0).toFixed(2), end: +(audioCtx.currentTime - t0).toFixed(2) });
+    }
+  } finally { rec.stop(); await stopped; stream.getTracks().forEach(tr => tr.stop()); }
+  const blob = new Blob(chunks, { type: mime.split(';')[0] });
+  return { blob, mime, seconds: timeline.at(-1)?.end || 0, timeline };
+}
+
+/** Preview player for the animated lesson: plays narration and animates; click a scene to jump. */
+export function mountAnimatedPreview(container, { scenes, audios, theme, meta, assets, onScene }) {
+  container.innerHTML = '';
+  const canvas = document.createElement('canvas'); canvas.width = SW; canvas.height = SH; canvas.className = 'video-canvas';
+  const ctx = canvas.getContext('2d');
+  const bar = document.createElement('div'); bar.className = 'video-controls';
+  const play = document.createElement('button'); play.className = 'btn sm'; play.textContent = 'Play preview';
+  const stop = document.createElement('button'); stop.className = 'btn sm'; stop.textContent = 'Stop';
+  const scrub = document.createElement('input'); scrub.type = 'range'; scrub.min = 0; scrub.max = 1000; scrub.value = 0; scrub.style.flex = '1'; scrub.setAttribute('aria-label', 'Scene progress');
+  const pos = document.createElement('span'); pos.className = 'mono';
+  bar.append(play, stop, scrub, pos); container.append(canvas, bar);
+  let i = 0, playing = false, src = null, raf = 0;
+  const draw = p => { drawScene(ctx, scenes[i], theme, p, { index: i, total: scenes.length, assets, meta }); pos.textContent = `${i + 1} / ${scenes.length}`; onScene?.(i, p); };
+  scrub.oninput = () => { if (!playing) draw(scrub.value / 1000); };
+  draw(0.999);
+  play.onclick = async () => {
+    if (playing) return; playing = true; const actx = getAudioContext(); if (actx.state === 'suspended') await actx.resume();
+    for (; i < scenes.length && playing; i++) {
+      const a = audios?.[i]; const dur = a?.decoded?.duration || Math.max(4, scenes[i].target_seconds || 8);
+      const start = actx.currentTime; if (a?.decoded) { src = actx.createBufferSource(); src.buffer = a.decoded; src.connect(actx.destination); src.start(); }
+      await new Promise(res => { const tick = () => { const el = actx.currentTime - start; const p = Math.min(1, el / dur); draw(p); scrub.value = Math.round(p * 1000); if (!playing || el >= dur + 0.4) res(); else raf = requestAnimationFrame(tick); }; tick(); });
+      try { src?.stop(); } catch { /* ignore */ }
+    }
+    if (i >= scenes.length) i = 0; playing = false; draw(0.999);
+  };
+  stop.onclick = () => { playing = false; cancelAnimationFrame(raf); try { src?.stop(); } catch { /* ignore */ } };
+  return { redraw: draw, select: k => { if (playing) return; i = Math.max(0, Math.min(scenes.length - 1, k)); draw(0.999); }, get scene() { return i; } };
 }

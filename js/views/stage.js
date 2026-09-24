@@ -3,6 +3,7 @@ import { el, button, badge, tabs, field, textarea, input, notice, empty, renderM
 import { safeJson } from '../pipeline.js';
 import { sha1Short as hashOf } from '../llm.js';
 import { deckEditor, downloadPptx } from './deckeditor.js';
+import { storyboardEditor } from './storyboard.js';
 import { download, textBlob, slug, scriptMarkdown, quizMarkdown } from '../export.js';
 
 export function stageStatus(pipe, stage, inputs) {
@@ -109,6 +110,7 @@ function outputEditor(ctx, o) {
   }
   if (!ctx.ui[o.key]?.forceRaw) {
     if (o.kind === 'slides') return deckEditor(ctx, o) || invalidOutput(ctx, o, 'slide deck');
+    if (o.kind === 'storyboard') return storyboardEditor(ctx, o) || invalidOutput(ctx, o, 'storyboard');
     if (o.kind === 'json' && o.file === 'outline.json') return outlineEditor(ctx, o) || invalidOutput(ctx, o, 'outline');
     if (o.kind === 'script') return scriptEditor(ctx, o);
     if (o.kind === 'quiz') return quizEditor(ctx, o);

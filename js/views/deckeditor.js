@@ -38,7 +38,7 @@ export function deckEditor(ctx, o) {
   const form = el('div', { class: 'slide-form' });
   const counter = el('span', { class: 'meta' });
   const renderBig = () => { big.innerHTML = slideToHtml(deck.slides[current], theme, current, deck.slides.length, meta); counter.textContent = `${current + 1} / ${deck.slides.length} · ${LAYOUT_LABEL[deck.slides[current].layout] || deck.slides[current].layout}`; };
-  const renderStrip = () => { strip.innerHTML = ''; deck.slides.forEach((s, i) => strip.append(el('button', { class: 'deck-thumb', role: 'option', 'aria-current': String(i === current), title: s.title, onClick: () => { current = i; ui.slide = i; renderStrip(); renderBig(); buildForm(); } }, el('div', { class: 'deck-thumb-img', html: slideToHtml(s, theme, i, deck.slides.length, meta) }), el('span', {}, `${i + 1}`)))); };
+  const renderStrip = () => { strip.innerHTML = ''; deck.slides.forEach((s, i) => strip.append(el('button', { class: 'deck-thumb', role: 'option', 'aria-current': String(i === current), title: s.title, onClick: () => { current = i; ui.slide = i; renderStrip(); renderBig(); buildForm(); } }, el('div', { class: 'deck-thumb-img' }, el('div', { class: 'thumb-scale', html: slideToHtml(s, theme, i, deck.slides.length, meta) })), el('span', {}, `${i + 1}`)))); };
   const go = d => { current = Math.max(0, Math.min(deck.slides.length - 1, current + d)); ui.slide = current; renderStrip(); renderBig(); buildForm(); };
   const renumber = () => deck.slides.forEach((s, i) => { s.slide_id = i + 1; });
 

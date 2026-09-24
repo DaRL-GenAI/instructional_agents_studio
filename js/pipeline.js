@@ -2,6 +2,7 @@
 import { LLMClient, extractJson, sha1Short, toArray } from './llm.js';
 import { AGENTS, FOUNDATION, CHAPTER_STAGES, EXAMS, PROMPTS, courseContext, priorContext, textbookContext, revisionBlock, PALETTE_RULE_AUTO, PALETTE_RULE_FIXED } from './prompts.js';
 import { normalizeDeck, deckOf, PALETTE_NAMES, resolveTheme } from './deck.js';
+import { normalizeStoryboard } from './scenes.js';
 
 export class Pipeline {
   constructor(store) {
@@ -48,7 +49,8 @@ export class Pipeline {
     if (stageId === 'script') items.push(s('slides'));
     if (stageId === 'homework' || stageId === 'quiz') items.push(f('assessment_plan'), s('slides'));
     if (stageId === 'lab') items.push(f('resources'), s('slides'));
-    if (stageId === 'video') items.push(s('slides'), s('script'));
+    if (stageId === 'storyboard') items.push(s('slides'), s('script'));
+    if (stageId === 'video') items.push(s('slides'), s('script'), s('storyboard'));
     if (p.textbook.chunks.length && ['outline', 'slides', 'homework', 'lab', 'quiz'].includes(stageId)) {
       const chunks = this.retrieve(`${ch.title} ${ch.description}`);
       if (chunks.length) items.push({ label: `Textbook excerpts (${chunks.length})`, text: chunks.map(c => c.text).join('\n'), chunks });
@@ -92,6 +94,7 @@ export class Pipeline {
     if (stageId === 'homework') user = PROMPTS.homework(p.course, ch, slides.map(slideSummary), out('assessment_plan'), tb);
     if (stageId === 'lab') user = PROMPTS.lab(p.course, ch, slides.map(slideSummary), out('resources'), tb);
     if (stageId === 'quiz') user = PROMPTS.quiz(p.course, ch, slides.map(slideSummary), this.settings.quizQuestions || 8, out('assessment_plan'), tb);
+    if (stageId === 'storyboard') user = PROMPTS.storyboard(p.course, ch, slides.map(slideSummary), safeJson(ch.stages.script?.output, []) || [], { illustrations: this.settings.illustrations !== false });
     const a = AGENTS[st.agent];
     return { custom: false, agents: [{ key: st.agent, name: a.name, role: a.role, system: a.system }], user };
   }
@@ -163,14 +166,14 @@ export class Pipeline {
   async runChapterStage(chapterId, stageId, { feedback } = {}) {
     const ch = this.store.chapter(chapterId); const st = CHAPTER_STAGES.find(s => s.id === stageId); const stage = this.store.chapterStage(chapterId, stageId);
     const inputs = this.chapterInputs(chapterId, stageId);
-    const need = { slides: ['outline'], script: ['slides'], homework: ['slides'], lab: ['slides'], quiz: ['slides'] }[stageId] || [];
+    const need = { slides: ['outline'], script: ['slides'], homework: ['slides'], lab: ['slides'], quiz: ['slides'], storyboard: ['slides', 'script'] }[stageId] || [];
     for (const n of need) if (ch.stages[n]?.status !== 'done') throw new Error(`Generate "${CHAPTER_STAGES.find(s => s.id === n).name}" for this chapter first.`);
-    const jsonKinds = ['outline', 'slides', 'script', 'quiz'];
+    const jsonKinds = ['outline', 'slides', 'script', 'quiz', 'storyboard'];
     const prompt = this.promptFor(stage, this.defaultChapterPrompt(chapterId, stageId), feedback, jsonKinds.includes(stageId) ? 'json' : 'text', `${ch.title} / ${st.name}`, ch.title);
     stage.status = 'running'; stage.error = null; this.store.save();
     const transcript = [], usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, t0 = performance.now(), key = `chapter:${chapterId}:${stageId}`;
     try {
-      const json = ['outline', 'slides', 'script', 'quiz'].includes(stageId);
+      const json = ['outline', 'slides', 'script', 'quiz', 'storyboard'].includes(stageId);
       const messages = [{ role: 'system', content: prompt.agents[0].system }, { role: 'user', content: prompt.user }];
       let text = await this.stream(key, transcript, usage, { where: ch.title, stage: st.name, agent: prompt.agents[0].name, json, messages });
       const parse = (t) => {
@@ -185,6 +188,7 @@ export class Pipeline {
         }
         if (stageId === 'script') return JSON.stringify(normalizeScript(extractJson(t, 'array'), itemsOf(ch.stages.slides?.output)), null, 2);
         if (stageId === 'quiz') return JSON.stringify(normalizeQuiz(extractJson(t, 'array')), null, 2);
+        if (stageId === 'storyboard') { const sb = normalizeStoryboard(extractJson(t, 'object')); if (sb.scenes.length < 3) throw new Error(`Only ${sb.scenes.length} scenes were returned`); return JSON.stringify(sb, null, 2); }
         return t.trim();
       };
       let output;
@@ -192,7 +196,7 @@ export class Pipeline {
       catch (e) {
         if (!json) throw e;
         // One strict retry: the model answered in an unexpected shape; ask for the bare array.
-        const strict = [...messages, { role: 'assistant', content: text }, { role: 'user', content: stageId === 'slides' ? `That reply could not be used (${e.message}). Reply again with ONLY the complete JSON object {"theme":…,"slides":[…]} requested above: one slide object for EVERY outline item, in order, with slides as a top-level array of objects, no prose, no code fences.` : stageId === 'script' ? `That reply could not be used (${e.message}). Reply again with ONLY a JSON array containing one {"slide_id", "narration"} object for EVERY slide listed above, in order, no wrapper object, no prose, no code fences.` : `That reply could not be used (${e.message}). Reply again with ONLY the JSON array requested above, as a top-level array of objects with exactly the specified fields, no wrapper object, no prose, no code fences.` }];
+        const strict = [...messages, { role: 'assistant', content: text }, { role: 'user', content: stageId === 'storyboard' ? `That reply could not be used (${e.message}). Reply again with ONLY the complete JSON object {"scenes":[…]} requested above, 6–8 scene objects, no prose, no code fences.` : stageId === 'slides' ? `That reply could not be used (${e.message}). Reply again with ONLY the complete JSON object {"theme":…,"slides":[…]} requested above: one slide object for EVERY outline item, in order, with slides as a top-level array of objects, no prose, no code fences.` : stageId === 'script' ? `That reply could not be used (${e.message}). Reply again with ONLY a JSON array containing one {"slide_id", "narration"} object for EVERY slide listed above, in order, no wrapper object, no prose, no code fences.` : `That reply could not be used (${e.message}). Reply again with ONLY the JSON array requested above, as a top-level array of objects with exactly the specified fields, no wrapper object, no prose, no code fences.` }];
         text = await this.stream(key, transcript, usage, { where: ch.title, stage: `${st.name} (retry)`, agent: prompt.agents[0].name, json: false, messages: strict });
         output = parse(text);
       }
