@@ -2,6 +2,8 @@
 // mirrored from src/ADDIE.py and src/slides.py of DaRL-GenAI/instructional_agents.
 // Everything here is shown to the user verbatim in the "Prompt" tab and can be edited before a run.
 
+import { practiceCatalogText } from './practice.js';
+
 export const AGENTS = {
   teaching_faculty_goals: {
     name: 'Teaching Faculty', role: 'Professor defining instructional goals',
@@ -353,7 +355,7 @@ Write the exam in Markdown with these sections:
 6. **Answer key and rubric** under a heading "Instructor only"
 Balance coverage across the chapters listed above. Questions must be answerable from the course material.`,
 
-  storyboard: (course, chapter, slides, script, { illustrations = true, sceneCount = '6-8' } = {}) => `Plan the animated lesson for this chapter as a storyboard of teaching scenes. Each scene is drawn on a teaching board: a title, a lecture column (the lecture_lines light up one by one), a large visual card in the middle (drawn from the "visual" object), and a takeaway strip.
+  storyboard: (course, chapter, slides, script, { illustrations = true, sceneCount = '6-8', practice = true } = {}) => `Plan the animated lesson for this chapter as a storyboard of teaching scenes. Each scene is drawn on a teaching board: a title, a lecture column (the lecture_lines light up one by one), a large visual card in the middle (drawn from the "visual" object), and a takeaway strip.
 
 ${courseContext(course)}
 
@@ -376,7 +378,11 @@ Rules:
    - chart: {"type": "bar|line|pie", "labels": ["A", "B"], "series": [{"name": "string", "values": [1, 2]}], "unit": "string", "highlight": "label to emphasise"}
    - recap: {"bullets": ["3-5 takeaways"], "formula": "optional"}
    ${illustrations ? '- illustration: {"prompt": "a complete, concrete description of one teaching illustration (central concept, 3-5 labelled components, visual flow, no text other than the labels)", "labels": ["the 3-5 labels"], "caption": "string"}  (use for intuition/metaphor scenes; at most 2 per lesson)' : '- (illustration scenes are disabled: use diagram, formula or compare for intuition scenes)'}
-   Use at least three different beats; never the same beat on consecutive scenes; include at least one diagram or chart scene when the topic has structure or data.
+   ${practice ? `- practice: {"template": "<template id from the list below>", "instruction": "student-facing task title", "parameters": {...exactly that template's parameters, filled with values from THIS chapter...}}  (an interactive check the student must complete in the lesson player; the video shows a "Your turn" card with the prompt and controls meanwhile)
+   PRACTICE TEMPLATES (id: description; parameters; defaults are for reference only):
+${practiceCatalogText()}` : '- (practice scenes are disabled)'}
+   Use at least three different beats; never the same beat on consecutive scenes; include at least one diagram or chart scene when the topic has structure or data.${practice ? `
+   Include exactly ONE practice scene, placed right after the core concept it tests (never first, never last). Its lecture_lines explain the task without revealing the answer, its takeaway must not give away the solution, its key_elements list only what is visible before the student answers (the prompt and the controls), and its parameters must satisfy every constraint in the catalog (2-6 distinct choices with a valid correct_index; drag_sort items shuffled and the same multiset as correct_order; number_line target inside [min, max] with tolerance at most a quarter of the range; fill_blank with one ___ per blank).` : ''}
 3. "lecture_lines": 3 short plain teaching sentences per scene (5 for at most two scenes marked "key_scene": true). "animations": one short string per lecture line saying what appears, moves or changes on the visual while that line is spoken.
 4. "narration": the spoken teacher voice for the scene, 3-6 natural sentences, no markdown, written in ${course.language || 'English'}; "target_seconds" is about words / 2.6.
 5. "takeaway": one sentence (18 words or fewer) shown in the result strip near the end of the scene.
@@ -386,6 +392,32 @@ Example of one complete scene object (follow this shape exactly for every scene;
 {"id": "s3", "title": "Entropy", "beat": "formula", "visual": {"formula": "H(S) = - sum_i p_i log2 p_i", "bullets": ["p_i is the share of class i", "0 bits for a pure node", "1 bit for a 50/50 split"], "highlights": ["H(S)", "p_i"]}, "lecture_lines": ["Entropy measures how mixed a node is.", "A pure node has entropy zero.", "A 50/50 split has entropy one bit."], "animations": ["formula appears", "first bullet lights up", "second and third bullets light up"], "narration": "Entropy tells us how mixed a node is. ...", "takeaway": "Entropy is zero for pure nodes and one bit for an even split.", "key_scene": true, "target_seconds": 28, "key_elements": ["formula", "three explaining bullets"]}
 
 Return ONLY a JSON object of the form {"scenes": [scene, scene, ...]} with ${sceneCount} complete scene objects. Put "visual" right after "beat" in each scene and never leave it empty. Your response must be valid JSON.`,
+
+  sceneRepair: (course, chapter, scene, verdict, { illustrations = true } = {}) => `Revise ONE scene of an animated-lesson storyboard after an independent visual review found problems.
+
+${courseContext(course)}
+
+Chapter: ${chapter.title}
+
+CURRENT SCENE (JSON):
+${JSON.stringify(scene, null, 2)}
+
+REVIEW VERDICT:
+- score: ${verdict.score}/10, brief adherence: ${verdict.brief_adherence}/10
+- missing key elements: ${(verdict.missing_key_elements || []).join('; ') || 'none'}
+- blocking issues: ${(verdict.blocking_issues || []).join(' | ') || 'none'}
+- layout issues: ${(verdict.layout_issues || []).join(' | ') || 'none'}
+- temporal issues: ${(verdict.temporal_issues || []).join(' | ') || 'none'}
+- minor issues: ${(verdict.minor_issues || []).join(' | ') || 'none'}
+- suggested action: ${verdict.fix_action || 're_render'}${verdict.fallback_instructions ? `\n- instructions: ${verdict.fallback_instructions}` : ''}
+
+Rules:
+1. Keep the same "id"${verdict.fix_action === 'change_tool' ? ' but you MAY change the "beat" to one that can show this content (bullets, formula, compare, steps, stat_row, diagram, chart, recap' + (illustrations ? ', illustration' : '') + ')' : ' and the same "beat"'}. Keep the narration unless an issue is about it.
+2. Fix every blocking issue and make every key element genuinely visible in the "visual" object. Text that overflowed must be shortened: bullets under 12 words, at most 4 bullets, formulas in plain text under 60 characters, node labels under 4 words, at most 6 nodes.
+3. Keep the visual keys for the beat exactly as in the original schema (bullets/highlights, formula/bullets/highlights, left_title/left_items/right_title/right_items/formula, steps, stats[{value,unit,name}], nodes[{id,label,kind}]/edges[{from,to,label}]/caption, type/labels/series[{name,values}]/unit/highlight, prompt/labels/caption, template/instruction/parameters).
+4. "key_elements" may be reworded to match what the visual can actually show, but never dropped to fewer than 2.
+
+Return ONLY the revised scene object as JSON (no wrapper, no prose). Your response must be valid JSON.`,
 
   review: (kind, text) => `Review the following ${kind} for factual accuracy, alignment with the stated objectives, appropriate difficulty and clarity.
 

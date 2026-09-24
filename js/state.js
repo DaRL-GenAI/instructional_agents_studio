@@ -20,6 +20,10 @@ export const DEFAULT_SETTINGS = {
   characters: true,        // EduCast character accents in animated lessons
   illustrations: true,     // allow illustration scenes (image API)
   imageQuality: 'low',
+  practice: true,          // one interactive practice scene per animated lesson
+  reviewModel: '',         // vision model for the visual reviewer ('' = same as the text model)
+  reviewRounds: 2,         // review → repair rounds for the storyboard
+  videoRes: '1080p',       // exported video resolution
   theme: 'system',
   rememberKey: false,
   language: 'en',
@@ -167,6 +171,15 @@ export class ProjectStore {
     if (stage.history.length > 10) stage.history.shift();
     Object.assign(stage, { output: newOutput, version: stage.version + 1, edited: true, status: 'done', error: null, outputHash: sha1Short(newOutput) });
     this.log({ type: 'edit', stage: label, where, chars: newOutput.length, version: stage.version, hash: stage.outputHash });
+    this.save(); return true;
+  }
+  /** A revision made by the pipeline itself (e.g. visual-review repairs): versioned and logged like an edit, but attributed to the agents. */
+  autoRevise(stage, label, newOutput, where, note) {
+    if (newOutput === stage.output) return false;
+    stage.history.push({ version: stage.version, output: stage.output, at: stage.ranAt, reason: stage.edited ? 'user edit' : (stage.repaired ? 'auto repair' : 'model output') });
+    if (stage.history.length > 10) stage.history.shift();
+    Object.assign(stage, { output: newOutput, version: stage.version + 1, status: 'done', error: null, outputHash: sha1Short(newOutput), repaired: note || 'auto repair' });
+    this.log({ type: 'auto_repair', stage: label, where, note, version: stage.version, hash: stage.outputHash });
     this.save(); return true;
   }
   applyResult(stage, label, result, where, extra = {}) {

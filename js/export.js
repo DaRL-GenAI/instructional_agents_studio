@@ -2,6 +2,9 @@
 import { FOUNDATION, CHAPTER_STAGES, EXAMS } from './prompts.js';
 import { deckOf, deckToPptx, resolveTheme } from './deck.js';
 import { safeJson } from './pipeline.js';
+import { buildVtt } from './video.js';
+import { storyboardOf } from './scenes.js';
+import { playerHtml } from './player.js';
 
 export function download(blob, name) {
   const url = URL.createObjectURL(blob);
@@ -48,19 +51,30 @@ export async function buildZip(project, media = {}) {
       if (st.transcript?.length) dir.file(`transcripts/${s.id}.md`, transcriptMarkdown(s.name, st));
     }
     if (slides) {
-      try { const deck = deckOf(ch.stages.slides.output); if (deck.slides.length) dir.file('slides.pptx', await deckToPptx(deck, resolveTheme(deck.theme, project.deck), { course: project.course.name, chapter: ch.title }, script)); }
+      try { const deck = deckOf(ch.stages.slides.output); if (deck.slides.length) dir.file('slides.pptx', await deckToPptx(deck, resolveTheme(deck.theme, project.deck), { course: project.course.name, chapter: ch.title }, script, { templateBlob: media.template?.blob || null })); }
       catch (e) { dir.file('slides_pptx_error.txt', String(e.message || e)); }
     }
-    const m = media[ch.id];
-    if (m?.vtt) dir.file('captions.vtt', m.vtt);
-    if (m?.video?.blob) dir.file(`lecture.${m.video.mime.includes('mp4') ? 'mp4' : 'webm'}`, m.video.blob);
+    const m = media[ch.id]; const ext = v => ((v?.mime || '').includes('mp4') ? 'mp4' : 'webm');
+    if (m?.video?.blob) { dir.file(`lecture_slides.${ext(m.video)}`, m.video.blob); try { dir.file('lecture_slides_captions.vtt', buildVtt(script, m.audios || [])); } catch { /* no captions */ } }
     if (m?.audios) m.audios.forEach((a, j) => { if (a?.buffer) dir.file(`narration/slide_${String(j + 1).padStart(2, '0')}.mp3`, a.buffer); });
+    if (m?.anim_video?.blob) { dir.file(`animated_lesson.${ext(m.anim_video)}`, m.anim_video.blob); try { const sb = storyboardOf(ch.stages.storyboard?.output); if (sb.scenes.length) dir.file('animated_lesson_captions.vtt', buildVtt(sb.scenes, m.scene_audios || [])); } catch { /* no captions */ } }
+    if (m?.scene_audios) m.scene_audios.forEach((a, j) => { if (a?.buffer) dir.file(`narration/scene_${String(j + 1).padStart(2, '0')}.mp3`, a.buffer); });
+    if (m?.images) for (const [id, url] of Object.entries(m.images)) { const b64 = String(url).split(',')[1]; if (b64) dir.file(`illustrations/${slug(id)}.png`, b64, { base64: true }); }
+    if (m?.lesson?.manifest && m?.anim_video?.blob) {
+      const lp = dir.folder('lesson_player'); const man = m.lesson.manifest;
+      for (const [path, content] of Object.entries(m.lesson.files || {})) lp.file(path, content);
+      lp.file(man.video?.src || `media/lesson.${ext(m.anim_video)}`, m.anim_video.blob);
+      lp.file('manifest.json', JSON.stringify(man, null, 2));
+      try { lp.file('index.html', playerHtml(man, { title: ch.title })); const rt = await fetch(new URL('./vendor/interactive-runtime.js', import.meta.url)).then(r => r.ok ? r.text() : ''); if (rt) lp.file('interactive-runtime.js', rt); } catch (e) { lp.file('index_error.txt', String(e.message || e)); }
+      lp.file('README.txt', 'Interactive lesson player (Instructional Agents Studio). Open index.html in a browser, or serve this folder over HTTP with byte-range support for seeking.\n');
+    }
   }
   for (const ex of EXAMS) { const st = project.exams?.[ex.id]; if (st?.output) course.file(ex.file, st.output); if (st?.transcript?.length) course.file(`transcripts/${ex.id}.md`, transcriptMarkdown(ex.name, st)); }
+  if (media.template?.blob) root.file(`template/${media.template.name || 'template.pptx'}`, media.template.blob);
   root.file('audit_log.json', JSON.stringify(project.audit, null, 2));
   root.file('audit_log.md', auditMarkdown(project));
   root.file('project.json', JSON.stringify(project, null, 2));
-  root.file('README.md', `# ${project.course.name}\n\nGenerated with Instructional Agents Studio (browser edition) on ${new Date().toISOString()}.\n\n- course/: ADDIE foundation deliverables and the full agent transcripts\n- chapters/: per-chapter outline, slides (json + pptx), script, homework, lab, quiz, captions, narration and video\n- audit_log.*: every model call, edit and export with hashes\n- project.json: re-importable project state\n`);
+  root.file('README.md', `# ${project.course.name}\n\nGenerated with Instructional Agents Studio (browser edition) on ${new Date().toISOString()}.\n\n- course/: ADDIE foundation deliverables and the full agent transcripts\n- chapters/: per-chapter outline, slides (json + pptx), script, homework, lab, quiz, narration, captions, videos (lecture_slides.* = Option 1, animated_lesson.* = Option 2), illustrations and the interactive lesson_player/ bundle (open index.html)\n- template/: your uploaded PowerPoint template, if any\n- audit_log.*: every model call, edit and export with hashes\n- project.json: re-importable project state\n`);
   return await zip.generateAsync({ type: 'blob' });
 }
 

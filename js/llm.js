@@ -93,7 +93,7 @@ export class LLMClient {
         }
       }
     }
-    if (!usage) usage = { prompt_tokens: estimateTokens(messages.map(m => m.content).join('\n')), completion_tokens: estimateTokens(text), estimated: true };
+    if (!usage) usage = { prompt_tokens: estimateTokens(messages.map(m => (Array.isArray(m.content) ? m.content.map(c => c.text || '').join(' ') : m.content)).join('\n')), completion_tokens: estimateTokens(text), estimated: true };
     usage.total_tokens = (usage.prompt_tokens || 0) + (usage.completion_tokens || 0);
     return { text, usage, durationMs: Math.round(performance.now() - started), model: useModel };
   }

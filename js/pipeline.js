@@ -2,7 +2,9 @@
 import { LLMClient, extractJson, sha1Short, toArray } from './llm.js';
 import { AGENTS, FOUNDATION, CHAPTER_STAGES, EXAMS, PROMPTS, courseContext, priorContext, textbookContext, revisionBlock, PALETTE_RULE_AUTO, PALETTE_RULE_FIXED } from './prompts.js';
 import { normalizeDeck, deckOf, PALETTE_NAMES, resolveTheme } from './deck.js';
-import { normalizeStoryboard, storyboardGaps } from './scenes.js';
+import { normalizeStoryboard, storyboardGaps, storyboardOf, drawScene, collectGuard } from './scenes.js';
+import { reviewScene, samplePoints, applyOps, blankFrameFindings, frameDataUrl } from './review.js';
+import { auditPracticeDom } from './practice.js';
 
 export class Pipeline {
   constructor(store) {
@@ -94,7 +96,7 @@ export class Pipeline {
     if (stageId === 'homework') user = PROMPTS.homework(p.course, ch, slides.map(slideSummary), out('assessment_plan'), tb);
     if (stageId === 'lab') user = PROMPTS.lab(p.course, ch, slides.map(slideSummary), out('resources'), tb);
     if (stageId === 'quiz') user = PROMPTS.quiz(p.course, ch, slides.map(slideSummary), this.settings.quizQuestions || 8, out('assessment_plan'), tb);
-    if (stageId === 'storyboard') user = PROMPTS.storyboard(p.course, ch, slides.map(slideSummary), safeJson(ch.stages.script?.output, []) || [], { illustrations: this.settings.illustrations !== false });
+    if (stageId === 'storyboard') user = PROMPTS.storyboard(p.course, ch, slides.map(slideSummary), safeJson(ch.stages.script?.output, []) || [], { illustrations: this.settings.illustrations !== false, practice: this.settings.practice !== false });
     const a = AGENTS[st.agent];
     return { custom: false, agents: [{ key: st.agent, name: a.name, role: a.role, system: a.system }], user };
   }
@@ -223,6 +225,101 @@ export class Pipeline {
       this.store.applyResult(stage, ex.name, { output: text.trim(), usage, durationMs: Math.round(performance.now() - t0), transcript, prompt, inputHash: this.inputHash(inputs), provenance: inputs.map(i => ({ label: i.label, hash: sha1Short(i.text), version: i.version })) }, 'course');
     } catch (e) { stage.status = 'error'; stage.error = String(e.message || e); stage.transcript = transcript; this.store.save(); throw e; }
     finally { this.live = null; this.onLive(); }
+  }
+
+  // ---------- visual review (EduCast reviewer) ---------------------------
+  /**
+   * Render frames of every storyboard scene, ask an independent vision model to audit them against the
+   * scene's key elements, apply structured repairs (or re-plan the scene), and re-review — up to N rounds.
+   * Verdicts are stored on the storyboard stage (`stage.reviews`), frames in the media store, every call in the audit trail.
+   */
+  async reviewStoryboard(chapterId, { rounds, onProgress, signal, assets = {}, only = null } = {}) {
+    const ch = this.store.chapter(chapterId); const st = this.store.chapterStage(chapterId, 'storyboard');
+    if (st.status !== 'done' || !st.output) throw new Error('Plan the storyboard first.');
+    const p = this.store.project; const sb = storyboardOf(st.output); if (!sb.scenes.length) throw new Error('The storyboard is empty.');
+    const theme = resolveTheme(deckOf(ch.stages.slides?.output).theme, p.deck); const meta = { course: p.course.name, chapter: ch.title };
+    const model = this.settings.reviewModel || this.settings.model; const maxRounds = Math.max(0, Math.min(4, Number(rounds ?? this.settings.reviewRounds ?? 2)));
+    const canvas = document.createElement('canvas'); canvas.width = 1920; canvas.height = 1080; const cx = canvas.getContext('2d');
+    const previous = st.reviews?.scenes || {};
+    const review = st.reviews = { model, startedAt: new Date().toISOString(), rounds: 0, scenes: only ? { ...previous } : {}, log: [] };
+    const frameStore = (await this.store.getMedia(chapterId, 'review_frames').catch(() => null)) || {};
+    const ctrl = new AbortController(); const onAbort = () => ctrl.abort(); signal?.addEventListener('abort', onAbort, { once: true }); this.abort = ctrl;
+    this.live = { key: `review:${chapterId}`, agent: 'Visual reviewer', text: '' }; this.onLive();
+    const say = (t) => { this.live.text += t + '\n'; this.onLive(); onProgress?.({ text: t }); };
+    let changed = false;
+    try {
+      let pending = sb.scenes.map((_, i) => i).filter(i => !only || only.includes(sb.scenes[i].id));
+      for (let round = 0; round <= maxRounds && pending.length; round++) {
+        review.rounds = round + 1; const failed = [];
+        for (const i of pending) {
+          if (ctrl.signal.aborted) throw new Error('Review cancelled');
+          const scene = sb.scenes[i]; say(`Round ${round + 1}: reviewing scene ${i + 1}/${sb.scenes.length} “${scene.title}”…`);
+          let verdict;
+          if (scene.beat === 'practice') {
+            const cfg = { template: scene.visual.template, parameters: scene.visual.parameters, instruction: scene.visual.instruction };
+            const findings = await auditPracticeDom(cfg).catch(e => [{ kind: 'runtime_error', severity: 'blocker', message: String(e.message || e) }]);
+            const blocking = findings.filter(f => f.severity === 'blocker' || f.kind === 'dom_overflow').map(f => f.message);
+            verdict = { scene_id: scene.id, kind: 'dom_audit', passed: !blocking.length, score: blocking.length ? 4 : 9, brief_adherence: 9, severity: blocking.length ? 'blocker' : 'none', present_key_elements: scene.key_elements || [], missing_key_elements: [], blocking_issues: blocking, minor_issues: findings.map(f => f.message).filter(m => !blocking.includes(m)), layout_issues: [], temporal_issues: [], fix_action: blocking.length ? 're_render' : 'noop', ops: [], fallback_instructions: blocking.length ? 'Shorten the prompt, choices or items so the practice panel fits its frame.' : '', review_error: false, summary: blocking.length ? `FAIL · practice panel: ${blocking.length} layout problem(s)` : 'PASS · practice panel audit (deterministic)' };
+            this.store.log({ type: 'vlm_review', where: ch.title, stage: 'Storyboard', scene: scene.id, round: round + 1, kind: 'dom_audit', status: 'ok', passed: verdict.passed, blocking: blocking.length });
+          } else {
+            const points = samplePoints(scene); const frames = []; const guard = []; const seen = new Set(); const dur = scene.target_seconds || 20;
+            for (const pt of points) {
+              const findings = collectGuard(() => drawScene(cx, scene, theme, pt.p, { index: i, total: sb.scenes.length, assets, meta }));
+              for (const f of findings) { const k = f.kind + f.message; if (!seen.has(k)) { seen.add(k); guard.push({ ...f, at_seconds: +(pt.p * dur).toFixed(1) }); } }
+              let blank = []; try { blank = blankFrameFindings([{ canvas, seconds: pt.p * dur, label: pt.label }]) || []; } catch { /* optional */ }
+              for (const f of blank) { const k = f.kind + f.message; if (!seen.has(k)) { seen.add(k); guard.push(f); } }
+              frames.push({ dataUrl: frameDataUrl(canvas), seconds: +(pt.p * dur).toFixed(1), label: pt.label });
+            }
+            frameStore[scene.id] = frames.map(f => f.dataUrl);
+            const t0 = performance.now();
+            const entry = this.store.log({ type: 'vlm_review', where: ch.title, stage: 'Storyboard', scene: scene.id, round: round + 1, model, frames: frames.length, guard: guard.length, status: 'running' });
+            verdict = await reviewScene(this.client, { scene, frames, guard, model, course: p.course, chapter: ch, narrationSeconds: scene.target_seconds });
+            Object.assign(entry, { status: verdict.review_error ? 'error' : 'ok', ms: Math.round(performance.now() - t0), passed: verdict.passed, score: verdict.score, blocking: (verdict.blocking_issues || []).length, missing: (verdict.missing_key_elements || []).length, tokens: verdict.usage?.total_tokens });
+            delete verdict.raw;
+            verdict.guard = guard;
+          }
+          verdict.round = round + 1; verdict.at = new Date().toISOString(); verdict.scene_index = i; verdict.title = scene.title;
+          const prev = review.scenes[scene.id]; if (prev?.repair) { verdict.repair = prev.repair; verdict.previous = { round: prev.round, summary: prev.summary }; }
+          review.scenes[scene.id] = verdict; review.log.push({ round: round + 1, scene: scene.id, summary: verdict.summary });
+          say(`  → ${verdict.summary}`);
+          if (!verdict.passed && !verdict.review_error) failed.push(i);
+          this.store.save();
+        }
+        if (!failed.length || round === maxRounds) break;
+        pending = [];
+        for (const i of failed) {
+          if (ctrl.signal.aborted) throw new Error('Review cancelled');
+          const scene = sb.scenes[i]; const v = review.scenes[scene.id];
+          let next = null, how = '';
+          if (v.fix_action === 'patch_artifact' && v.ops?.length) {
+            const r = applyOps(scene, v.ops);
+            if (r.applied.length) { next = normalizeStoryboard({ scenes: [r.scene] }).scenes[0]; how = `patched: ${r.applied.join(', ')}`; }
+          }
+          if (!next) {
+            say(`  Re-planning scene ${i + 1} with the Lesson Director…`);
+            try { next = await this.repairScene(chapterId, scene, v); how = 're-planned by the Lesson Director'; } catch (e) { say(`  Re-plan failed: ${e.message}`); }
+          }
+          if (next) { next.id = scene.id; sb.scenes[i] = next; changed = true; v.repair = how; pending.push(i); say(`  Scene ${i + 1} ${how}`); }
+        }
+        if (changed) this.store.autoRevise(st, 'Storyboard', JSON.stringify(sb, null, 2), ch.title, `visual review round ${round + 1}: ${failed.length} scene(s) repaired`);
+      }
+      const all = Object.values(review.scenes); const passed = all.filter(v => v.passed).length;
+      review.finishedAt = new Date().toISOString(); review.summary = `${passed}/${sb.scenes.length} scenes passed after ${review.rounds} round(s)`;
+      try { await this.store.putMedia(chapterId, 'review_frames', frameStore); } catch { /* frames are optional */ }
+      this.store.log({ type: 'vlm_review_done', where: ch.title, stage: 'Storyboard', model, rounds: review.rounds, passed, scenes: sb.scenes.length, repaired: changed });
+      this.store.save();
+      return review;
+    } finally { this.live = null; this.onLive(); this.abort = null; signal?.removeEventListener('abort', onAbort); }
+  }
+
+  /** Ask the Lesson Director to revise one scene against a review verdict; returns a normalized scene. */
+  async repairScene(chapterId, scene, verdict) {
+    const p = this.store.project; const ch = this.store.chapter(chapterId);
+    const messages = [{ role: 'system', content: AGENTS.lesson_planner.system }, { role: 'user', content: PROMPTS.sceneRepair(p.course, ch, scene, verdict, { illustrations: this.settings.illustrations !== false }) }];
+    const res = await this.call({ where: ch.title, stage: 'Storyboard repair', agent: AGENTS.lesson_planner.name, json: true, messages });
+    const raw = extractJson(res.text, 'object'); const obj = raw && raw.scene && typeof raw.scene === 'object' ? raw.scene : raw;
+    const sb = normalizeStoryboard({ scenes: [obj] }); if (!sb.scenes.length) throw new Error('The Lesson Director returned no scene.');
+    return sb.scenes[0];
   }
 
   async stream(key, transcript, usage, opts) {

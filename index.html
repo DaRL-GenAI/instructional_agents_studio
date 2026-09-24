@@ -10,8 +10,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap">
-  <link rel="stylesheet" href="css/app.css?v=11">
-  <script type="importmap">{"imports": {"./js/app.js": "./js/app.js?v=11", "./js/db.js": "./js/db.js?v=11", "./js/deck.js": "./js/deck.js?v=11", "./js/export.js": "./js/export.js?v=11", "./js/llm.js": "./js/llm.js?v=11", "./js/pipeline.js": "./js/pipeline.js?v=11", "./js/prompts.js": "./js/prompts.js?v=11", "./js/router.js": "./js/router.js?v=11", "./js/scenes.js": "./js/scenes.js?v=11", "./js/state.js": "./js/state.js?v=11", "./js/template.js": "./js/template.js?v=11", "./js/ui.js": "./js/ui.js?v=11", "./js/video.js": "./js/video.js?v=11", "./js/views/account.js": "./js/views/account.js?v=11", "./js/views/assessments.js": "./js/views/assessments.js?v=11", "./js/views/audit.js": "./js/views/audit.js?v=11", "./js/views/basics.js": "./js/views/basics.js?v=11", "./js/views/chapters.js": "./js/views/chapters.js?v=11", "./js/views/deckeditor.js": "./js/views/deckeditor.js?v=11", "./js/views/design.js": "./js/views/design.js?v=11", "./js/views/home.js": "./js/views/home.js?v=11", "./js/views/overview.js": "./js/views/overview.js?v=11", "./js/views/slides.js": "./js/views/slides.js?v=11", "./js/views/stage.js": "./js/views/stage.js?v=11", "./js/views/storyboard.js": "./js/views/storyboard.js?v=11", "./js/views/videos.js": "./js/views/videos.js?v=11"}}</script>
+  <link rel="stylesheet" href="css/app.css?v=12">
+  <script type="importmap">{"imports": {"./js/app.js": "./js/app.js?v=12", "./js/db.js": "./js/db.js?v=12", "./js/deck.js": "./js/deck.js?v=12", "./js/decktemplate.js": "./js/decktemplate.js?v=12", "./js/encode.js": "./js/encode.js?v=12", "./js/export.js": "./js/export.js?v=12", "./js/llm.js": "./js/llm.js?v=12", "./js/pipeline.js": "./js/pipeline.js?v=12", "./js/player.js": "./js/player.js?v=12", "./js/pptxtemplate.js": "./js/pptxtemplate.js?v=12", "./js/practice.js": "./js/practice.js?v=12", "./js/prompts.js": "./js/prompts.js?v=12", "./js/review.js": "./js/review.js?v=12", "./js/router.js": "./js/router.js?v=12", "./js/scenes.js": "./js/scenes.js?v=12", "./js/state.js": "./js/state.js?v=12", "./js/template.js": "./js/template.js?v=12", "./js/ui.js": "./js/ui.js?v=12", "./js/vendor/interactive-runtime.js": "./js/vendor/interactive-runtime.js?v=12", "./js/video.js": "./js/video.js?v=12", "./js/views/account.js": "./js/views/account.js?v=12", "./js/views/assessments.js": "./js/views/assessments.js?v=12", "./js/views/audit.js": "./js/views/audit.js?v=12", "./js/views/basics.js": "./js/views/basics.js?v=12", "./js/views/chapters.js": "./js/views/chapters.js?v=12", "./js/views/deckeditor.js": "./js/views/deckeditor.js?v=12", "./js/views/design.js": "./js/views/design.js?v=12", "./js/views/home.js": "./js/views/home.js?v=12", "./js/views/overview.js": "./js/views/overview.js?v=12", "./js/views/slides.js": "./js/views/slides.js?v=12", "./js/views/stage.js": "./js/views/stage.js?v=12", "./js/views/storyboard.js": "./js/views/storyboard.js?v=12", "./js/views/videos.js": "./js/views/videos.js?v=12"}}</script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -66,10 +66,10 @@
     </div>
   </div>
   <aside id="live" class="live" hidden aria-live="polite">
-    <div class="live-head"><span id="live-agent">Working…</span><button id="live-close" class="btn ghost sm icon-only" type="button" aria-label="Hide live panel"><svg class="icon sm"><use href="#i-x"/></svg></button></div>
+    <div class="live-head" id="live-head" title="Drag to move · double-click to minimize"><span id="live-agent">Working…</span><button id="live-min" class="btn ghost sm icon-only" type="button" aria-label="Minimize live panel" aria-pressed="false"><svg class="icon sm"><use href="#i-chevron-down"/></svg></button><button id="live-close" class="btn ghost sm icon-only" type="button" aria-label="Hide live panel"><svg class="icon sm"><use href="#i-x"/></svg></button></div>
     <pre id="live-text" class="live-text"></pre>
   </aside>
   <noscript><p class="notice error" style="margin:24px">Studio needs JavaScript: it runs the whole pipeline in your browser.</p></noscript>
-  <script type="module" src="js/app.js?v=11"></script>
+  <script type="module" src="js/app.js?v=12"></script>
 </body>
 </html>

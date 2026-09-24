@@ -35,7 +35,11 @@ const ctx = {
     if (!ctx.store) return;
     await ctx.guarded('Building ZIP', async () => {
       const media = {};
-      for (const ch of ctx.store.project.chapters) { const a = await ctx.store.getMedia(ch.id, 'audios'); const v = await ctx.store.getMedia(ch.id, 'video'); if (a || v) media[ch.id] = { audios: a, video: v, vtt: ctx.media[ch.id]?.vtt }; }
+      for (const ch of ctx.store.project.chapters) {
+        const [audios, video, scene_audios, anim_video, images, lesson] = await Promise.all(['audios', 'video', 'scene_audios', 'anim_video', 'images', 'lesson_bundle'].map(k => ctx.store.getMedia(ch.id, k)));
+        if (audios || video || scene_audios || anim_video || images || lesson) media[ch.id] = { audios, video, scene_audios, anim_video, images, lesson };
+      }
+      media.template = await ctx.store.getMedia('project', 'template');
       const blob = await buildZip(ctx.store.project, media);
       download(blob, `${slug(ctx.store.project.name)}_instructional_agents.zip`);
       ctx.store.log({ type: 'export', file: 'zip', bytes: blob.size }); ctx.store.save(); toast('ZIP ready', 'ok');
@@ -150,6 +154,7 @@ async function boot() {
   await loadAccount();
   await ctx.reloadProjects();
   $('#live-close').onclick = () => { $('#live').hidden = true; };
+  setupLivePanel();
   onRoute(route);
   window.addEventListener('beforeunload', e => { if (ctx.busy) { e.preventDefault(); e.returnValue = ''; } ctx.store?.flush(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) ctx.store?.flush(); });
@@ -157,3 +162,31 @@ async function boot() {
   await route();
 }
 boot();
+
+
+// ------------------------------------------------------------------ live panel: draggable + minimizable
+function setupLivePanel() {
+  const live = $('#live'), head = $('#live-head'), min = $('#live-min');
+  if (!live || !head) return;
+  const LS_POS = 'studio.livePos', LS_MIN = 'studio.liveMin';
+  const applyMin = (on) => { live.classList.toggle('min', on); min.setAttribute('aria-pressed', String(on)); min.querySelector('use')?.setAttribute('href', on ? '#i-chevron-right' : '#i-chevron-down'); try { localStorage.setItem(LS_MIN, on ? '1' : '0'); } catch { /* ignore */ } };
+  try { if (localStorage.getItem(LS_MIN) === '1') applyMin(true); } catch { /* ignore */ }
+  try { const pos = JSON.parse(localStorage.getItem(LS_POS) || 'null'); if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) place(pos.x, pos.y); } catch { /* ignore */ }
+  function place(x, y) {
+    const w = live.offsetWidth || 440, h = live.offsetHeight || 200;
+    x = Math.max(4, Math.min(window.innerWidth - Math.min(w, 120), x)); y = Math.max(4, Math.min(window.innerHeight - 40, y));
+    Object.assign(live.style, { left: `${x}px`, top: `${y}px`, right: 'auto', bottom: 'auto' });
+  }
+  min.onclick = (e) => { e.stopPropagation(); applyMin(!live.classList.contains('min')); };
+  head.ondblclick = (e) => { if (e.target.closest('button')) return; applyMin(!live.classList.contains('min')); };
+  let drag = null;
+  head.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button') || e.button !== 0) return;
+    const r = live.getBoundingClientRect(); drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, moved: false };
+    head.setPointerCapture(e.pointerId); live.classList.add('dragging');
+  });
+  head.addEventListener('pointermove', (e) => { if (!drag) return; drag.moved = true; place(e.clientX - drag.dx, e.clientY - drag.dy); });
+  const end = (e) => { if (!drag) return; live.classList.remove('dragging'); if (drag.moved) { const r = live.getBoundingClientRect(); try { localStorage.setItem(LS_POS, JSON.stringify({ x: r.left, y: r.top })); } catch { /* ignore */ } } drag = null; try { head.releasePointerCapture(e.pointerId); } catch { /* ignore */ } };
+  head.addEventListener('pointerup', end); head.addEventListener('pointercancel', end);
+  window.addEventListener('resize', () => { const r = live.getBoundingClientRect(); if (live.style.left) place(r.left, r.top); });
+}

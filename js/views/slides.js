@@ -39,13 +39,21 @@ function templatePanel(ctx, ui) {
   const card = (key, name, themeObj, sub, extra) => el('button', { class: 'tpl-card', 'aria-pressed': String(deck.template === key), onClick: () => set({ template: key }, `Template: ${name}`) }, mini(themeObj, meta), el('b', {}, name), sub ? el('small', {}, sub) : null, extra);
   grid.append(card('auto', 'Auto', resolveTheme({ palette: 'Midnight Executive' }, null), 'The agents pick a palette that fits each chapter’s subject'));
   for (const n of PALETTE_NAMES) grid.append(card(`builtin:${n}`, n, resolveTheme({ palette: n }, null), `${PALETTES[n].primary} · ${PALETTES[n].accent}`));
-  if (deck.palette) grid.append(card('custom', deck.name || 'Your template', resolveTheme(null, { ...deck, template: 'custom' }), `${deck.palette.primary} · ${deck.palette.accent}${deck.fonts?.body ? ` · ${deck.fonts.body}` : ''}${deck.background ? ' · background image' : ''}`));
+  if (deck.palette) grid.append(card('custom', deck.name || 'Your template', resolveTheme(null, { ...deck, template: 'custom' }), `${deck.tpl?.layouts?.length ? `${deck.tpl.layouts.length} layouts · ` : ''}${deck.palette.primary} · ${deck.palette.accent}${deck.fonts?.body ? ` · ${deck.fonts.body}` : ''}${deck.background ? ' · background image' : ''}`));
   box.append(grid);
   // upload
   const file = el('input', { type: 'file', accept: '.pptx,.potx', class: 'input', style: 'max-width:360px' });
   const status = el('span', { class: 'meta' });
-  file.onchange = async () => { const f = file.files[0]; if (!f) return; status.textContent = 'Reading template…'; try { const t = await parseTemplate(f); set({ template: 'custom', name: t.name, palette: t.palette, fonts: t.fonts, background: t.background, scheme: t.scheme }, `Template “${t.name}” applied`); } catch (e) { status.textContent = ''; toast(`Could not read the template: ${e.message}`, 'error'); } };
-  box.append(el('div', { class: 'section', style: 'margin-top:20px' }, el('h3', {}, 'Use your own PowerPoint template'), el('p', { class: 'section-desc', style: 'font-size:var(--fs-2)' }, 'Upload a .pptx or .potx. Studio reads its theme colours, theme fonts and the slide master background in your browser (the file is not uploaded anywhere) and applies them to generated decks. Slide layouts stay Studio’s; placeholders and logos on your master are not reproduced.'),
-    el('div', { class: 'btn-row' }, file, status, deck.palette ? button({ label: 'Remove uploaded template', size: 'sm', variant: 'danger', onClick: async () => { if (await confirmDialog({ title: 'Remove the uploaded template?', confirmLabel: 'Remove', danger: true })) { delete deck.palette; delete deck.fonts; delete deck.background; delete deck.scheme; delete deck.name; set({ template: 'auto' }, 'Template removed'); } } }) : null)));
+  file.onchange = async () => {
+    const f = file.files[0]; if (!f) return; status.textContent = 'Reading template…';
+    try {
+      const t = await parseTemplate(f); const { blob, background, ...rest } = t;
+      await store.putMedia('project', 'template', { blob: f, name: f.name, size: f.size, at: new Date().toISOString() });
+      const tpl = { size: rest.size, layouts: rest.layouts || [], master: rest.master || null, fonts: rest.fonts || {}, scheme: rest.scheme || null, name: t.name, background: null };
+      set({ template: 'custom', name: t.name, palette: t.palette, fonts: t.fonts, background, scheme: t.scheme, tpl }, `Template “${t.name}” applied${tpl.layouts.length ? ` · ${tpl.layouts.length} layouts` : ''}`);
+    } catch (e) { status.textContent = ''; toast(`Could not read the template: ${e.message}`, 'error'); }
+  };
+  box.append(el('div', { class: 'section', style: 'margin-top:20px' }, el('h3', {}, 'Use your own PowerPoint template'), el('p', { class: 'section-desc', style: 'font-size:var(--fs-2)' }, 'Upload a .pptx or .potx. Studio reads it in your browser (nothing is uploaded anywhere): its slide layouts, placeholders, master background, theme fonts and colours. Generated slides are then built on YOUR layouts (Title Slide, Title and Content, Two Content, …) — the downloaded .pptx is your template file with the new slides inside, so it opens and edits exactly like the original. Slides that use Studio-only visuals (stat callouts, process flows, grids, charts) keep your background and title placeholder and draw their content in the layout’s content area.'),
+    el('div', { class: 'btn-row' }, file, status, deck.palette ? button({ label: 'Remove uploaded template', size: 'sm', variant: 'danger', onClick: async () => { if (await confirmDialog({ title: 'Remove the uploaded template?', confirmLabel: 'Remove', danger: true })) { delete deck.palette; delete deck.fonts; delete deck.background; delete deck.scheme; delete deck.name; delete deck.tpl; await store.delMedia('project', 'template').catch(() => {}); set({ template: 'auto' }, 'Template removed'); } } }) : null)));
   return box;
 }

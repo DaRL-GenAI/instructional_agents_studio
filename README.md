@@ -43,13 +43,37 @@ fallback). Coming back in the same browser restores everything; use *Account →
 project as JSON and import it elsewhere. *Account → Data & storage* can request persistent storage so the
 browser does not evict the data.
 
+## Slides on your own PowerPoint template
+
+Upload a `.pptx`/`.potx` under **Slides → Deck template**. Studio reads it in the browser (nothing is uploaded):
+slide size, every slide layout with its placeholders, the master background and text styles, theme fonts and
+colours. Generated slides are then built on the template's own layouts (Title Slide, Title and Content, Two
+Content, Comparison, Section Header, Title Only…); each slide's layout can be changed in the deck editor. The
+downloaded `.pptx` is your template file with the new slides written as real placeholders, so it opens and edits
+exactly like the original. Slides that use Studio-only visuals (stat callouts, process flows, grids, charts, code)
+keep the template background and title placeholder and draw their content into the layout's content area.
+
 ## Video
 
-Narration is synthesized per slide or per scene with the OpenAI speech API; frames are drawn on a canvas in sync
-with the audio clock and recorded with the MediaRecorder API into WebM, with proportional WebVTT captions. The
-animated option follows EduCast's EduHarness design (scene planning prompt, teaching-board layout, lecture lines
-that light up, one visual beat per scene, takeaway strip, characters); illustrations use the OpenAI image API. For MP4 output from LaTeX-Beamer decks use
-the Python pipeline's `--video` option ([docs](https://github.com/DaRL-GenAI/instructional_agents/blob/upgrade/docs/VIDEO_GENERATION.md)).
+Two options per chapter, both produced entirely in the browser:
+
+1. **Narrated slides** — each slide is held while its lecture-script narration plays.
+2. **Animated lesson (EduCast)** — a Lesson Director agent plans 6–8 teaching scenes (lecture lines that light
+   up as they are spoken, one visual beat per scene: bullets, formula, compare, steps, stat counters, diagram,
+   chart, illustration, recap) plus **one interactive practice scene** chosen from EduCast's trusted templates
+   (multiple choice, fill in the blank, drag to sort, number line, lever simulator). Every scene is editable.
+
+An independent **visual reviewer** (EduCast's VLM auditor, ported) renders sample frames of every scene, checks
+them against the scene's key elements together with deterministic guards (clipped text, blank frames, practice
+panel overflow), and either applies the structured edits it proposes or asks the Lesson Director to re-plan the
+scene, then re-reviews — up to the number of rounds set under Account → Generation defaults. Verdicts, frames and
+every repair are shown in the storyboard editor and recorded in the audit trail.
+
+Videos are encoded frame by frame with WebCodecs and muxed to **MP4** (H.264/AAC on desktop Chrome and Edge;
+VP9/Opus where no H.264 encoder exists; real-time WebM recording as the last fallback). Narration uses the OpenAI
+speech API; captions are WebVTT. The **Lesson player** tab wraps the video with the practice checks (the player
+pauses at each check until it is solved), captions, chapter rail, resume and an event log, and exports it as a ZIP
+bundle or a single standalone HTML file — both work offline. The project ZIP contains all of it.
 
 ## Development
 
@@ -64,9 +88,12 @@ Layout: `index.html` (shell + SVG icon sprite), `css/tokens.css` (design tokens)
 `js/app.js` (shell, routing), `js/router.js`, `js/ui.js` (components), `js/db.js` (IndexedDB),
 `js/state.js` (account, projects, audit), `js/llm.js` (API client), `js/prompts.js` (agent prompts),
 `js/pipeline.js` (stage runners, retrieval), `js/deck.js` (slide layout engine: HTML preview, pptxgenjs, canvas),
-`js/template.js` (reads a user's .pptx/.potx theme), `js/video.js` (TTS + recording), `js/export.js` (ZIP),
+`js/template.js` (reads a user's .pptx/.potx: layouts, placeholders, master, theme), `js/decktemplate.js` (slides on template layouts),
+`js/pptxtemplate.js` (writes slides into the template package), `js/scenes.js` (EduCast teaching-board renderer), `js/practice.js`
+(interactive practice templates + validators), `js/review.js` (VLM reviewer, repair ops), `js/encode.js` (WebCodecs → MP4),
+`js/player.js` (lesson player bundle), `js/vendor/interactive-runtime.js` (EduCast's practice runtime), `js/video.js` (TTS, rendering), `js/export.js` (ZIP),
 `js/views/*` (one file per module, the deck editor and the account pages).
-Third-party libraries are loaded on demand: JSZip, pdf.js and marked from cdnjs, PptxGenJS from jsDelivr.
+Third-party libraries are loaded on demand: JSZip, pdf.js and marked from cdnjs, PptxGenJS and mp4-muxer from jsDelivr.
 
 ## Citation
 

@@ -47,6 +47,11 @@ export function deckEditor(ctx, o) {
     const layoutSel = select(LAYOUTS.map(l => [l, LAYOUT_LABEL[l]]), s.layout); layoutSel.onchange = () => { s.layout = layoutSel.value; renderBig(); renderStrip(); buildForm(); };
     const title = input({ value: s.title }); title.oninput = () => { s.title = title.value; renderBig(); renderStrip(); };
     form.append(el('div', { class: 'form-grid' }, field('Layout', layoutSel), field('Title', title)));
+    if (theme.tpl?.layouts?.length) {
+      const tl = select([['', 'Auto (matched by role)'], ...theme.tpl.layouts.map(l => [l.name, l.name])], s.template_layout || '');
+      tl.onchange = () => { if (tl.value) s.template_layout = tl.value; else delete s.template_layout; renderBig(); renderStrip(); };
+      form.append(field('Template layout', tl, { hint: 'Which layout of your uploaded PowerPoint template this slide is built on.' }));
+    }
     for (const [key, label, kind] of SCHEMA[s.layout] || []) form.append(fieldControl(s, key, label, kind, () => { renderBig(); renderStrip(); }));
     const notes = textarea({ rows: 3 }, s.notes || ''); notes.oninput = () => { s.notes = notes.value; };
     form.append(field('Teaching notes (speaker notes in the .pptx)', notes));
@@ -59,7 +64,7 @@ export function deckEditor(ctx, o) {
 
   const save = () => { if (store.userEdit(st, o.label, JSON.stringify(deck, null, 2), o.where)) { toast('Slides saved and logged', 'ok'); ctx.render(); } else toast('No changes'); };
   const box = el('div', { class: 'deck-editor' });
-  box.append(el('div', { class: 'editor-bar' }, el('span', {}, `${deck.slides.length} slides · theme: ${theme.name}${theme.source === 'model' ? ' (chosen by the agents)' : theme.source === 'auto' ? '' : ' (project template)'}`), button({ label: 'Save edits', size: 'sm', variant: 'primary', onClick: save }), button({ label: 'Discard', size: 'sm', variant: 'ghost', onClick: () => ctx.render() })));
+  box.append(el('div', { class: 'editor-bar' }, el('span', {}, `${deck.slides.length} slides · theme: ${theme.name}${theme.source === 'model' ? ' (chosen by the agents)' : theme.source === 'auto' ? '' : theme.tpl ? ` (your template, ${theme.tpl.layouts.length} layouts)` : ' (project template)'}`), button({ label: 'Save edits', size: 'sm', variant: 'primary', onClick: save }), button({ label: 'Discard', size: 'sm', variant: 'ghost', onClick: () => ctx.render() })));
   frame.append(el('div', { class: 'deck-toolbar' }, button({ icon: 'arrow-left', size: 'sm', variant: 'ghost', title: 'Previous slide', onClick: () => go(-1) }), counter, button({ icon: 'arrow-right', size: 'sm', variant: 'ghost', title: 'Next slide', onClick: () => go(1) }), el('span', { class: 'spacer' }), button({ label: 'Present', icon: 'presentation', size: 'sm', variant: 'ghost', onClick: () => present(deck, theme, meta, current) })), big, strip);
   box.append(el('div', { class: 'deck-grid' }, frame, form));
   renderStrip(); renderBig(); buildForm();
@@ -97,6 +102,8 @@ export async function downloadPptx(ctx, o) {
   const deck = deckOf(st.output); if (!deck.slides.length) return toast('No slides to export', 'error');
   const theme = resolveTheme(deck.theme, p.deck);
   const script = (() => { try { const v = JSON.parse(ch.stages.script?.output || 'null'); return Array.isArray(v) ? v : []; } catch { return []; } })();
-  try { const blob = await deckToPptx(deck, theme, { course: p.course.name, chapter: ch.title }, script); download(blob, `${slug(ch.title)}_slides.pptx`); ctx.store.log({ type: 'export', stage: o.label, file: `${slug(ch.title)}_slides.pptx`, bytes: blob.size }); }
+  let templateBlob = null;
+  if (theme.tpl) { const tm = await ctx.store.getMedia('project', 'template').catch(() => null); templateBlob = tm?.blob || null; if (!templateBlob) toast('The template file is no longer in this browser; exporting with Studio layouts. Re-upload the template under Slides → Deck template to restore it.', 'error'); }
+  try { const blob = await deckToPptx(deck, theme, { course: p.course.name, chapter: ch.title }, script, { templateBlob }); download(blob, `${slug(ch.title)}_slides.pptx`); ctx.store.log({ type: 'export', stage: o.label, file: `${slug(ch.title)}_slides.pptx`, bytes: blob.size, template: templateBlob ? theme.name : undefined }); }
   catch (e) { toast(e.message, 'error'); }
 }

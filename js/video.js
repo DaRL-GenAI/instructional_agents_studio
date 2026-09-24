@@ -2,6 +2,7 @@
 // TTS per slide (OpenAI /audio/speech) → canvas slides → MediaRecorder (WebM) + WebVTT captions.
 import { drawSlideCanvas, resolveTheme } from './deck.js';
 import { drawScene, W as SW, H as SH } from './scenes.js';
+import { encoderSupport, encodeVideo, mixNarration, posterFrame } from './encode.js';
 export const W = 1280, H = 720;
 
 export const TTS_INSTRUCTIONS = 'Warm, clear teacher voice. Speak at a measured lecture pace, with natural emphasis on key terms.';
@@ -221,4 +222,59 @@ export function mountAnimatedPreview(container, { scenes, audios, theme, meta, a
   };
   stop.onclick = () => { playing = false; cancelAnimationFrame(raf); try { src?.stop(); } catch { /* ignore */ } };
   return { redraw: draw, select: k => { if (playing) return; i = Math.max(0, Math.min(scenes.length - 1, k)); draw(0.999); }, get scene() { return i; } };
+}
+
+// ---------------------------------------------------------------- offline, frame-accurate rendering (WebCodecs → MP4)
+
+const RES = { '1080p': [1920, 1080], '720p': [1280, 720] };
+
+/** Scene timeline for the animated lesson: [{id,title,start,end,dur,beat,narration}] + total seconds. */
+export function sceneTimeline(scenes, audios, pad = 0.6) {
+  let t = 0;
+  const items = scenes.map((s, i) => { const dur = (audios?.[i]?.decoded?.duration || Math.max(4, s.target_seconds || 8)) + pad; const it = { id: s.id, title: s.title, beat: s.beat, narration: s.narration, start: +t.toFixed(3), end: +(t + dur).toFixed(3), dur }; t += dur; return it; });
+  return { items, total: t };
+}
+
+/**
+ * Render the animated lesson deterministically: every frame is drawn at its exact time and encoded to MP4
+ * (H.264/AAC via WebCodecs). Falls back to real-time MediaRecorder capture (WebM) when WebCodecs is unavailable.
+ * Returns { blob, mime, ext, seconds, timeline, poster, method }.
+ */
+export async function renderAnimated({ scenes, audios, theme, meta, assets, res = '1080p', pad = 0.6, fps = 30, onProgress, signal }) {
+  const [PW, PH] = RES[res] || RES['1080p'];
+  const { items, total } = sceneTimeline(scenes, audios, pad);
+  const draw = (ctx, tt) => {
+    let i = items.findIndex(x => tt < x.end); if (i < 0) i = items.length - 1; const it = items[i];
+    const p = Math.min(1, Math.max(0, (tt - it.start) / Math.max(it.dur - pad, 0.1)));
+    ctx.save(); ctx.scale(PW / SW, PH / SH); drawScene(ctx, scenes[i], theme, p, { index: i, total: scenes.length, assets, meta }); ctx.restore();
+  };
+  const support = await encoderSupport().catch(e => ({ ok: false, reason: String(e.message || e) }));
+  if (support.ok) {
+    onProgress?.({ phase: 'mix', text: 'Mixing narration…' });
+    const audio = await mixNarration(items.map((it, i) => ({ decoded: audios?.[i]?.decoded || null, start: it.start })), total);
+    const out = await encodeVideo({ width: PW, height: PH, fps, duration: total, draw, audio, onProgress, signal });
+    const poster = posterFrame(draw, PW, PH, Math.min(total - 0.1, items[0].dur * 0.92));
+    return { ...out, seconds: total, timeline: items.map(({ id, title, start, end, beat, narration }) => ({ id, title, start, end, beat, narration })), poster, method: `webcodecs:${support.video}/${support.audio}` };
+  }
+  onProgress?.({ phase: 'record', text: `WebCodecs unavailable (${support.reason || 'unsupported browser'}); recording in real time instead…` });
+  const rec = await recordAnimated({ scenes, audios, theme, meta, assets, pad, fps, onProgress, signal });
+  return { ...rec, ext: rec.mime.includes('mp4') ? 'mp4' : 'webm', poster: null, method: 'mediarecorder', fallback: support.reason };
+}
+
+/** Same for Option 1 (narrated slides): each slide is held while its narration plays. */
+export async function renderSlides({ slides, script, audios, theme, meta, res = '1080p', pad = 0.8, fps = 30, onProgress, signal }) {
+  const [PW, PH] = RES[res] || RES['1080p'];
+  let t = 0; const items = slides.map((s, i) => { const dur = (audios?.[i]?.decoded?.duration || 3) + pad; const it = { slide_id: s.slide_id, title: s.title, start: +t.toFixed(3), end: +(t + dur).toFixed(3), dur, narration: script?.[i]?.narration || '' }; t += dur; return it; });
+  const total = t; const images = await loadThemeImages(theme);
+  const draw = (ctx, tt) => { let i = items.findIndex(x => tt < x.end); if (i < 0) i = items.length - 1; drawSlideCanvas(ctx, slides[i], theme, i, slides.length, meta, PW, PH, images); };
+  const support = await encoderSupport().catch(e => ({ ok: false, reason: String(e.message || e) }));
+  if (support.ok) {
+    onProgress?.({ phase: 'mix', text: 'Mixing narration…' });
+    const audio = await mixNarration(items.map((it, i) => ({ decoded: audios?.[i]?.decoded || null, start: it.start })), total);
+    const out = await encodeVideo({ width: PW, height: PH, fps: Math.min(fps, 15), duration: total, draw, audio, onProgress, signal });
+    return { ...out, seconds: total, timeline: items.map(({ slide_id, start, end }) => ({ slide_id, start, end })), poster: posterFrame(draw, PW, PH, 0.5), method: `webcodecs:${support.video}/${support.audio}` };
+  }
+  onProgress?.({ phase: 'record', text: `WebCodecs unavailable (${support.reason || 'unsupported browser'}); recording in real time instead…` });
+  const rec = await recordVideo({ slides, script, audios, meta, theme, pad, fps, onProgress, signal });
+  return { ...rec, ext: rec.mime.includes('mp4') ? 'mp4' : 'webm', poster: null, method: 'mediarecorder', fallback: support.reason };
 }

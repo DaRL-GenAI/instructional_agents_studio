@@ -4,6 +4,9 @@
 // Design rules follow the PowerPoint guidance: content-informed palette with one dominant colour,
 // dark title/closing slides, every slide carries a visual element, varied layouts, no accent stripes.
 
+import { templateFrame } from './decktemplate.js';
+import { buildTemplatePptx } from './pptxtemplate.js';
+
 export const W = 10, H = 5.625;           // inches (pptxgenjs LAYOUT_16x9)
 const M = 0.5;                            // outer margin
 
@@ -44,8 +47,9 @@ export function resolveTheme(deckTheme, projectDeck) {
   }
   if (!base) base = PALETTES[name];
   const primary = clean(base.primary), secondary = clean(base.secondary), accent = clean(base.accent);
+  const tpl = projectDeck?.template === 'custom' && projectDeck.tpl && Array.isArray(projectDeck.tpl.layouts) && projectDeck.tpl.layouts.length ? { ...projectDeck.tpl, background: projectDeck.tpl.background || projectDeck.background || null, fonts: { ...FONTS, ...(projectDeck.fonts || {}) } } : null;
   return {
-    name, source, fonts, background,
+    name, source, fonts, background, tpl, size: tpl?.size?.w && tpl?.size?.h ? { w: tpl.size.w, h: tpl.size.h } : { w: W, h: H },
     primary, secondary, accent,
     bg: 'FFFFFF', text: '1F2933', muted: '5B6470', panel: secondary, onPrimary: onColor(primary), onAccent: onColor(accent), onSecondary: onColor(secondary),
     motif: deckTheme?.motif || 'numbered circles',
@@ -61,10 +65,10 @@ const str = v => (v == null ? '' : String(v));
 const items = (v, keys = ['header', 'text']) => (Array.isArray(v) ? v : []).map(x => typeof x === 'string' ? { header: x, text: '' } : { header: str(x?.header ?? x?.title ?? x?.label ?? x?.name), text: str(x?.text ?? x?.description ?? x?.body ?? x?.detail) });
 
 function titleBlock(th, title, y = M, h = 0.9) {
-  return t(M, y, W - 2 * M, h, title, { size: 30, bold: true, font: 'head', color: th.primary, valign: 'middle' });
+  return t(M, y, W - 2 * M, h, title, { size: 30, bold: true, font: 'head', color: th.primary, valign: 'middle', isTitle: true });
 }
 function footer(th, meta, index, total) {
-  return [t(M, H - 0.42, 6, 0.3, meta.course || '', { size: 10, color: th.muted, valign: 'middle' }), t(W - M - 1.5, H - 0.42, 1.5, 0.3, `${index + 1} / ${total}`, { size: 10, color: th.muted, align: 'right', valign: 'middle' })];
+  return [t(M, H - 0.42, 6, 0.3, meta.course || '', { size: 10, color: th.muted, valign: 'middle', isFooter: true }), t(W - M - 1.5, H - 0.42, 1.5, 0.3, `${index + 1} / ${total}`, { size: 10, color: th.muted, align: 'right', valign: 'middle', isFooter: true })];
 }
 function numberCircle(th, x, y, d, n, dark = false) {
   return [ell(x, y, d, d, dark ? th.accent : th.primary), t(x, y, d, d, String(n), { size: d * 26, bold: true, color: dark ? th.onAccent : th.onPrimary, align: 'center', valign: 'middle', margin: 0 })];
@@ -75,6 +79,29 @@ function bulletText(th, x, y, w, h, arr, size = 16, color) {
 
 // ---------------------------------------------------------------- layouts
 export function layoutSlide(slide, th, index, total, meta = {}) {
+  if (th?.tpl) return templateSlide(slide, th, index, total, meta).els;
+  return builtinLayout(slide, th, index, total, meta);
+}
+
+/**
+ * Template mode: the instructor's own .pptx layouts. Placeholder-backed slides come straight from
+ * decktemplate.js; for our richer layouts (stats, process, grid, rows, chart, code) the template supplies
+ * background + title placeholder and our body elements are fitted into the layout's content area.
+ * Returns { layout, els }.
+ */
+export function templateSlide(slide, th, index, total, meta = {}) {
+  let frame;
+  try { frame = templateFrame(slide, th, index, total, meta, th.tpl); } catch (e) { console.warn('templateFrame failed; using the built-in layout', e); return { layout: null, els: builtinLayout(slide, th, index, total, meta) }; }
+  if (!frame || !Array.isArray(frame.els)) return { layout: null, els: builtinLayout(slide, th, index, total, meta) };
+  if (frame.native || !frame.contentBox) return { layout: frame.layout || null, els: frame.els };
+  const body = builtinLayout(slide, th, index, total, meta).filter(e => !e.isBackground && !e.isTitle && !e.isFooter);
+  const box = frame.contentBox; const srcX = M, srcY = 1.55, srcW = W - 2 * M, srcH = H - 1.55 - 0.6;
+  const sc = Math.min(box.w / srcW, box.h / srcH) || 1; const ox = box.x + (box.w - srcW * sc) / 2, oy = box.y;
+  const fitted = body.map(e => ({ ...e, x: ox + (e.x - srcX) * sc, y: oy + (e.y - srcY) * sc, w: e.w * sc, h: e.h * sc, ...(e.size ? { size: e.size * sc } : {}), ...(e.radius ? { radius: e.radius * sc } : {}), ...(e.paraSpace ? { paraSpace: e.paraSpace * sc } : {}) }));
+  return { layout: frame.layout || null, els: [...frame.els, ...fitted] };
+}
+
+function builtinLayout(slide, th, index, total, meta = {}) {
   const L = LAYOUTS.includes(slide.layout) ? slide.layout : (slide.code ? 'code' : 'bullets');
   const els = [];
   const title = str(slide.title || `Slide ${index + 1}`);
@@ -196,10 +223,11 @@ export function layoutSlide(slide, th, index, total, meta = {}) {
 
 // ---------------------------------------------------------------- HTML backend (preview)
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const inch = v => `${(v / W * 100).toFixed(3)}%`;
-const inchH = v => `${(v / H * 100).toFixed(3)}%`;
-const cq = v => `${(v * 10).toFixed(3)}cqw`;   // inches → container width units
 export function slideToHtml(slide, th, index, total, meta) {
+  const SW = th?.size?.w || W, SH = th?.size?.h || H;
+  const inch = v => `${(v / SW * 100).toFixed(3)}%`;
+  const inchH = v => `${(v / SH * 100).toFixed(3)}%`;
+  const cq = v => `${(v / SW * 100).toFixed(3)}cqw`;   // inches → container width units
   const els = layoutSlide(slide, th, index, total, meta);
   const parts = els.map(e => {
     const pos = `left:${inch(e.x)};top:${inchH(e.y)};width:${inch(e.w)};height:${inchH(e.h)};`;
@@ -210,10 +238,15 @@ export function slideToHtml(slide, th, index, total, meta) {
     if (e.kind === 'chart') return `<div class="de" style="${pos}">${chartSvg(e)}</div>`;
     // text
     const style = `${pos}font-family:${CSS_FONTS[e.font || 'body']};font-size:${cq(e.size / 72)};color:#${e.color || th.text};text-align:${e.align || 'left'};font-weight:${e.bold ? 700 : 400};font-style:${e.italic ? 'italic' : 'normal'};opacity:${e.opacity ?? 1};padding:${e.margin === 0 ? 0 : `${cq(0.05)} ${cq(0.08)}`};display:flex;flex-direction:column;justify-content:${{ top: 'flex-start', middle: 'center', bottom: 'flex-end' }[e.valign || 'top']};${e.charSpacing ? `letter-spacing:${cq(e.charSpacing / 72)};` : ''}`;
-    if (e.bullets) return `<div class="de dt" style="${style}"><ul style="margin:0;padding-left:1.1em">${e.bullets.map(b => `<li style="margin-bottom:${cq((e.paraSpace || 8) / 72)}">${esc(b)}</li>`).join('')}</ul></div>`;
+    if (e.bullets) {
+      const gap = cq((e.paraSpace || 8) / 72); const lv = e.levels || []; const hd = e.headings || []; const pl = e.plains || [];
+      if (e.plain) return `<div class="de dt" style="${style}"><div>${e.bullets.map((b, k) => `<div style="margin-bottom:${gap};${hd[k] || e.bold ? 'font-weight:700;' : ''}${lv[k] ? `padding-left:${lv[k] * 1.2}em;` : ''}">${esc(b)}</div>`).join('')}</div></div>`;
+      const tag = e.numbered ? 'ol' : 'ul';
+      return `<div class="de dt" style="${style}"><${tag} style="margin:0;padding-left:1.1em">${e.bullets.map((b, k) => `<li style="margin-bottom:${gap};${hd[k] ? 'font-weight:700;' : ''}${pl[k] ? 'list-style:none;margin-left:-1.1em;' : ''}${lv[k] ? `margin-left:${lv[k] * 1.2}em;font-size:0.9em;` : ''}">${esc(b)}</li>`).join('')}</${tag}></div>`;
+    }
     return `<div class="de dt" style="${style}"><span>${esc(e.text)}</span></div>`;
   });
-  return `<div class="deck-slide">${parts.join('')}</div>`;
+  return `<div class="deck-slide" style="aspect-ratio:${SW}/${SH}">${parts.join('')}</div>`;
 }
 export const DECK_CSS = `
 .deck-slide{position:relative;width:100%;aspect-ratio:16/9;overflow:hidden;background:#fff;container-type:inline-size}
@@ -254,7 +287,8 @@ const fmtNum = v => (Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(1)}k` : Number.
 
 // ---------------------------------------------------------------- Canvas backend (video)
 export function drawSlideCanvas(ctx, slide, th, index, total, meta, pxW, pxH, images = {}) {
-  const s = pxW / W; const px = v => v * s;
+  const SW = th?.size?.w || W, SH = th?.size?.h || H; const s = Math.min(pxW / SW, pxH / SH); const px = v => v * s;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, pxW, pxH); ctx.save(); ctx.translate((pxW - SW * s) / 2, (pxH - SH * s) / 2);
   const els = layoutSlide(slide, th, index, total, meta);
   ctx.save(); ctx.textBaseline = 'top';
   for (const e of els) {
@@ -275,7 +309,7 @@ export function drawSlideCanvas(ctx, slide, th, index, total, meta, pxW, pxH, im
       ctx.globalAlpha = e.opacity ?? 1; ctx.fillStyle = '#' + (e.color || th.text);
       ctx.font = `${e.italic ? 'italic ' : ''}${e.bold ? '700' : '400'} ${fs}px ${CSS_FONTS[e.font || 'body']}`;
       const lines = [];
-      if (e.bullets) e.bullets.forEach(b => { const ls = wrap(ctx, b, w - 2 * pad - fs * 1.1); ls.forEach((l, i) => lines.push({ text: l, bullet: i === 0, gapAfter: i === ls.length - 1 })); });
+      if (e.bullets) e.bullets.forEach((b, k) => { const lv = e.levels?.[k] || 0; const plain = e.plain || e.plains?.[k]; const indent = plain ? lv * fs * 1.2 : fs * 1.1 + lv * fs * 1.2; const ls = wrap(ctx, b, w - 2 * pad - indent); ls.forEach((l, i) => lines.push({ text: l, bullet: i === 0 && !plain, num: e.numbered ? k + 1 : null, indent, gapAfter: i === ls.length - 1, bold: !!(e.headings?.[k]) })); });
       else wrap(ctx, e.text, w - 2 * pad).forEach(l => lines.push({ text: l }));
       const lh = fs * 1.25, gap = e.bullets ? px((e.paraSpace || 8) / 72) : 0;
       const totalH = lines.reduce((a, l) => a + lh + (l.gapAfter ? gap : 0), 0);
@@ -284,13 +318,13 @@ export function drawSlideCanvas(ctx, slide, th, index, total, meta, pxW, pxH, im
         if (cy > y + h - lh * 0.6) break;
         let cx = x + pad; if (e.align === 'center') cx = x + w / 2; if (e.align === 'right') cx = x + w - pad;
         ctx.textAlign = e.align || 'left';
-        if (e.bullets) { if (l.bullet) { ctx.beginPath(); ctx.arc(x + pad + fs * 0.3, cy + fs * 0.55, fs * 0.15, 0, Math.PI * 2); ctx.fill(); } cx = x + pad + fs * 1.1; ctx.textAlign = 'left'; }
+        if (e.bullets) { const base = x + pad + (l.indent - (l.bullet || l.num ? fs * 1.1 : 0)); if (l.bullet && l.num) { ctx.textAlign = 'left'; ctx.fillText(`${l.num}.`, base, cy); } else if (l.bullet) { ctx.beginPath(); ctx.arc(base + fs * 0.3, cy + fs * 0.55, fs * 0.15, 0, Math.PI * 2); ctx.fill(); } cx = x + pad + l.indent; ctx.textAlign = e.plain && e.align === 'center' ? 'center' : 'left'; if (ctx.textAlign === 'center') cx = x + w / 2; if (l.bold) ctx.font = ctx.font.replace(/^(italic )?(400|700)/, '$1700'); }
         ctx.fillText(l.text, cx, cy); cy += lh + (l.gapAfter ? gap : 0);
       }
       ctx.globalAlpha = 1; ctx.textAlign = 'left';
     }
   }
-  ctx.restore();
+  ctx.restore(); ctx.restore();
 }
 function rr(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
 function wrap(ctx, text, maxW) { const words = String(text ?? '').split(/\s+/); const lines = []; let cur = ''; for (const w of words) { const t2 = cur ? cur + ' ' + w : w; if (ctx.measureText(t2).width > maxW && cur) { lines.push(cur); cur = w; } else cur = t2; } if (cur) lines.push(cur); return lines.length ? lines : ['']; }
@@ -322,10 +356,14 @@ export function loadPptx() {
 }
 
 /** Build a .pptx Blob from a deck ({theme, slides}) with the resolved theme. script = [{slide_id, narration}] for notes. */
-export async function deckToPptx(deck, th, meta, script = []) {
+export async function deckToPptx(deck, th, meta, script = [], { templateBlob = null } = {}) {
+  const slidesN = (deck.slides || []).length;
+  if (th?.tpl && templateBlob) {
+    return await buildTemplatePptx({ templateBlob, tpl: th.tpl, deck, theme: th, meta, script, elementsFor: (sl, i) => templateSlide(sl, th, i, slidesN, meta), rasterize: chartPng });
+  }
   await loadPptx();
   const pptx = new window.PptxGenJS();
-  pptx.layout = 'LAYOUT_16x9'; pptx.author = 'Instructional Agents Studio'; pptx.title = meta.chapter || 'Lecture';
+  if (th?.size && (Math.abs(th.size.w - W) > 0.01 || Math.abs(th.size.h - H) > 0.01)) { pptx.defineLayout({ name: 'STUDIO_TPL', width: th.size.w, height: th.size.h }); pptx.layout = 'STUDIO_TPL'; } else pptx.layout = 'LAYOUT_16x9'; pptx.author = 'Instructional Agents Studio'; pptx.title = meta.chapter || 'Lecture';
   const notes = new Map((script || []).map(s => [s.slide_id, s.narration]));
   const slides = deck.slides || [];
   slides.forEach((sl, i) => {
@@ -346,6 +384,13 @@ export async function deckToPptx(deck, th, meta, script = []) {
     const n = notes.get(sl.slide_id) || sl.notes; if (n) s.addNotes(String(n));
   });
   return await pptx.write({ outputType: 'blob' });
+}
+/** Rasterize a chart element to a PNG data URL (used when exporting into a user template, where native charts are not written). */
+export function chartPng(e, pxW = 1400) {
+  const c = document.createElement('canvas'); const ratio = e.h && e.w ? e.h / e.w : 0.56; c.width = pxW; c.height = Math.round(pxW * ratio);
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, c.width, c.height);
+  drawChartCanvas(ctx, e, 0, 0, c.width, c.height, pxW / (e.w || W));
+  return c.toDataURL('image/png');
 }
 function addChart(pptx, s, e) {
   if (!e.series.length || !e.labels.length) { s.addText('Chart data missing', { x: e.x, y: e.y, w: e.w, h: e.h, fontSize: 12, color: '888888', isTextBox: true }); return; }

@@ -3,8 +3,13 @@
 // title card. drawScene() paints one frame for a progress value p∈[0,1] of the scene's narration, so the
 // video is time-driven: lecture lines light up as the narration advances, the visual builds step by step.
 import { PALETTES, resolveTheme } from './deck.js';
+import { normalizePractice, drawPracticeCard } from './practice.js';
 
-export const BEATS = ['title_card', 'bullets', 'formula', 'compare', 'steps', 'stat_row', 'recap', 'diagram', 'chart', 'illustration'];
+export const BEATS = ['title_card', 'bullets', 'formula', 'compare', 'steps', 'stat_row', 'recap', 'diagram', 'chart', 'illustration', 'practice'];
+
+/** Deterministic layout guard: while `guard.on`, text that cannot fit its box even at the minimum size is recorded. */
+export const guard = { on: false, findings: [] };
+export function collectGuard(fn) { guard.on = true; guard.findings = []; try { fn(); } finally { guard.on = false; } return guard.findings.slice(); }
 export const W = 1920, H = 1080;
 const FONT = "Calibri, Carlito, 'Segoe UI', Arial, sans-serif";
 const SERIF = "Cambria, 'Times New Roman', Georgia, serif";
@@ -45,6 +50,14 @@ export function normalizeStoryboard(raw, slides = []) {
     if (beat === 'diagram') s.visual = { nodes: (Array.isArray(v.nodes) ? v.nodes : []).slice(0, 8).map((n, k) => typeof n === 'string' ? { id: `n${k + 1}`, label: n } : { id: str(n?.id || `n${k + 1}`), label: str(n?.label || n?.text), kind: str(n?.kind) }), edges: (Array.isArray(v.edges) ? v.edges : []).slice(0, 12).map(e => ({ from: str(e?.from), to: str(e?.to), label: str(e?.label) })), caption: str(v.caption) };
     if (beat === 'chart') s.visual = { type: ['bar', 'line', 'pie'].includes(v.type || v.chart?.type) ? (v.type || v.chart.type) : 'bar', labels: arr(v.labels || v.chart?.labels), series: (Array.isArray(v.series || v.chart?.series) ? (v.series || v.chart.series) : []).map(sr => ({ name: str(sr?.name || 'Series'), values: (Array.isArray(sr?.values) ? sr.values : []).map(Number).map(n => (isFinite(n) ? n : 0)) })), unit: str(v.unit || v.chart?.unit), highlight: str(v.highlight) };
     if (beat === 'illustration') s.visual = { prompt: str(v.prompt || v.image_prompt || x.illustration_prompt || x.visual_brief), caption: str(v.caption || x.takeaway), labels: arr(v.labels).slice(0, 5) };
+    if (beat === 'practice') {
+      // Models put the template id and instruction either next to "parameters" or inside it; accept both.
+      const pp = v.parameters && typeof v.parameters === 'object' && !Array.isArray(v.parameters) ? v.parameters : (x.parameters && typeof x.parameters === 'object' ? x.parameters : v);
+      const params = { ...pp }; const tplId = v.template || x.template || pp.template || pp.template_id; delete params.template; delete params.template_id;
+      const instr = v.instruction || x.instruction || pp.instruction || x.title; if (pp === v) { for (const k of ['template', 'instruction', 'warnings']) delete params[k]; }
+      const pr = normalizePractice({ template: tplId, parameters: params, instruction: instr });
+      s.visual = { template: pr.template, parameters: pr.parameters, instruction: pr.instruction, warnings: pr.warnings };
+    }
     s.visual_brief = str(x.visual_brief);
     if (!hasVisual(s)) {
       // The model left the visual card empty: teach from the lecture lines / key elements instead of showing a blank card.
@@ -70,6 +83,7 @@ export function hasVisual(s) {
     case 'diagram': return n(v.nodes) >= 2;
     case 'chart': return n(v.labels) > 0 && n(v.series) > 0 && v.series.some(sr => sr.values.length);
     case 'illustration': return !!v.prompt;
+    case 'practice': return !!v.template && !!v.parameters;
     default: return false;
   }
 }
@@ -83,7 +97,9 @@ function wrap(ctx, text, maxW) { const words = String(text ?? '').split(/\s+/); 
 function fit(ctx, text, w, h, size, minSize, weight = 400, family = FONT, lh = 1.28) {
   let fs = size;
   for (; fs >= minSize; fs -= Math.max(1, fs * 0.06)) { ctx.font = `${weight} ${fs}px ${family}`; const lines = wrap(ctx, text, w); if (lines.length * fs * lh <= h && lines.every(l => ctx.measureText(l).width <= w)) return { lines, fs }; }
-  ctx.font = `${weight} ${minSize}px ${family}`; return { lines: wrap(ctx, text, w).slice(0, Math.max(1, Math.floor(h / (minSize * lh)))), fs: minSize };
+  ctx.font = `${weight} ${minSize}px ${family}`; const all = wrap(ctx, text, w); const keep = Math.max(1, Math.floor(h / (minSize * lh)));
+  if (guard.on && (all.length > keep || all.some(l => ctx.measureText(l).width > w))) guard.findings.push({ kind: 'text_overflow', severity: 'major', message: `text "${String(text).slice(0, 48)}${String(text).length > 48 ? '…' : ''}" does not fit its box even at ${minSize}px${all.length > keep ? ` (${all.length - keep} line(s) clipped)` : ' (line wider than the box)'}` });
+  return { lines: all.slice(0, keep), fs: minSize };
 }
 function text(ctx, t, x, y, w, h, { size = 32, min = 16, weight = 400, color = '#000', align = 'left', valign = 'top', family = FONT, alpha = 1, lh = 1.28, highlights = [], hlColor = null } = {}) {
   if (!t) return 0;
@@ -189,6 +205,7 @@ function drawMain(ctx, scene, t, p, box, assets) {
     if (v.caption) { const cp = seg(p, 0.5, 0.15); ctx.save(); ctx.globalAlpha = cp; ctx.fillStyle = hex('FFFFFF', 0.88); rr(ctx, x + 16, y + h - 74, w - 32, 58, 10); ctx.fill(); text(ctx, v.caption, x + 28, y + h - 66, w - 56, 44, { size: 26, min: 16, weight: 600, color: t.text, valign: 'middle' }); ctx.restore(); }
     ctx.restore(); return;
   }
+  if (beat === 'practice') { drawPracticeCard(ctx, scene, t, p, box); ctx.restore(); return; }
   if (beat === 'illustration') { beat_bullets(ctx, { bullets: v.labels?.length ? v.labels : [v.caption || scene.takeaway], highlights: [] }, t, p, x, y, w, h, box, true); ctx.restore(); return; }
   if (beat === 'bullets' || beat === 'recap') beat_bullets(ctx, { bullets: v.bullets, formula: beat === 'recap' ? v.formula : '', highlights: v.highlights }, t, p, x, y, w, h, box);
   else if (beat === 'formula') { card(ctx, box.x, box.y, box.w, box.h, t.primary, t.bg); const fp = seg(p, 0.1, 0.18); ctx.save(); ctx.globalAlpha = fp; const sc = 0.9 + 0.1 * fp; ctx.translate(x + w / 2, y + h * 0.22); ctx.scale(sc, sc); ctx.translate(-(x + w / 2), -(y + h * 0.22)); text(ctx, v.formula, x, y, w, h * 0.44, { size: 76, min: 30, weight: 700, color: t.primary, family: SERIF, align: 'center', valign: 'middle', highlights: v.highlights, hlColor: t.secondary }); ctx.restore(); (v.bullets || []).forEach((b, i) => { const bp = seg(p, 0.3 + i * 0.1, 0.1); if (bp <= 0) return; ctx.save(); ctx.globalAlpha = bp; ctx.translate((1 - bp) * 20, 0); text(ctx, `•  ${b}`, x + 20, y + h * 0.48 + i * (h * 0.5 / Math.max(v.bullets.length, 1)), w - 40, h * 0.5 / Math.max(v.bullets.length, 1) - 6, { size: 32, min: 18, color: t.text, valign: 'middle' }); ctx.restore(); }); }
@@ -253,11 +270,12 @@ function drawChart(ctx, v, t, p, x, y, w, h, box) {
   if (v.type === 'pie') { const vals = series[0].values; const tot = vals.reduce((a, b) => a + b, 0) || 1; let a0 = -Math.PI / 2; const cx = x + w * 0.32, cy = y + h / 2, r = Math.min(w, h) * 0.36; vals.forEach((val, i) => { const a1 = a0 + 2 * Math.PI * val / tot * gp; ctx.fillStyle = colors[i % colors.length]; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, a0, a1); ctx.closePath(); ctx.fill(); a0 = a1; }); labels.forEach((l, i) => { ctx.fillStyle = colors[i % colors.length]; ctx.fillRect(x + w * 0.62, y + 60 + i * 46, 22, 22); ctx.fillStyle = t.text; ctx.font = `500 26px ${FONT}`; ctx.textAlign = 'left'; ctx.fillText(`${l}  ${Math.round(100 * (vals[i] || 0) / tot)}%`, x + w * 0.62 + 34, y + 58 + i * 46); }); return; }
   const maxV = Math.max(...series.flatMap(s => s.values), 0) || 1; const n = labels.length; const gw = pw / n;
   ctx.strokeStyle = hex(t.muted.slice(1), 0.25); ctx.lineWidth = 2; for (let g = 0; g <= 4; g++) { const gy = y + padT + ph - ph * g / 4; ctx.beginPath(); ctx.moveTo(x + padL, gy); ctx.lineTo(x + w - 20, gy); ctx.stroke(); ctx.fillStyle = t.muted; ctx.font = `500 20px ${FONT}`; ctx.textAlign = 'right'; ctx.fillText(fmt(maxV * g / 4), x + padL - 10, gy - 10); }
-  ctx.fillStyle = t.text; ctx.font = `500 22px ${FONT}`; ctx.textAlign = 'center'; labels.forEach((l, i) => ctx.fillText(String(l).slice(0, 14), x + padL + gw * i + gw / 2, y + h - padB + 16));
+  ctx.textAlign = 'center'; labels.forEach((l, i) => { const hl = isHighlight(l, v.highlight); ctx.fillStyle = hl ? t.secondary : t.text; ctx.font = `${hl ? 800 : 500} 22px ${FONT}`; ctx.fillText(String(l).slice(0, 14), x + padL + gw * i + gw / 2, y + h - padB + 16); });
   if (v.type === 'line') series.forEach((s, si) => { ctx.strokeStyle = colors[si % colors.length]; ctx.lineWidth = 6; ctx.beginPath(); const pts = s.values.map((val, i) => [x + padL + gw * i + gw / 2, y + padT + ph - ph * val / maxV]); const upto = gp * (pts.length - 1); pts.forEach(([px, py], i) => { if (i > Math.ceil(upto)) return; if (i === 0) ctx.moveTo(px, py); else if (i <= Math.floor(upto)) ctx.lineTo(px, py); else { const f = upto - Math.floor(upto); const [qx, qy] = pts[i - 1]; ctx.lineTo(qx + (px - qx) * f, qy + (py - qy) * f); } }); ctx.stroke(); });
-  else { const bw = gw / (series.length + 1); series.forEach((s, si) => s.values.forEach((val, i) => { const bh = ph * val / maxV * seg(p, 0.1 + i * (0.4 / n), 0.25); const bx = x + padL + gw * i + bw * (si + 0.5), by = y + padT + ph - bh; ctx.fillStyle = v.highlight && String(labels[i]) === v.highlight ? t.secondary : colors[si % colors.length]; rr(ctx, bx, by, bw, bh, 6); ctx.fill(); if (bh > 4 && gp > 0.95) { ctx.fillStyle = t.text; ctx.font = `600 20px ${FONT}`; ctx.textAlign = 'center'; ctx.fillText(fmt(val), bx + bw / 2, by - 26); } })); }
+  else { const bw = gw / (series.length + 1); series.forEach((s, si) => s.values.forEach((val, i) => { const bh = ph * val / maxV * seg(p, 0.1 + i * (0.4 / n), 0.25); const bx = x + padL + gw * i + bw * (si + 0.5), by = y + padT + ph - bh; const hl = isHighlight(labels[i], v.highlight); ctx.fillStyle = hl ? t.secondary : colors[si % colors.length]; rr(ctx, bx, by, bw, bh, 6); ctx.fill(); if (hl && bh > 4) { ctx.save(); ctx.strokeStyle = t.secondary; ctx.lineWidth = 4; rr(ctx, bx - 6, by - 6, bw + 12, bh + 12, 9); ctx.stroke(); ctx.restore(); } if (bh > 4 && gp > 0.95) { ctx.fillStyle = hl ? t.secondary : t.text; ctx.font = `${hl ? 800 : 600} ${hl ? 24 : 20}px ${FONT}`; ctx.textAlign = 'center'; ctx.fillText(fmt(val), bx + bw / 2, by - (hl ? 32 : 26)); } })); }
   if (v.unit) { ctx.fillStyle = t.muted; ctx.font = `500 20px ${FONT}`; ctx.textAlign = 'left'; ctx.fillText(v.unit, x + padL, y + 2); }
 }
+function isHighlight(label, h) { if (!h) return false; const a = String(label).trim().toLowerCase(), b = String(h).trim().toLowerCase(); return !!a && !!b && (a === b || a.includes(b) || b.includes(a)); }
 const fmt = v => (Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(1)}k` : Number.isInteger(v) ? String(v) : v.toFixed(1));
 
 /** Load character art (optional accent) and scene illustrations (data URLs) into Image objects. */
