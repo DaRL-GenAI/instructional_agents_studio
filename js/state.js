@@ -97,7 +97,7 @@ export async function listProjects() {
   if (!all.length) { // one-time import of the legacy single project
     try {
       const legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || 'null');
-      if (legacy?.course) { const p = migrate(legacy); await db.put('projects', p.id, p); localStorage.removeItem(LEGACY_KEY); all.push(p); }
+      if (legacy?.course) { const p = migrate(legacy); await db.put('projects', p.id, p); if (!db.usingMemory) localStorage.removeItem(LEGACY_KEY); all.push(p); }
     } catch { /* ignore */ }
   }
   return all.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
