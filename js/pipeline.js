@@ -57,7 +57,7 @@ export class Pipeline {
   examChapters(kind) {
     const chs = this.store.project.chapters;
     const scope = kind === 'midterm' ? chs.slice(0, Math.ceil(chs.length / 2)) : chs;
-    return scope.map(c => { const slides = safeJson(c.stages.slides?.output, []); return { title: c.title, description: c.description, points: slides.slice(0, 12).map(s => s.title) }; });
+    return scope.map(c => { const slides = itemsOf(c.stages.slides?.output); return { title: c.title, description: c.description, points: slides.slice(0, 12).map(s => s.title) }; });
   }
   examInputs(kind) {
     const p = this.store.project;
@@ -83,7 +83,7 @@ export class Pipeline {
     const p = this.store.project; const ch = this.store.chapter(chapterId); const st = CHAPTER_STAGES.find(s => s.id === stageId);
     const out = k => p.foundation[k]?.output || '';
     const tb = textbookContext(this.chapterInputs(chapterId, stageId).find(i => i.chunks)?.chunks || []);
-    const slides = safeJson(ch.stages.slides?.output, []); const outline = safeJson(ch.stages.outline?.output, []);
+    const slides = itemsOf(ch.stages.slides?.output); const outline = itemsOf(ch.stages.outline?.output);
     let user = '';
     if (stageId === 'outline') user = PROMPTS.outline(p.course, ch, this.settings.slidesPerChapter, priorContext([{ label: 'Learning objectives', text: out('objectives') }]), tb);
     if (stageId === 'slides') user = PROMPTS.slides(p.course, ch, outline, priorContext([{ label: 'Learning objectives', text: out('objectives') }]), tb);
@@ -168,8 +168,8 @@ export class Pipeline {
       let text = await this.stream(key, transcript, usage, { where: ch.title, stage: st.name, agent: prompt.agents[0].name, json, messages });
       const parse = (t) => {
         if (stageId === 'outline') return JSON.stringify(normalizeOutline(extractJson(t, 'array')), null, 2);
-        if (stageId === 'slides') return normalizeSlides(extractJson(t, 'array'), safeJson(ch.stages.outline.output, []));
-        if (stageId === 'script') return JSON.stringify(normalizeScript(extractJson(t, 'array'), safeJson(ch.stages.slides.output, [])), null, 2);
+        if (stageId === 'slides') return normalizeSlides(extractJson(t, 'array'), itemsOf(ch.stages.outline?.output));
+        if (stageId === 'script') return JSON.stringify(normalizeScript(extractJson(t, 'array'), itemsOf(ch.stages.slides?.output)), null, 2);
         if (stageId === 'quiz') return JSON.stringify(normalizeQuiz(extractJson(t, 'array')), null, 2);
         return t.trim();
       };
@@ -215,7 +215,7 @@ export class Pipeline {
   /** Add LaTeX frame bodies to an existing slide deck (when switching a chapter to the LaTeX format). */
   async runBeamerFrames(chapterId) {
     const ch = this.store.chapter(chapterId); const stage = this.store.chapterStage(chapterId, 'slides');
-    const slides = safeJson(stage.output, null); if (!slides) throw new Error('Generate the slides first.');
+    const slides = itemsOf(stage.output); if (!slides.length) throw new Error('Generate the slides first.');
     stage.status = 'running'; this.store.save();
     const transcript = [...(stage.transcript || [])], usage = { ...(stage.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }) }, t0 = performance.now();
     try {
@@ -242,6 +242,8 @@ export class Pipeline {
 }
 
 export function safeJson(text, fallback) { try { return JSON.parse(text); } catch { return fallback; } }
+/** Saved stage output as a clean array of objects (tolerates empty, malformed or object-shaped saves). */
+export function itemsOf(text) { const v = safeJson(text, null); const a = Array.isArray(v) ? v : toArray(v); return a.filter(x => x && typeof x === 'object'); }
 function tokenize(s) { return (s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length > 2 && !STOP.has(w)); }
 const STOP = new Set('the and for with that this from are was were will have has into you your can not but our their they them what when where which who why how about than then over under between each also more most such use used using'.split(' '));
 

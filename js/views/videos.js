@@ -23,7 +23,8 @@ export function render(ctx) {
 function videoView(ctx, chId) {
   const { store, pipe } = ctx; const p = store.project; const ch = store.chapter(chId); const idx = p.chapters.indexOf(ch);
   const stage = store.chapterStage(chId, 'video'); const inputs = pipe.chapterInputs(chId, 'video');
-  const slides = safeJson(ch.stages.slides?.output, null); const script = safeJson(ch.stages.script?.output, null);
+  const slidesRaw = safeJson(ch.stages.slides?.output, null); const scriptRaw = safeJson(ch.stages.script?.output, null);
+  const slides = Array.isArray(slidesRaw) && slidesRaw.length ? slidesRaw : null; const script = Array.isArray(scriptRaw) && scriptRaw.length ? scriptRaw : null;
   const m = ctx.media[chId] ||= { audios: null, video: null, vtt: null, cache: new Map(), loaded: false };
   const box = el('div', {});
   box.append(el('div', { class: 'stage-head' }, el('div', {}, el('span', { class: 'meta' }, `Chapter ${idx + 1} of ${p.chapters.length}`), el('h2', { style: 'margin-top:2px' }, ch.title)), el('div', { class: 'meta-col' }, badge(stageStatus(pipe, stage, inputs)), stage.output ? el('small', {}, stage.output) : null)));

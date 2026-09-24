@@ -50,12 +50,17 @@ export function stageDetail(ctx, o) {
   if (stage.review) items.push(['review', `Review · ${stage.review.score}/10`]);
   wrap.append(tabs(items.map(([k, l, c]) => [k, l, c]), ui.tab, k => { ui.tab = k; ctx.render(); }));
   const body = el('div', { class: 'tab-body' });
-  if (ui.tab === 'output') body.append(outputEditor(ctx, o));
-  if (ui.tab === 'prompt') body.append(promptEditor(ctx, o));
-  if (ui.tab === 'transcript') body.append(transcriptView(stage));
-  if (ui.tab === 'provenance') body.append(provenanceView(stage, inputs));
-  if (ui.tab === 'history') body.append(historyView(ctx, o));
-  if (ui.tab === 'review') body.append(reviewView(stage));
+  try {
+    if (ui.tab === 'output') body.append(outputEditor(ctx, o));
+    if (ui.tab === 'prompt') body.append(promptEditor(ctx, o));
+    if (ui.tab === 'transcript') body.append(transcriptView(stage));
+    if (ui.tab === 'provenance') body.append(provenanceView(stage, inputs));
+    if (ui.tab === 'history') body.append(historyView(ctx, o));
+    if (ui.tab === 'review') body.append(reviewView(stage));
+  } catch (e) {
+    console.error(e);
+    body.append(notice('error', `This tab could not be displayed (${e.message}). `, button({ label: 'Show raw output', size: 'sm', onClick: () => { ui.tab = 'output'; ui.forceRaw = true; ctx.render(); } })));
+  }
   wrap.append(body);
   return wrap;
 }
@@ -124,9 +129,11 @@ function outputEditor(ctx, o) {
     if (st.status === 'running') return el('div', {}, el('p', { class: 'muted', style: 'margin-bottom:12px' }, 'Generating. The live response streams in the panel at the bottom right.'), el('div', { class: 'skeleton' }, el('i', { style: 'width:70%' }), el('i', { style: 'width:90%' }), el('i', { style: 'width:60%' }), el('i', { style: 'width:80%' })));
     return empty({ icon: 'file', title: 'Nothing generated yet', body: 'Review the Prompt tab if you want to adjust what the agents are asked, then press Generate.', actions: [button({ label: 'Generate', icon: 'play', variant: 'primary', disabled: !!ctx.busy, onClick: () => o.run({}) }), button({ label: 'View prompt', variant: 'ghost', onClick: () => { ctx.ui[o.key].tab = 'prompt'; ctx.render(); } })] });
   }
-  if (o.kind === 'slides') return slidesEditor(ctx, o);
-  if (o.kind === 'script') return scriptEditor(ctx, o);
-  if (o.kind === 'quiz') return quizEditor(ctx, o);
+  if (!ctx.ui[o.key]?.forceRaw) {
+    if (o.kind === 'slides') return slidesEditor(ctx, o);
+    if (o.kind === 'script') return scriptEditor(ctx, o);
+    if (o.kind === 'quiz') return quizEditor(ctx, o);
+  }
   const mode = editorMode(ctx);
   const box = el('div', { class: `editor-split mode-${mode}` });
   const ta = textarea({ class: 'textarea editor', spellcheck: 'false', 'aria-label': 'Editable source' }, st.output);
@@ -140,8 +147,20 @@ function outputEditor(ctx, o) {
 }
 
 const FORMAT_LABEL = { html: 'HTML deck (print to PDF)', latex: 'LaTeX Beamer (.tex → PDF)', pptx: 'PowerPoint (.pptx)' };
+function invalidOutput(ctx, o, what) {
+  const st = o.stage;
+  const ta = textarea({ class: 'textarea editor', spellcheck: 'false', style: 'min-height:40vh' }, st.output || '');
+  return el('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+    notice('warn', `The saved ${what} is empty or not in the expected format, so the editor cannot show it. Re-run the stage, or fix the JSON below and save.`),
+    el('div', { class: 'btn-row' }, button({ label: 'Re-run', icon: 'refresh', variant: 'primary', disabled: !!ctx.busy, onClick: () => o.run({}) }), button({ label: 'Save JSON', size: 'sm', onClick: () => { try { JSON.parse(ta.value); } catch (e) { return toast(`Invalid JSON: ${e.message}`, 'error'); } if (ctx.store.userEdit(st, o.label, ta.value, o.where)) { toast('Saved', 'ok'); ctx.render(); } } })),
+    ta);
+}
+
 function slidesEditor(ctx, o) {
-  const st = o.stage; const ch = o.chapter; const slides = safeJson(st.output, []); const fmt = ctx.store.settings.slideFormat || 'pptx';
+  const st = o.stage; const ch = o.chapter; const fmt = ctx.store.settings.slideFormat || 'pptx';
+  const raw = safeJson(st.output, null);
+  const slides = Array.isArray(raw) ? raw.filter(x => x && typeof x === 'object').map((x, i) => ({ slide_id: i + 1, title: String(x.title || `Slide ${i + 1}`), bullets: Array.isArray(x.bullets) ? x.bullets.map(String) : [], code: typeof x.code === 'string' ? x.code : '', code_language: x.code_language || '', notes: typeof x.notes === 'string' ? x.notes : '', ...(x.latex ? { latex: String(x.latex) } : {}) })) : [];
+  if (!slides.length) return invalidOutput(ctx, o, 'slide deck');
   const ui = ctx.ui[o.key]; let current = Math.min(ui.slide || 0, slides.length - 1);
   const meta = { course: ctx.store.project.course.name, chapter: ch.title };
   const list = el('div', { class: 'slide-list', role: 'listbox', 'aria-label': 'Slides' }); const preview = el('div', { class: 'slide-preview' }); const form = el('div', { class: 'slide-form' });
@@ -168,7 +187,9 @@ function slidesEditor(ctx, o) {
 }
 
 function scriptEditor(ctx, o) {
-  const st = o.stage; const script = safeJson(st.output, []);
+  const st = o.stage; const raw = safeJson(st.output, null);
+  const script = Array.isArray(raw) ? raw.filter(x => x && typeof x === 'object').map((x, i) => ({ slide_id: x.slide_id || i + 1, title: String(x.title || `Slide ${i + 1}`), narration: String(x.narration || '') })) : [];
+  if (!script.length) return invalidOutput(ctx, o, 'lecture script');
   const words = script.reduce((a, s) => a + (s.narration || '').split(/\s+/).filter(Boolean).length, 0);
   const box = el('div', {}, el('div', { class: 'editor-bar' }, el('span', {}, `${script.length} narration blocks · ~${words} words · about ${Math.max(1, Math.round(words / 150))} min spoken`), button({ label: 'Save edits', size: 'sm', variant: 'primary', onClick: () => { if (ctx.store.userEdit(st, o.label, JSON.stringify(script, null, 2), o.where)) { toast('Script saved and logged', 'ok'); ctx.render(); } else toast('No changes'); } }), button({ label: 'Discard', size: 'sm', variant: 'ghost', onClick: () => ctx.render() })));
   script.forEach((s, i) => { const ta = textarea({ rows: 4, 'aria-label': `Narration for slide ${i + 1}` }, s.narration); ta.oninput = () => { s.narration = ta.value; }; box.append(el('div', { class: 'script-row' }, el('div', { class: 'script-label' }, el('b', {}, `Slide ${i + 1}`), s.title), ta)); });
@@ -176,7 +197,9 @@ function scriptEditor(ctx, o) {
 }
 
 function quizEditor(ctx, o) {
-  const st = o.stage; const quiz = safeJson(st.output, []);
+  const st = o.stage; const raw = safeJson(st.output, null);
+  const quiz = Array.isArray(raw) ? raw.filter(x => x && typeof x === 'object').map((x, i) => ({ id: i + 1, type: x.type || (Array.isArray(x.options) && x.options.length ? 'multiple_choice' : 'short_answer'), question: String(x.question || ''), options: Array.isArray(x.options) ? x.options.map(String) : [], answer: String(x.answer ?? ''), explanation: String(x.explanation || ''), objective: String(x.objective || ''), difficulty: String(x.difficulty || 'medium') })) : [];
+  if (!quiz.length) return invalidOutput(ctx, o, 'quiz');
   const box = el('div', {});
   const save = () => { if (ctx.store.userEdit(st, o.label, JSON.stringify(quiz, null, 2), o.where)) { toast('Quiz saved and logged', 'ok'); ctx.render(); } else toast('No changes'); };
   box.append(el('div', { class: 'editor-bar' }, el('span', {}, `${quiz.length} questions · ${quiz.filter(q => q.type === 'multiple_choice').length} multiple choice`), button({ label: 'Save edits', size: 'sm', variant: 'primary', onClick: save }), button({ label: 'Discard', size: 'sm', variant: 'ghost', onClick: () => ctx.render() })));

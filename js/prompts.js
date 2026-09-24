@@ -267,7 +267,7 @@ Chapter: ${chapter.title}
 Description: ${chapter.description}
 
 Slide titles and key points:
-${slides.map(s => `- ${s.title}: ${(s.bullets || []).join('; ')}`).join('\n')}
+${slides.map(s => `- ${s.title || 'Slide'}: ${(Array.isArray(s.bullets) ? s.bullets : []).join('; ')}`).join('\n')}
 
 ${assessmentPlan ? `Course assessment plan (follow its formats, rubrics and policies):\n${assessmentPlan}\n` : ''}${textbook ? `${textbook}\n` : ''}
 Write the homework in Markdown with these sections:
@@ -288,7 +288,7 @@ Chapter: ${chapter.title}
 Description: ${chapter.description}
 
 Slide titles and key points:
-${slides.map(s => `- ${s.title}: ${(s.bullets || []).join('; ')}`).join('\n')}
+${slides.map(s => `- ${s.title || 'Slide'}: ${(Array.isArray(s.bullets) ? s.bullets : []).join('; ')}`).join('\n')}
 
 ${resources ? `Available resources and constraints:\n${resources}\n` : ''}${textbook ? `${textbook}\n` : ''}
 Write the lab in Markdown with these sections:
@@ -310,7 +310,7 @@ Chapter: ${chapter.title}
 Description: ${chapter.description}
 
 Slide titles and key points:
-${slides.map(s => `- ${s.title}: ${(s.bullets || []).join('; ')}`).join('\n')}
+${slides.map(s => `- ${s.title || 'Slide'}: ${(Array.isArray(s.bullets) ? s.bullets : []).join('; ')}`).join('\n')}
 
 ${assessmentPlan ? `Course assessment plan (follow its question formats and difficulty):\n${assessmentPlan}\n` : ''}${textbook ? `${textbook}\n` : ''}
 Mix question types: mostly multiple choice (4 options, exactly one correct), plus 1–2 true/false and 1–2 short-answer items.

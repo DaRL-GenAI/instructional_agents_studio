@@ -65,10 +65,15 @@ function render() {
     const r = ctx.route;
     renderNav(); renderTopbar();
     const panel = $('#main'); panel.innerHTML = '';
-    if (r.name === 'projects') panel.append(home.render(ctx));
-    else if (r.name === 'account') panel.append(accountView.render(ctx));
-    else if (r.name === 'project' && ctx.store) panel.append((VIEWS[r.module] || overview).render(ctx));
-    else panel.append(home.render(ctx));
+    try {
+      if (r.name === 'projects') panel.append(home.render(ctx));
+      else if (r.name === 'account') panel.append(accountView.render(ctx));
+      else if (r.name === 'project' && ctx.store) panel.append((VIEWS[r.module] || overview).render(ctx));
+      else panel.append(home.render(ctx));
+    } catch (e) {
+      console.error('render failed', e);
+      panel.append(errorPanel(e));
+    }
     renderLive();
     document.title = ctx.store && r.name === 'project' ? `${ctx.store.project.name} · ${MODULES.find(m => m.id === r.module)?.name || 'Overview'} · Studio` : r.name === 'account' ? 'Account · Studio' : 'Instructional Agents Studio';
   } finally { rendering = false; }
@@ -112,15 +117,31 @@ function renderLive() {
   const pre = $('#live-text'); pre.textContent = p.live.text; pre.scrollTop = pre.scrollHeight;
 }
 
+function errorPanel(e) {
+  const r = ctx.route; const p = ctx.store?.project;
+  const diag = { route: location.hash, error: String(e && e.stack || e), project: p ? { id: p.id, schema: p.schema, chapters: p.chapters?.length, updatedAt: p.updatedAt } : null, version: document.querySelector('script[src*="app.js"]')?.src.split('?v=')[1], ua: navigator.userAgent };
+  return el('div', { class: 'page' }, el('div', { class: 'notice error', style: 'flex-direction:column;align-items:flex-start;gap:12px' },
+    el('div', {}, el('b', {}, 'This page could not be displayed.'), ' Your data is intact; the view hit an error while rendering: ', el('code', {}, String(e?.message || e))),
+    el('div', { class: 'btn-row' },
+      p ? button({ label: 'Back to overview', size: 'sm', variant: 'primary', onClick: () => go('p', p.id, 'overview') }) : button({ label: 'Back to projects', size: 'sm', variant: 'primary', onClick: () => go('projects') }),
+      button({ label: 'Copy diagnostics', size: 'sm', onClick: () => navigator.clipboard.writeText(JSON.stringify(diag, null, 2)).then(() => toast('Diagnostics copied; please paste them in an issue')) }),
+      button({ label: 'Retry', size: 'sm', variant: 'ghost', onClick: () => render() }))));
+}
+
 // ------------------------------------------------------------------ routing
 async function route() {
   ctx.route = parse();
-  if (ctx.route.name === 'project') {
-    const ok = await openProject(ctx.route.id);
-    if (!ok) { toast('Project not found', 'error'); go('projects'); return; }
-    if (!VIEWS[ctx.route.module]) { go('p', ctx.route.id, 'overview'); return; }
+  try {
+    if (ctx.route.name === 'project') {
+      const ok = await openProject(ctx.route.id);
+      if (!ok) { toast('Project not found', 'error'); go('projects'); return; }
+      if (!VIEWS[ctx.route.module]) { go('p', ctx.route.id, 'overview'); return; }
+    }
+    if (ctx.route.name === 'projects' || ctx.route.name === 'account') await ctx.reloadProjects();
+  } catch (e) {
+    console.error('route failed', e);
+    const panel = $('#main'); panel.innerHTML = ''; panel.append(errorPanel(e)); return;
   }
-  if (ctx.route.name === 'projects' || ctx.route.name === 'account') await ctx.reloadProjects();
   render();
   $('#main').focus({ preventScroll: true });
 }
