@@ -164,16 +164,29 @@ export class Pipeline {
     const transcript = [], usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, t0 = performance.now(), key = `chapter:${chapterId}:${stageId}`;
     try {
       const json = ['outline', 'slides', 'script', 'quiz'].includes(stageId);
-      const text = await this.stream(key, transcript, usage, { where: ch.title, stage: st.name, agent: prompt.agents[0].name, json, messages: [{ role: 'system', content: prompt.agents[0].system }, { role: 'user', content: prompt.user }] });
-      let output = text.trim();
-      if (stageId === 'outline') output = JSON.stringify(normalizeOutline(extractJson(text, 'array')), null, 2);
+      const messages = [{ role: 'system', content: prompt.agents[0].system }, { role: 'user', content: prompt.user }];
+      let text = await this.stream(key, transcript, usage, { where: ch.title, stage: st.name, agent: prompt.agents[0].name, json, messages });
+      const parse = (t) => {
+        if (stageId === 'outline') return JSON.stringify(normalizeOutline(extractJson(t, 'array')), null, 2);
+        if (stageId === 'slides') return normalizeSlides(extractJson(t, 'array'), safeJson(ch.stages.outline.output, []));
+        if (stageId === 'script') return JSON.stringify(normalizeScript(extractJson(t, 'array'), safeJson(ch.stages.slides.output, [])), null, 2);
+        if (stageId === 'quiz') return JSON.stringify(normalizeQuiz(extractJson(t, 'array')), null, 2);
+        return t.trim();
+      };
+      let output;
+      try { output = parse(text); }
+      catch (e) {
+        if (!json) throw e;
+        // One strict retry: the model answered in an unexpected shape; ask for the bare array.
+        const strict = [...messages, { role: 'assistant', content: text }, { role: 'user', content: `That reply could not be used (${e.message}). Reply again with ONLY the JSON array requested above, as a top-level array of objects with exactly the specified fields, no wrapper object, no prose, no code fences.` }];
+        text = await this.stream(key, transcript, usage, { where: ch.title, stage: `${st.name} (retry)`, agent: prompt.agents[0].name, json: false, messages: strict });
+        output = parse(text);
+      }
       if (stageId === 'slides') {
-        let slides = normalizeSlides(extractJson(text, 'array'), safeJson(ch.stages.outline.output, []));
+        let slides = output;
         if (this.settings.slideFormat === 'latex') slides = await this.beamerFrames(ch, slides, key, transcript, usage);
         output = JSON.stringify(slides, null, 2);
       }
-      if (stageId === 'script') output = JSON.stringify(normalizeScript(extractJson(text, 'array'), safeJson(ch.stages.slides.output, [])), null, 2);
-      if (stageId === 'quiz') output = JSON.stringify(normalizeQuiz(extractJson(text, 'array')), null, 2);
       this.store.applyResult(stage, st.name, { output, usage, durationMs: Math.round(performance.now() - t0), transcript, prompt, inputHash: this.inputHash(inputs), provenance: inputs.map(i => ({ label: i.label, hash: sha1Short(i.text), version: i.version, chunks: i.chunks })) }, ch.title);
     } catch (e) { stage.status = 'error'; stage.error = String(e.message || e); stage.transcript = transcript; this.store.save(); throw e; }
     finally { this.live = null; this.onLive(); }
@@ -234,8 +247,19 @@ const STOP = new Set('the and for with that this from are was were will have has
 
 function normalizeOutline(arr) { arr = toArray(arr); if (!arr.length) throw new Error('The model returned no outline items. Re-run, or check the Transcript tab for the raw response.'); return arr.filter(x => x && (x.title || x.slide_title)).map((x, i) => ({ slide_id: i + 1, title: String(x.title || x.slide_title), description: String(x.description || x.summary || '') })); }
 function normalizeSlides(arr, outline) {
-  arr = toArray(arr); if (!arr.length) throw new Error('The model returned no slides. Re-run, or check the Transcript tab for the raw response.');
-  return arr.filter(x => x && (x.title || x.slide_id)).map((x, i) => ({ slide_id: i + 1, title: String(x.title || outline[i]?.title || `Slide ${i + 1}`), bullets: Array.isArray(x.bullets) ? x.bullets.map(String).slice(0, 8) : (typeof x.bullets === 'string' ? x.bullets.split('\n').filter(Boolean) : []), code: typeof x.code === 'string' ? x.code : '', code_language: typeof x.code_language === 'string' ? x.code_language : '', notes: typeof x.notes === 'string' ? x.notes : '', ...(typeof x.latex === 'string' && x.latex ? { latex: x.latex } : {}) }));
+  arr = toArray(arr).filter(x => x && typeof x === 'object');
+  if (!arr.length) throw new Error('The model returned no slides. Re-run, or check the Transcript tab for the raw response.');
+  const pick = (x, ...keys) => { for (const k of keys) if (x[k] !== undefined && x[k] !== null && x[k] !== '') return x[k]; return undefined; };
+  const asList = v => Array.isArray(v) ? v.map(b => typeof b === 'string' ? b : (b?.text || b?.point || JSON.stringify(b))).slice(0, 8) : (typeof v === 'string' ? v.split('\n').map(t => t.replace(/^[-*•]\s*/, '').trim()).filter(Boolean) : []);
+  return arr.map((x, i) => ({
+    slide_id: i + 1,
+    title: String(pick(x, 'title', 'slide_title', 'slideTitle', 'heading', 'name') || outline[i]?.title || `Slide ${i + 1}`),
+    bullets: asList(pick(x, 'bullets', 'points', 'bullet_points', 'key_points', 'content', 'body')),
+    code: typeof pick(x, 'code', 'snippet', 'formula') === 'string' ? pick(x, 'code', 'snippet', 'formula') : '',
+    code_language: typeof x.code_language === 'string' ? x.code_language : (typeof x.language === 'string' ? x.language : ''),
+    notes: typeof pick(x, 'notes', 'speaker_notes', 'teaching_notes') === 'string' ? pick(x, 'notes', 'speaker_notes', 'teaching_notes') : '',
+    ...(typeof x.latex === 'string' && x.latex ? { latex: x.latex } : {}),
+  }));
 }
 function normalizeScript(arr, slides) {
   arr = toArray(arr);

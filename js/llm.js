@@ -136,17 +136,27 @@ function unwrap(v, want) {
 }
 
 /** Coerce the many shapes models return in JSON mode into an array of items. */
-export function toArray(v) {
+export function toArray(v, depth = 0) {
   if (Array.isArray(v)) return v;
+  if (typeof v === 'string' && depth < 2) { try { return toArray(JSON.parse(v), depth + 1); } catch { return []; } }
   if (!v || typeof v !== 'object') return [];
-  const values = Object.values(v);
-  const arrays = values.filter(Array.isArray);
-  if (arrays.length) return arrays.reduce((a, b) => (a.length >= b.length ? a : b));   // {"slides": [...]}
-  if (values.length && values.every(x => x && typeof x === 'object')) {
-    if (values.length === 1) return toArray(values[0]);                                   // {"slides": {"1": {...}, "2": {...}}}
-    return values;                                                                        // {"1": {...}, "2": {...}}
-  }
-  if ('title' in v || 'question' in v || 'slide_id' in v || 'narration' in v || 'latex' in v) return [v]; // a single item
+  // 1. the longest array of objects anywhere in the tree (e.g. {"chapter": "…", "deck": {"slides": [...]}})
+  const arrays = [];
+  const walk = (o, d) => { if (d > 4 || !o || typeof o !== 'object') return; for (const val of Object.values(o)) { if (Array.isArray(val)) arrays.push(val); else if (val && typeof val === 'object') walk(val, d + 1); } };
+  walk(v, 0);
+  const nonEmpty = arrays.filter(a => a.length);
+  const objArrays = nonEmpty.filter(a => a.every(x => x && typeof x === 'object'));
+  if (objArrays.length) return objArrays.reduce((a, b) => (a.length >= b.length ? a : b));
+  // 2. a dictionary of items keyed by id (e.g. {"1": {...}, "2": {...}} or {"slides": {"slide_1": {...}}})
+  const isItem = o => o && typeof o === 'object' && !Array.isArray(o) && ('title' in o || 'question' in o || 'slide_id' in o || 'narration' in o || 'latex' in o || 'bullets' in o || 'description' in o);
+  const dicts = [];
+  const walk2 = (o, d) => { if (d > 4 || !o || typeof o !== 'object') return; const vals = Object.values(o); if (vals.length && vals.every(isItem)) dicts.push(vals); for (const val of vals) if (val && typeof val === 'object' && !Array.isArray(val)) walk2(val, d + 1); };
+  walk2(v, 0);
+  if (dicts.length) return dicts.reduce((a, b) => (a.length >= b.length ? a : b));
+  // 3. a single item
+  if (isItem(v)) return [v];
+  // 4. last resort: an array of primitives (callers decide whether it is usable)
+  if (nonEmpty.length) return nonEmpty.reduce((a, b) => (a.length >= b.length ? a : b));
   return [];
 }
 
