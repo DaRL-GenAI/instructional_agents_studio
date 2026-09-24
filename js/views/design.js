@@ -20,7 +20,7 @@ export function render(ctx) {
     const stage = store.foundationStage(f.id); const inputs = pipe.foundationInputs(f.id);
     const prompt = pipe.defaultFoundationPrompt(f.id);
     main.append(stageDetail(ctx, { key: `f:${f.id}`, title: f.name, subtitle: `${f.phase} phase · ${prompt.agents.map(a => a.name).join(' → ')} → Summarizer`, stage, inputs, kind: 'md', file: f.file, label: f.name, where: 'course', defaultPrompt: () => pipe.defaultFoundationPrompt(f.id),
-      run: () => ctx.guarded(`Running ${f.name}`, async () => { if (!ctx.requireKey()) return; await pipe.runFoundation(f.id); toast(`${f.name} generated`, 'ok'); }),
+      run: ({ feedback } = {}) => ctx.guarded(`Running ${f.name}`, async () => { if (!ctx.requireKey()) return; await pipe.runFoundation(f.id, { feedback }); toast(`${f.name} ${feedback ? 'revised' : 'generated'}`, 'ok'); }),
       next: () => { const i = FOUNDATION.indexOf(f); go('p', p.id, 'design', i < FOUNDATION.length - 1 ? FOUNDATION[i + 1].id : 'chapters'); } }));
   }
   page.append(el('div', { class: 'two-pane' }, rail, main));
@@ -40,10 +40,17 @@ function chaptersView(ctx) {
   const box = el('div', {});
   box.append(el('div', { class: 'stage-head' }, el('div', {}, el('h2', {}, 'Chapters'), el('p', { class: 'muted', style: 'font-size:var(--fs-2);margin-top:4px' }, 'The Syllabus Processor agent splits the syllabus into chapters. Edit freely; each chapter then gets slides, assessments and a video.')), el('div', { class: 'meta-col' }, badge(stageStatus(pipe, stage)))));
   if (stage.error) box.append(el('div', { style: 'margin-top:12px' }, notice('error', stage.error)));
+  const ui = ctx.ui['chapters'] ||= {};
+  const extract = feedback => ctx.guarded('Extracting chapters', async () => { if (!ctx.requireKey()) return; await pipe.runChaptersExtraction({ feedback }); toast(`${store.project.chapters.length} chapters extracted`, 'ok'); });
   box.append(el('div', { class: 'stage-actions' },
-    button({ label: stage.status === 'done' ? 'Re-extract from syllabus' : 'Extract chapters from syllabus', icon: 'play', variant: 'primary', disabled: !!ctx.busy || !hasSyllabus, onClick: () => ctx.guarded('Extracting chapters', async () => { if (!ctx.requireKey()) return; await pipe.runChaptersExtraction(); toast(`${store.project.chapters.length} chapters extracted`, 'ok'); }) }),
+    button({ label: stage.status === 'done' ? 'Re-extract from syllabus' : 'Extract chapters from syllabus', icon: 'play', variant: 'primary', disabled: !!ctx.busy || !hasSyllabus, onClick: () => extract() }),
+    stage.status === 'done' ? button({ label: 'Re-extract with comments', icon: 'message', disabled: !!ctx.busy, onClick: () => { ui.feedbackOpen = !ui.feedbackOpen; ctx.render(); } }) : null,
     button({ label: 'Add chapter', icon: 'plus', onClick: () => { store.addChapter({ title: 'New chapter', description: '' }); store.log({ type: 'edit', stage: 'Chapter list', where: 'course', note: 'chapter added' }); store.save(); ctx.render(); } }),
     !hasSyllabus ? el('span', { class: 'meta' }, 'Generate the syllabus first.') : null));
+  if (ui.feedbackOpen) {
+    const ta = textarea({ rows: 3, placeholder: 'e.g. “Merge weeks 13 and 14”, “Split week 5 into two chapters”, “Use topic names, not week numbers”.' }, ui.feedbackDraft || ''); ta.oninput = () => { ui.feedbackDraft = ta.value; };
+    box.append(el('div', { class: 'feedback-panel' }, el('div', { class: 'label' }, 'Comments for the Syllabus Processor'), ta, el('div', { class: 'btn-row' }, button({ label: 'Re-extract with these comments', icon: 'refresh', variant: 'primary', disabled: !!ctx.busy, onClick: () => { const fb = (ui.feedbackDraft || '').trim(); if (!fb) return toast('Write a comment first', 'error'); ui.feedbackOpen = false; ui.feedbackDraft = ''; extract(fb); } }), button({ label: 'Cancel', variant: 'ghost', onClick: () => { ui.feedbackOpen = false; ctx.render(); } }))));
+  }
   if (stage.transcript?.length) box.append(el('details', { class: 'turn' }, el('summary', {}, icon('chevron-right', 'sm chev'), 'Extraction prompt and response'), el('div', { class: 'turn-body' }, transcriptView(stage))));
   if (!p.chapters.length) { box.append(el('div', { style: 'margin-top:16px' }, empty({ icon: 'list', title: 'No chapters yet', body: hasSyllabus ? 'Extract them from the syllabus, or add chapters by hand.' : 'Run the Syllabus deliberation, then extract chapters here.' }))); return box; }
   const list = el('div', { class: 'list', style: 'margin-top:16px;border:1px solid var(--line-soft);border-radius:var(--r-2);overflow:hidden' });

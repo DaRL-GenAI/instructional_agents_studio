@@ -341,9 +341,35 @@ Write the exam in Markdown with these sections:
 6. **Answer key and rubric** under a heading "Instructor only"
 Balance coverage across the chapters listed above. Questions must be answerable from the course material.`,
 
+  beamer: (course, chapter, slides) => `Write the LaTeX Beamer frame body for each slide below.
+
+${courseContext(course)}
+
+Chapter: ${chapter.title}
+
+Slides (JSON):
+${JSON.stringify(slides.map(s => ({ slide_id: s.slide_id, title: s.title, bullets: s.bullets, code: s.code, code_language: s.code_language })), null, 2)}
+
+For every slide return the LaTeX that goes INSIDE \\begin{frame}[fragile]{Title} … \\end{frame} (do not include the frame environment or the title).
+Guidelines:
+1. Use itemize/enumerate for the bullets; at most 3 nesting levels, prefer 2.
+2. Write formulas in proper math mode (inline $…$ or equation/align*); never nest display-math environments.
+3. Put code in ONE lstlisting environment per slide, inside a two-column layout when there are bullets as well (\\begin{columns}[T] with 0.55/0.45 widths).
+4. The preamble is fixed: no \\usepackage, no \\definecolor; only standard colors or \\textcolor[HTML]{RRGGBB}{…}.
+5. Escape special characters in prose (\\& \\% \\_ \\#); use $\\gamma$ instead of γ; keep each frame within one screen.
+
+Return a JSON array: [{"slide_id": 1, "latex": "…"}]. Your response must be valid JSON.`,
+
   review: (kind, text) => `Review the following ${kind} for factual accuracy, alignment with the stated objectives, appropriate difficulty and clarity.
 
 ${text}
 
 Return JSON: {"score": 1-10, "issues": ["specific issue", ...], "strengths": ["...", ...]}`,
 };
+
+/** Appended to a stage's user prompt when the instructor re-runs it with comments. */
+export function revisionBlock(feedback, previous, kind = 'text') {
+  if (!feedback) return '';
+  const prev = previous ? `\n\nPrevious version (revise it; keep everything that was not criticized${kind === 'json' ? ', and return the same JSON structure' : ''}):\n${previous.slice(0, 20000)}` : '';
+  return `\n\n---\nRevision request from the instructor. Apply these comments to the previous version:\n${feedback}${prev}`;
+}

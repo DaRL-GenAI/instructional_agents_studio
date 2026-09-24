@@ -28,7 +28,7 @@ function examsView(ctx) {
   box.append(el('h2', { style: 'margin-bottom:12px' }, 'Exams'), tabs(EXAMS.map(e => [e.id, e.name]), kind, k => go('p', p.id, 'assessments', 'exams', k)));
   const chaptersInScope = pipe.examChapters(kind).length;
   box.append(el('div', { class: 'tab-body' }, stageDetail(ctx, { key: `exam:${kind}`, title: ex.name, subtitle: `Teaching Assistant · covers ${chaptersInScope} chapter${chaptersInScope === 1 ? '' : 's'} (${ex.scope})`, stage, inputs, kind: 'md', file: ex.file, label: ex.name, where: 'course', defaultPrompt: () => pipe.defaultExamPrompt(kind),
-    run: () => ctx.guarded(`Writing ${ex.name}`, async () => { if (!ctx.requireKey()) return; await pipe.runExam(kind); toast(`${ex.name} generated`, 'ok'); }),
+    run: ({ feedback } = {}) => ctx.guarded(`Writing ${ex.name}`, async () => { if (!ctx.requireKey()) return; await pipe.runExam(kind, { feedback }); toast(`${ex.name} ${feedback ? 'revised' : 'generated'}`, 'ok'); }),
     next: kind === 'midterm' ? () => go('p', p.id, 'assessments', 'exams', 'final') : null })));
   return box;
 }

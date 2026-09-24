@@ -102,8 +102,10 @@ export function toBeamer(course, chapter, slides, script = []) {
   const notes = new Map(script.map(s => [s.slide_id, s.narration]));
   const frames = slides.map(s => {
     const bullets = (s.bullets || []).length ? `\\begin{itemize}\n${s.bullets.map(b => `  \\item ${texEsc(b)}`).join('\n')}\n\\end{itemize}` : '';
-    const code = s.code ? `\\begin{verbatim}\n${s.code.replace(/\\end\{verbatim\}/g, '')}\n\\end{verbatim}` : '';
-    const body = s.code ? `\\begin{columns}[T]\n\\begin{column}{0.55\\textwidth}\n${bullets}\n\\end{column}\n\\begin{column}{0.45\\textwidth}\n{\\scriptsize\n${code}\n}\n\\end{column}\n\\end{columns}` : bullets;
+    const code = s.code ? `\\begin{lstlisting}\n${s.code.replace(/\\end\{lstlisting\}/g, '')}\n\\end{lstlisting}` : '';
+    const generated = s.code ? `\\begin{columns}[T]\n\\begin{column}{0.55\\textwidth}\n${bullets}\n\\end{column}\n\\begin{column}{0.45\\textwidth}\n{\\scriptsize\n${code}\n}\n\\end{column}\n\\end{columns}` : bullets;
+    // Model-written frame bodies (LaTeX deck format) take precedence over the generated fallback.
+    const body = (s.latex && s.latex.trim()) ? s.latex.trim() : generated;
     const note = notes.get(s.slide_id) ? `\\note{${texEsc(notes.get(s.slide_id))}}\n` : '';
     return `\\begin{frame}[fragile]{${texEsc(s.title)}}\n${body}\n\\end{frame}\n${note}`;
   }).join('\n');
@@ -112,6 +114,9 @@ export function toBeamer(course, chapter, slides, script = []) {
 \\usecolortheme{seahorse}
 \\usepackage[utf8]{inputenc}
 \\usepackage{amsmath,amssymb}
+\\usepackage{listings}
+\\usepackage{xcolor}
+\\lstset{basicstyle=\\ttfamily\\scriptsize,breaklines=true,frame=single,columns=fullflexible}
 \\usepackage{pgfpages}
 % \\setbeameroption{show notes on second screen}
 \\title{${texEsc(chapter.title)}}
@@ -155,7 +160,7 @@ body{margin:0;background:#e9eae2;font-family:"DM Sans","Segoe UI",Arial,sans-ser
 body.show-notes .notes{display:block}
 .deck-nav{position:fixed;bottom:12px;right:12px;display:flex;gap:6px;align-items:center;background:#fff;padding:6px 10px;border-radius:8px;box-shadow:0 4px 14px #0002;font-size:13px}
 .deck-nav button{border:1px solid #ddd;background:#fff;border-radius:6px;padding:4px 10px;cursor:pointer}
-@media print{body{background:#fff}.slide{page-break-after:always;box-shadow:none;width:100%}.deck-nav{display:none}}
+@media print{@page{size:landscape;margin:0}body{background:#fff}#deck{padding:0;gap:0}.slide{page-break-after:always;break-after:page;box-shadow:none;width:100vw;height:100vh;aspect-ratio:auto;border-radius:0;margin:0}.notes{display:none!important}.deck-nav{display:none}}
 `;
 const DECK_JS = `
 const slides=[...document.querySelectorAll('.slide')];let i=0;const pos=document.getElementById('pos');
@@ -163,6 +168,7 @@ function go(n){i=Math.max(0,Math.min(slides.length-1,n));slides[i].scrollIntoVie
 document.getElementById('prev').onclick=()=>go(i-1);document.getElementById('next').onclick=()=>go(i+1);
 document.getElementById('notes-toggle').onclick=()=>document.body.classList.toggle('show-notes');
 addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key===' ')go(i+1);if(e.key==='ArrowLeft')go(i-1);if(e.key==='n')document.body.classList.toggle('show-notes')});go(0);
+if(location.search.includes('print=1')){setTimeout(()=>window.print(),400)}
 `;
 
 let pptxLoading;
@@ -195,4 +201,15 @@ export async function toPptx(course, chapter, slides, script = []) {
     const n = notes.get(s.slide_id) || s.notes; if (n) sl.addNotes(n);
   }
   return await pptx.write({ outputType: 'blob' });
+}
+
+
+/** Open the HTML deck in a new tab and trigger the browser's print dialog (save as PDF). Nothing leaves the browser. */
+export function openDeckForPrint(course, chapter, slides, script = []) {
+  const html = toHtmlDeck(course, chapter, slides, script);
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url + '?print=1', '_blank');
+  if (!w) throw new Error('The browser blocked the new tab. Allow pop-ups for this site, or download the HTML deck and print it.');
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }

@@ -1,6 +1,6 @@
 // pipeline.js — runs the ADDIE stages in the browser and records everything in the audit trail.
 import { LLMClient, extractJson, sha1Short } from './llm.js';
-import { AGENTS, FOUNDATION, CHAPTER_STAGES, EXAMS, PROMPTS, courseContext, priorContext, textbookContext } from './prompts.js';
+import { AGENTS, FOUNDATION, CHAPTER_STAGES, EXAMS, PROMPTS, courseContext, priorContext, textbookContext, revisionBlock } from './prompts.js';
 
 export class Pipeline {
   constructor(store) {
@@ -103,10 +103,19 @@ export class Pipeline {
     return { custom: false, agents: [{ key: 'syllabus_processor', name: a.name, role: a.role, system: a.system }], user: PROMPTS.chapters(p.course, p.foundation.syllabus?.output || '') };
   }
 
+  /** Effective prompt for a run: the stored custom prompt or the default, plus the instructor's revision comments. */
+  promptFor(stage, defaultPrompt, feedback, kind = 'text', label = '', where = '') {
+    const base = stage.prompt?.custom ? stage.prompt : defaultPrompt;
+    if (!feedback || !feedback.trim()) return base;
+    this.store.log({ type: 'feedback', stage: label, where, chars: feedback.length, version: stage.version });
+    stage.feedbackLog = [...(stage.feedbackLog || []), { at: new Date().toISOString(), feedback, version: stage.version }];
+    return { ...base, user: base.user + revisionBlock(feedback.trim(), stage.output, kind), feedback: feedback.trim() };
+  }
+
   // ---------- runners ----------------------------------------------------
-  async runFoundation(id) {
+  async runFoundation(id, { feedback } = {}) {
     const p = this.store.project; const d = FOUNDATION.find(f => f.id === id); const stage = this.store.foundationStage(id);
-    const prompt = stage.prompt?.custom ? stage.prompt : this.defaultFoundationPrompt(id);
+    const prompt = this.promptFor(stage, this.defaultFoundationPrompt(id), feedback, 'text', d.name, 'course');
     const inputs = this.foundationInputs(id);
     stage.status = 'running'; stage.error = null; this.store.save();
     const transcript = [], usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, t0 = performance.now(), key = `foundation:${id}`;
@@ -126,9 +135,9 @@ export class Pipeline {
     finally { this.live = null; this.onLive(); }
   }
 
-  async runChaptersExtraction() {
+  async runChaptersExtraction({ feedback } = {}) {
     const p = this.store.project; const stage = p.chaptersStage;
-    const prompt = stage.prompt?.custom ? stage.prompt : this.defaultChaptersPrompt();
+    const prompt = this.promptFor(stage, this.defaultChaptersPrompt(), feedback, 'json', 'Chapter extraction', 'course');
     const inputs = [{ label: 'Syllabus', text: p.foundation.syllabus?.output || '' }];
     if (!inputs[0].text) throw new Error('Generate the syllabus first (Course design → Syllabus).');
     stage.status = 'running'; stage.error = null; this.store.save();
@@ -144,12 +153,13 @@ export class Pipeline {
     finally { this.live = null; this.onLive(); }
   }
 
-  async runChapterStage(chapterId, stageId) {
+  async runChapterStage(chapterId, stageId, { feedback } = {}) {
     const ch = this.store.chapter(chapterId); const st = CHAPTER_STAGES.find(s => s.id === stageId); const stage = this.store.chapterStage(chapterId, stageId);
     const inputs = this.chapterInputs(chapterId, stageId);
     const need = { slides: ['outline'], script: ['slides'], homework: ['slides'], lab: ['slides'], quiz: ['slides'] }[stageId] || [];
     for (const n of need) if (ch.stages[n]?.status !== 'done') throw new Error(`Generate "${CHAPTER_STAGES.find(s => s.id === n).name}" for this chapter first.`);
-    const prompt = stage.prompt?.custom ? stage.prompt : this.defaultChapterPrompt(chapterId, stageId);
+    const jsonKinds = ['outline', 'slides', 'script', 'quiz'];
+    const prompt = this.promptFor(stage, this.defaultChapterPrompt(chapterId, stageId), feedback, jsonKinds.includes(stageId) ? 'json' : 'text', `${ch.title} / ${st.name}`, ch.title);
     stage.status = 'running'; stage.error = null; this.store.save();
     const transcript = [], usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, t0 = performance.now(), key = `chapter:${chapterId}:${stageId}`;
     try {
@@ -157,7 +167,11 @@ export class Pipeline {
       const text = await this.stream(key, transcript, usage, { where: ch.title, stage: st.name, agent: prompt.agents[0].name, json, messages: [{ role: 'system', content: prompt.agents[0].system }, { role: 'user', content: prompt.user }] });
       let output = text.trim();
       if (stageId === 'outline') output = JSON.stringify(normalizeOutline(extractJson(text, 'array')), null, 2);
-      if (stageId === 'slides') output = JSON.stringify(normalizeSlides(extractJson(text, 'array'), safeJson(ch.stages.outline.output, [])), null, 2);
+      if (stageId === 'slides') {
+        let slides = normalizeSlides(extractJson(text, 'array'), safeJson(ch.stages.outline.output, []));
+        if (this.settings.slideFormat === 'latex') slides = await this.beamerFrames(ch, slides, key, transcript, usage);
+        output = JSON.stringify(slides, null, 2);
+      }
       if (stageId === 'script') output = JSON.stringify(normalizeScript(extractJson(text, 'array'), safeJson(ch.stages.slides.output, [])), null, 2);
       if (stageId === 'quiz') output = JSON.stringify(normalizeQuiz(extractJson(text, 'array')), null, 2);
       this.store.applyResult(stage, st.name, { output, usage, durationMs: Math.round(performance.now() - t0), transcript, prompt, inputHash: this.inputHash(inputs), provenance: inputs.map(i => ({ label: i.label, hash: sha1Short(i.text), version: i.version, chunks: i.chunks })) }, ch.title);
@@ -165,16 +179,36 @@ export class Pipeline {
     finally { this.live = null; this.onLive(); }
   }
 
-  async runExam(kind) {
+  async runExam(kind, { feedback } = {}) {
     const ex = EXAMS.find(e => e.id === kind); const stage = this.store.examStage(kind); const inputs = this.examInputs(kind);
     if (!this.store.project.chapters.length) throw new Error('Extract chapters first (Course design → Chapters).');
-    const prompt = stage.prompt?.custom ? stage.prompt : this.defaultExamPrompt(kind);
+    const prompt = this.promptFor(stage, this.defaultExamPrompt(kind), feedback, 'text', ex.name, 'course');
     stage.status = 'running'; stage.error = null; this.store.save();
     const transcript = [], usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, t0 = performance.now();
     try {
       const text = await this.stream(`exam:${kind}`, transcript, usage, { where: 'course', stage: ex.name, agent: prompt.agents[0].name, messages: [{ role: 'system', content: prompt.agents[0].system }, { role: 'user', content: prompt.user }] });
       this.store.applyResult(stage, ex.name, { output: text.trim(), usage, durationMs: Math.round(performance.now() - t0), transcript, prompt, inputHash: this.inputHash(inputs), provenance: inputs.map(i => ({ label: i.label, hash: sha1Short(i.text), version: i.version })) }, 'course');
     } catch (e) { stage.status = 'error'; stage.error = String(e.message || e); stage.transcript = transcript; this.store.save(); throw e; }
+    finally { this.live = null; this.onLive(); }
+  }
+
+  /** Second pass for the LaTeX deck format: the model writes each frame body; merged into the slide objects. */
+  async beamerFrames(ch, slides, key, transcript, usage) {
+    const a = AGENTS.slides_faculty;
+    const text = await this.stream(key, transcript, usage, { where: ch.title, stage: 'Slides (LaTeX frames)', agent: a.name, json: true, messages: [{ role: 'system', content: a.system + ' You write clean, compilable LaTeX Beamer.' }, { role: 'user', content: PROMPTS.beamer(this.store.project.course, ch, slides) }] });
+    const frames = new Map(extractJson(text, 'array').filter(x => x && x.latex).map(x => [Number(x.slide_id), String(x.latex)]));
+    return slides.map((s, i) => ({ ...s, latex: frames.get(s.slide_id) || frames.get(i + 1) || s.latex || '' }));
+  }
+  /** Add LaTeX frame bodies to an existing slide deck (when switching a chapter to the LaTeX format). */
+  async runBeamerFrames(chapterId) {
+    const ch = this.store.chapter(chapterId); const stage = this.store.chapterStage(chapterId, 'slides');
+    const slides = safeJson(stage.output, null); if (!slides) throw new Error('Generate the slides first.');
+    stage.status = 'running'; this.store.save();
+    const transcript = [...(stage.transcript || [])], usage = { ...(stage.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }) }, t0 = performance.now();
+    try {
+      const out = await this.beamerFrames(ch, slides, `chapter:${chapterId}:slides`, transcript, usage);
+      this.store.applyResult(stage, `${ch.title} / Slides (LaTeX frames)`, { output: JSON.stringify(out, null, 2), usage, durationMs: (stage.durationMs || 0) + Math.round(performance.now() - t0), transcript, prompt: stage.prompt, inputHash: stage.inputHash, provenance: stage.provenance }, ch.title);
+    } catch (e) { stage.status = 'done'; stage.error = String(e.message || e); this.store.save(); throw e; }
     finally { this.live = null; this.onLive(); }
   }
 
@@ -200,7 +234,7 @@ const STOP = new Set('the and for with that this from are was were will have has
 
 function normalizeOutline(arr) { return arr.filter(x => x && (x.title || x.slide_title)).map((x, i) => ({ slide_id: i + 1, title: String(x.title || x.slide_title), description: String(x.description || x.summary || '') })); }
 function normalizeSlides(arr, outline) {
-  return arr.filter(x => x && (x.title || x.slide_id)).map((x, i) => ({ slide_id: i + 1, title: String(x.title || outline[i]?.title || `Slide ${i + 1}`), bullets: Array.isArray(x.bullets) ? x.bullets.map(String).slice(0, 8) : (typeof x.bullets === 'string' ? x.bullets.split('\n').filter(Boolean) : []), code: typeof x.code === 'string' ? x.code : '', code_language: typeof x.code_language === 'string' ? x.code_language : '', notes: typeof x.notes === 'string' ? x.notes : '' }));
+  return arr.filter(x => x && (x.title || x.slide_id)).map((x, i) => ({ slide_id: i + 1, title: String(x.title || outline[i]?.title || `Slide ${i + 1}`), bullets: Array.isArray(x.bullets) ? x.bullets.map(String).slice(0, 8) : (typeof x.bullets === 'string' ? x.bullets.split('\n').filter(Boolean) : []), code: typeof x.code === 'string' ? x.code : '', code_language: typeof x.code_language === 'string' ? x.code_language : '', notes: typeof x.notes === 'string' ? x.notes : '', ...(typeof x.latex === 'string' && x.latex ? { latex: x.latex } : {}) }));
 }
 function normalizeScript(arr, slides) {
   const bySlide = new Map(arr.filter(x => x).map(x => [Number(x.slide_id), String(x.narration || x.script || x.text || '')]));

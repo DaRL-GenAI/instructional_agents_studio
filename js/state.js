@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS = {
   deliberation: 'full',
   slidesPerChapter: 10,
   quizQuestions: 8,
+  slideFormat: 'html',     // html | latex | pptx
   theme: 'system',
   rememberKey: false,
   language: 'en',

@@ -30,7 +30,7 @@ export function chapterStages(ctx, module, stageIds, chapterId) {
   const remaining = stageIds.filter(s => ch.stages[s]?.status !== 'done');
   body.append(stageDetail(ctx, { key: `c:${ch.id}:${stId}`, title: st.name, subtitle: `${agent.name} · ${agent.role}`, stage, inputs, kind: st.kind, file: st.file, label: `${ch.title} / ${st.name}`, where: ch.title, chapter: ch,
     defaultPrompt: () => pipe.defaultChapterPrompt(ch.id, stId),
-    run: () => ctx.guarded(`${st.name} · ${ch.title}`, async () => { if (!ctx.requireKey()) return; await pipe.runChapterStage(ch.id, stId); toast(`${st.name} generated`, 'ok'); }),
+    run: ({ feedback } = {}) => ctx.guarded(`${st.name} · ${ch.title}`, async () => { if (!ctx.requireKey()) return; await pipe.runChapterStage(ch.id, stId, { feedback }); toast(`${st.name} ${feedback ? 'revised' : 'generated'}`, 'ok'); }),
     runAll: remaining.length > 1 ? () => ctx.guarded(`Generating ${ch.title}`, async () => { if (!ctx.requireKey()) return; for (const s of stageIds) { if (ch.stages[s]?.status === 'done') continue; go('p', p.id, module, ch.id, s); await pipe.runChapterStage(ch.id, s); } toast(`${ch.title}: done`, 'ok'); }) : null,
     runAllLabel: `Generate remaining (${remaining.length})`,
     next: () => { const i = stageIds.indexOf(stId); if (i < stageIds.length - 1) go('p', p.id, module, ch.id, stageIds[i + 1]); else if (idx < p.chapters.length - 1) go('p', p.id, module, p.chapters[idx + 1].id, stageIds[0]); } }));
