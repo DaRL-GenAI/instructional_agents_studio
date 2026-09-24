@@ -24,7 +24,11 @@ export function normalizeStoryboard(raw, slides = []) {
   const list = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.scenes) ? raw.scenes : []);
   const scenes = list.filter(x => x && typeof x === 'object').map((x, i) => {
     const beat = BEATS.includes(x.beat) ? x.beat : (x.scene_type === 'title_card' || (i === 0 && !x.beat) ? 'title_card' : 'bullets');
-    const v = x.visual && typeof x.visual === 'object' ? x.visual : x;
+    // Merge beat fields wherever the model put them: inside "visual", nested one level deeper, or at the top level of the scene.
+    const inner = x.visual && typeof x.visual === 'object' && !Array.isArray(x.visual) ? x.visual : (typeof x.visual === 'string' ? { caption: x.visual } : {});
+    const v = { ...x, ...(inner.visual && typeof inner.visual === 'object' ? inner.visual : {}), ...inner, ...(inner.chart && typeof inner.chart === 'object' ? inner.chart : {}) };
+    if (typeof v.formula === 'object' && v.formula) v.formula = v.formula.text || v.formula.latex || v.formula.formula || '';
+    if (typeof v.steps === 'object' && v.steps && !Array.isArray(v.steps)) v.steps = Object.values(v.steps);
     const s = {
       id: str(x.id || `s${i + 1}`), beat, title: str(x.title || `Scene ${i + 1}`),
       narration: str(x.narration), lecture_lines: arr(x.lecture_lines).slice(0, 5), animations: arr(x.animations).slice(0, 5),
@@ -42,10 +46,35 @@ export function normalizeStoryboard(raw, slides = []) {
     if (beat === 'chart') s.visual = { type: ['bar', 'line', 'pie'].includes(v.type || v.chart?.type) ? (v.type || v.chart.type) : 'bar', labels: arr(v.labels || v.chart?.labels), series: (Array.isArray(v.series || v.chart?.series) ? (v.series || v.chart.series) : []).map(sr => ({ name: str(sr?.name || 'Series'), values: (Array.isArray(sr?.values) ? sr.values : []).map(Number).map(n => (isFinite(n) ? n : 0)) })), unit: str(v.unit || v.chart?.unit), highlight: str(v.highlight) };
     if (beat === 'illustration') s.visual = { prompt: str(v.prompt || v.image_prompt || x.illustration_prompt || x.visual_brief), caption: str(v.caption || x.takeaway), labels: arr(v.labels).slice(0, 5) };
     s.visual_brief = str(x.visual_brief);
+    if (!hasVisual(s)) {
+      // The model left the visual card empty: teach from the lecture lines / key elements instead of showing a blank card.
+      const lines = s.lecture_lines.length ? s.lecture_lines : (s.key_elements.length ? s.key_elements : (s.takeaway ? [s.takeaway] : []));
+      if (beat !== 'title_card' && lines.length) { s.beat = beat === 'recap' ? 'recap' : 'bullets'; s.visual = { bullets: lines.slice(0, 5), formula: '', highlights: [] }; s.visual_fallback = true; }
+      else if (beat === 'title_card') s.visual = { subtitle: str(v.subtitle || x.title), accent_label: str(v.accent_label || v.label) };
+    }
     return s;
   });
   return { scenes };
 }
+
+/** True when a scene's visual carries real content for its beat (a blank card means the model skipped it). */
+export function hasVisual(s) {
+  const v = s.visual || {}; const n = (a) => (Array.isArray(a) ? a.filter(Boolean).length : 0);
+  switch (s.beat) {
+    case 'title_card': return true;
+    case 'bullets': case 'recap': return n(v.bullets) > 0 || !!v.formula;
+    case 'formula': return !!v.formula || n(v.bullets) > 0;
+    case 'compare': return n(v.left_items) + n(v.right_items) > 0;
+    case 'steps': return n(v.steps) > 0;
+    case 'stat_row': return n(v.stats) > 0 && v.stats.some(t => t.value);
+    case 'diagram': return n(v.nodes) >= 2;
+    case 'chart': return n(v.labels) > 0 && n(v.series) > 0 && v.series.some(sr => sr.values.length);
+    case 'illustration': return !!v.prompt;
+    default: return false;
+  }
+}
+/** Count of scenes whose visual had to be replaced by a fallback (used by the pipeline to decide on a retry). */
+export function storyboardGaps(sb) { return (sb.scenes || []).filter(s => s.visual_fallback).length; }
 export function storyboardOf(text) { try { return normalizeStoryboard(JSON.parse(text)); } catch { return { scenes: [] }; } }
 
 // ---------------------------------------------------------------- text helpers

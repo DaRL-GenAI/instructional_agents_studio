@@ -353,7 +353,7 @@ Write the exam in Markdown with these sections:
 6. **Answer key and rubric** under a heading "Instructor only"
 Balance coverage across the chapters listed above. Questions must be answerable from the course material.`,
 
-  storyboard: (course, chapter, slides, script, { illustrations = true, sceneCount = '6–8' } = {}) => `Plan the animated lesson for this chapter as a storyboard of teaching scenes.
+  storyboard: (course, chapter, slides, script, { illustrations = true, sceneCount = '6-8' } = {}) => `Plan the animated lesson for this chapter as a storyboard of teaching scenes. Each scene is drawn on a teaching board: a title, a lecture column (the lecture_lines light up one by one), a large visual card in the middle (drawn from the "visual" object), and a takeaway strip.
 
 ${courseContext(course)}
 
@@ -364,27 +364,28 @@ Lecture material (slides with the lecturer's narration):
 ${slides.map((s, i) => `--- Slide ${s.slide_id || i + 1}: ${s.title}\n${(s.bullets || []).map(b => `- ${b}`).join('\n')}${s.code ? `\ncode: ${s.code.slice(0, 300)}` : ''}\nnarration: ${(script.find(x => x.slide_id === (s.slide_id || i + 1)) || script[i] || {}).narration || ''}`).join('\n')}
 
 Rules:
-1. Split the material into ${sceneCount} ordered scenes of 15–40 seconds each. Scene 1 is a "title_card"; the last scene is a "recap".
-2. Give every scene exactly one beat and fill its "visual" fields:
-   - title_card: {"subtitle","accent_label"}  (opener; no lecture lines)
-   - bullets: {"bullets":[3–4 short lines],"highlights":[key terms that appear in the bullets]}
-   - formula: {"formula":"the key equation or rule in plain text","bullets":[2–3 lines explaining its parts],"highlights":[symbols]}
-   - compare: {"left_title","left_items":[2–4],"right_title","right_items":[2–4],"formula":"optional rule both sides obey"}
-   - steps: {"steps":[3–5 numbered actions]}
-   - stat_row: {"stats":[{"value":"92","unit":"%","name":"what it measures"}]}  (2–4; only real or clearly illustrative numbers)
-   - diagram: {"nodes":[{"id","label","kind":"input|process|result|danger"}],"edges":[{"from","to","label"}],"caption"}  (3–7 nodes; use for structures, flows, relationships — this is the drawing scene)
-   - chart: {"type":"bar|line|pie","labels":[…],"series":[{"name","values":[…]}],"unit","highlight":"label to emphasise"}
-   - recap: {"bullets":[3–5 takeaways],"formula":"optional"}
-   ${illustrations ? '- illustration: {"prompt":"a complete, concrete description of one teaching illustration (central concept, 3–5 labelled components, visual flow, no text other than the labels)","labels":[the 3–5 labels],"caption"}  (use for intuition/metaphor scenes; at most 2 per lesson)' : '- (illustration scenes are disabled: use diagram, formula or compare for intuition scenes)'}
+1. Split the material into ${sceneCount} ordered scenes of 15-40 seconds each. Scene 1 has beat "title_card"; the last scene has beat "recap".
+2. Every scene has exactly one "beat" and a NON-EMPTY "visual" object whose keys depend on the beat. The visual is what the viewer sees in the middle of the board, so it must carry the real content of the scene (the formula, the steps, the nodes...), not a summary of it:
+   - title_card: {"subtitle": "string", "accent_label": "string"}  (opener; lecture_lines may be empty)
+   - bullets: {"bullets": ["3-4 short lines"], "highlights": ["key terms that appear in the bullets"]}
+   - formula: {"formula": "the key equation or rule in plain text", "bullets": ["2-3 lines explaining its parts"], "highlights": ["symbols to emphasise"]}
+   - compare: {"left_title": "string", "left_items": ["2-4 items"], "right_title": "string", "right_items": ["2-4 items"], "formula": "optional rule both sides obey"}
+   - steps: {"steps": ["3-5 numbered actions"]}
+   - stat_row: {"stats": [{"value": "92", "unit": "%", "name": "what it measures"}]}  (2-4 stats; only real or clearly illustrative numbers)
+   - diagram: {"nodes": [{"id": "n1", "label": "string", "kind": "input|process|result|danger"}], "edges": [{"from": "n1", "to": "n2", "label": "string"}], "caption": "string"}  (3-7 nodes; use for structures, flows, relationships)
+   - chart: {"type": "bar|line|pie", "labels": ["A", "B"], "series": [{"name": "string", "values": [1, 2]}], "unit": "string", "highlight": "label to emphasise"}
+   - recap: {"bullets": ["3-5 takeaways"], "formula": "optional"}
+   ${illustrations ? '- illustration: {"prompt": "a complete, concrete description of one teaching illustration (central concept, 3-5 labelled components, visual flow, no text other than the labels)", "labels": ["the 3-5 labels"], "caption": "string"}  (use for intuition/metaphor scenes; at most 2 per lesson)' : '- (illustration scenes are disabled: use diagram, formula or compare for intuition scenes)'}
    Use at least three different beats; never the same beat on consecutive scenes; include at least one diagram or chart scene when the topic has structure or data.
-3. "lecture_lines": 3 short plain teaching sentences per scene (5 for at most two scenes marked "key_scene": true). "animations": one entry per lecture line saying what appears, moves or changes while that line is spoken.
-4. "narration": the spoken teacher voice for the scene, 3–6 natural sentences, no markdown, written in ${course.language || 'English'}; "target_seconds" ≈ words ÷ 2.6.
-5. "takeaway": one sentence (≤ 18 words) shown in the result strip near the end of the scene.
-6. "key_elements": 2–5 checkable things that must be visible in the visual.
+3. "lecture_lines": 3 short plain teaching sentences per scene (5 for at most two scenes marked "key_scene": true). "animations": one short string per lecture line saying what appears, moves or changes on the visual while that line is spoken.
+4. "narration": the spoken teacher voice for the scene, 3-6 natural sentences, no markdown, written in ${course.language || 'English'}; "target_seconds" is about words / 2.6.
+5. "takeaway": one sentence (18 words or fewer) shown in the result strip near the end of the scene.
+6. "key_elements": 2-5 checkable things that must be visible in the visual.
 
-Return ONLY this JSON object:
-{"scenes":[{"id":"s1-title","title":"…","beat":"title_card","narration":"…","lecture_lines":[],"animations":[],"takeaway":"…","key_scene":false,"target_seconds":18,"key_elements":[],"visual":{…}}]}
-Your response must be valid JSON.`,
+Example of one complete scene object (follow this shape exactly for every scene; the visual keys change with the beat):
+{"id": "s3", "title": "Entropy", "beat": "formula", "visual": {"formula": "H(S) = - sum_i p_i log2 p_i", "bullets": ["p_i is the share of class i", "0 bits for a pure node", "1 bit for a 50/50 split"], "highlights": ["H(S)", "p_i"]}, "lecture_lines": ["Entropy measures how mixed a node is.", "A pure node has entropy zero.", "A 50/50 split has entropy one bit."], "animations": ["formula appears", "first bullet lights up", "second and third bullets light up"], "narration": "Entropy tells us how mixed a node is. ...", "takeaway": "Entropy is zero for pure nodes and one bit for an even split.", "key_scene": true, "target_seconds": 28, "key_elements": ["formula", "three explaining bullets"]}
+
+Return ONLY a JSON object of the form {"scenes": [scene, scene, ...]} with ${sceneCount} complete scene objects. Put "visual" right after "beat" in each scene and never leave it empty. Your response must be valid JSON.`,
 
   review: (kind, text) => `Review the following ${kind} for factual accuracy, alignment with the stated objectives, appropriate difficulty and clarity.
 

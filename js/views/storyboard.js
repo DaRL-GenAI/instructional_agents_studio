@@ -41,6 +41,7 @@ export function storyboardEditor(ctx, o) {
     const lines = textarea({ rows: 3 }, s.lecture_lines.join('\n')); lines.oninput = () => { s.lecture_lines = lines.value.split('\n').map(x => x.trim()).filter(Boolean); draw(); };
     const take = input({ value: s.takeaway }); take.oninput = () => { s.takeaway = take.value; draw(); };
     form.append(el('div', { class: 'form-grid' }, field('Beat', beat), field('Title', title)), field('Narration (spoken)', narration), field('Lecture lines (light up while spoken)', lines), field('Takeaway (result strip)', take));
+    if (s.visual_fallback) form.append(el('p', { class: 'notice warn' }, 'The model left this scene\u2019s visual empty, so the lecture lines are shown as bullets. Edit the visual below, or re-run the storyboard with comments.'));
     for (const [key, label, kind] of VISUAL_FIELDS[s.beat] || []) form.append(visualField(s, key, label, kind, draw));
     form.append(el('div', { class: 'btn-row' },
       button({ label: 'Insert scene after', icon: 'plus', size: 'sm', onClick: () => { sb.scenes.splice(cur + 1, 0, { id: `s${Date.now().toString(36)}`, beat: 'bullets', title: 'New scene', narration: '', lecture_lines: [], animations: [], takeaway: '', key_scene: false, target_seconds: 15, key_elements: [], visual: { bullets: [], highlights: [] } }); cur++; renderStrip(); buildForm(); draw(); } }),

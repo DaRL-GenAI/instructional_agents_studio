@@ -2,7 +2,7 @@
 import { LLMClient, extractJson, sha1Short, toArray } from './llm.js';
 import { AGENTS, FOUNDATION, CHAPTER_STAGES, EXAMS, PROMPTS, courseContext, priorContext, textbookContext, revisionBlock, PALETTE_RULE_AUTO, PALETTE_RULE_FIXED } from './prompts.js';
 import { normalizeDeck, deckOf, PALETTE_NAMES, resolveTheme } from './deck.js';
-import { normalizeStoryboard } from './scenes.js';
+import { normalizeStoryboard, storyboardGaps } from './scenes.js';
 
 export class Pipeline {
   constructor(store) {
@@ -188,7 +188,13 @@ export class Pipeline {
         }
         if (stageId === 'script') return JSON.stringify(normalizeScript(extractJson(t, 'array'), itemsOf(ch.stages.slides?.output)), null, 2);
         if (stageId === 'quiz') return JSON.stringify(normalizeQuiz(extractJson(t, 'array')), null, 2);
-        if (stageId === 'storyboard') { const sb = normalizeStoryboard(extractJson(t, 'object')); if (sb.scenes.length < 3) throw new Error(`Only ${sb.scenes.length} scenes were returned`); return JSON.stringify(sb, null, 2); }
+        if (stageId === 'storyboard') {
+          const sb = normalizeStoryboard(extractJson(t, 'object'));
+          if (sb.scenes.length < 3) throw new Error(`Only ${sb.scenes.length} scenes were returned`);
+          const gaps = storyboardGaps(sb);
+          if (gaps > Math.max(1, Math.floor(sb.scenes.length / 3))) throw new Error(`${gaps} of ${sb.scenes.length} scenes have an empty "visual" object`);
+          return JSON.stringify(sb, null, 2);
+        }
         return t.trim();
       };
       let output;
@@ -196,7 +202,7 @@ export class Pipeline {
       catch (e) {
         if (!json) throw e;
         // One strict retry: the model answered in an unexpected shape; ask for the bare array.
-        const strict = [...messages, { role: 'assistant', content: text }, { role: 'user', content: stageId === 'storyboard' ? `That reply could not be used (${e.message}). Reply again with ONLY the complete JSON object {"scenes":[…]} requested above, 6–8 scene objects, no prose, no code fences.` : stageId === 'slides' ? `That reply could not be used (${e.message}). Reply again with ONLY the complete JSON object {"theme":…,"slides":[…]} requested above: one slide object for EVERY outline item, in order, with slides as a top-level array of objects, no prose, no code fences.` : stageId === 'script' ? `That reply could not be used (${e.message}). Reply again with ONLY a JSON array containing one {"slide_id", "narration"} object for EVERY slide listed above, in order, no wrapper object, no prose, no code fences.` : `That reply could not be used (${e.message}). Reply again with ONLY the JSON array requested above, as a top-level array of objects with exactly the specified fields, no wrapper object, no prose, no code fences.` }];
+        const strict = [...messages, { role: 'assistant', content: text }, { role: 'user', content: stageId === 'storyboard' ? `That reply could not be used (${e.message}). Reply again with ONLY the complete JSON object {"scenes": [...]} requested above: 6-8 complete scene objects, each with a NON-EMPTY "visual" object filled for its beat exactly as in the example, no prose, no code fences.` : stageId === 'slides' ? `That reply could not be used (${e.message}). Reply again with ONLY the complete JSON object {"theme":…,"slides":[…]} requested above: one slide object for EVERY outline item, in order, with slides as a top-level array of objects, no prose, no code fences.` : stageId === 'script' ? `That reply could not be used (${e.message}). Reply again with ONLY a JSON array containing one {"slide_id", "narration"} object for EVERY slide listed above, in order, no wrapper object, no prose, no code fences.` : `That reply could not be used (${e.message}). Reply again with ONLY the JSON array requested above, as a top-level array of objects with exactly the specified fields, no wrapper object, no prose, no code fences.` }];
         text = await this.stream(key, transcript, usage, { where: ch.title, stage: `${st.name} (retry)`, agent: prompt.agents[0].name, json: false, messages: strict });
         output = parse(text);
       }
