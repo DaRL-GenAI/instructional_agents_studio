@@ -128,3 +128,44 @@ export function describeOps(ops) {
   const d = { set_text: o => `Slide ${o.slide}: rewrote text`, set_notes: o => `Slide ${o.slide}: rewrote notes`, delete_shape: o => `Slide ${o.slide}: removed a text box`, add_slide: o => `New slide after ${o.after}${o.title ? `: ${o.title}` : ''}`, move_slide: o => `Moved slide ${o.slide} to ${o.to}`, delete_slide: o => `Deleted slide ${o.slide}` };
   return ops.map(o => d[o.op](o));
 }
+
+// ---------------------------------------------------------------- Claude Code / Codex via studio-bridge
+export const AGENT_NAMES = { builtin: 'Built-in', claude: 'Claude Code', codex: 'Codex' };
+const PPTX_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+
+async function bridgeFetch(s, route, init = {}) {
+  const base = String(s.bridgeUrl || '').replace(/\/+$/, '');
+  if (!s.bridgeToken) throw new Error('Add the bridge token under Account → Slides editor');
+  let r;
+  try { r = await fetch(`${base}${route}`, { ...init, headers: { Authorization: `Bearer ${s.bridgeToken}`, 'Content-Type': 'application/json', ...(init.headers || {}) } }); }
+  catch (e) { if (e.name === 'AbortError') throw e; throw new Error(`The agent bridge at ${base} is not reachable`); }
+  if (!r.ok) throw new Error((await r.json().catch(() => null))?.error || `Bridge error ${r.status}`);
+  return r;
+}
+
+/** { ok, busy, agents: { claude, codex } } */
+export async function bridgeHealth(s) { return (await bridgeFetch(s, '/health', { signal: AbortSignal.timeout(5000) })).json(); }
+export async function bridgeCancel(s) { try { await bridgeFetch(s, '/cancel', { method: 'POST' }); } catch { /* already gone */ } }
+
+async function toBase64(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer()); let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+/** Run one revision on the bridge; onProgress(text) gets the agent's steps. Resolves to { summary, file }. */
+export async function bridgeRevise(s, { agent, slides, instruction, chapter, blob }, { onProgress, signal } = {}) {
+  const r = await bridgeFetch(s, '/revise', { method: 'POST', signal, body: JSON.stringify({ agent, slides, instruction, chapter, pptx: await toBase64(blob) }) });
+  const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read(); if (done) break;
+    buf += dec.decode(value, { stream: true }); let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const ev = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
+      if (ev.type === 'progress') onProgress?.(ev.text);
+      if (ev.type === 'error') throw new Error(ev.message);
+      if (ev.type === 'done') { const bin = atob(ev.pptx); const bytes = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k); return { summary: ev.summary, file: new File([bytes], 'slides.pptx', { type: PPTX_TYPE }) }; }
+    }
+  }
+  throw new Error('The bridge closed the connection before the agent finished');
+}

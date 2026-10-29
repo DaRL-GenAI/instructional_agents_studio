@@ -4,8 +4,8 @@
 // save is committed as a new version of the slides stage.
 import { el, button, toast, confirmDialog, icon, field, input, textarea, select, notice } from '../ui.js';
 import { account, DEFAULT_SETTINGS } from '../state.js';
-import { deckBlob, commitDeck, deckManifest } from '../pptxdeck.js';
-import { READ_MACRO, APPLY_MACRO, parseSlideRange, revisionMessages, parseRevision, describeOps } from '../slideagent.js';
+import { deckBlob, commitDeck, deckManifest, compareDecks } from '../pptxdeck.js';
+import { READ_MACRO, APPLY_MACRO, parseSlideRange, revisionMessages, parseRevision, describeOps, AGENT_NAMES, bridgeHealth, bridgeRevise, bridgeCancel } from '../slideagent.js';
 
 let open = null; // the one editor layer, while it is open
 
@@ -70,6 +70,7 @@ export async function openPptxEditor(ctx, o) {
   }
 
   async function commit(file, dirty) {
+    rv.pending = null;
     const changed = await commitDeck(store, ch.id, file, { name: deckManifest(o.stage.output)?.name, label: o.label, where: ch.title });
     state.dirty = !!dirty; saveBtn.disabled = !state.dirty || !!state.saving;
     setStatus(state.dirty ? 'dirty' : 'ok', changed ? `Saved as v${store.chapterStage(ch.id, 'slides').version}` : 'No changes');
@@ -82,48 +83,93 @@ export async function openPptxEditor(ctx, o) {
   }
 
   async function close() {
-    if (state.dirty && !(await confirmDialog({ title: 'Discard unsaved slide edits?', body: 'Changes since the last save will be lost. Save first to keep them as a new version.', confirmLabel: 'Discard changes', danger: true }))) return;
+    if ((state.dirty || rv.pending) && !(await confirmDialog({ title: 'Discard unsaved slide edits?', body: 'Changes since the last save will be lost. Save first to keep them as a new version.', confirmLabel: 'Discard changes', danger: true }))) return;
     clearTimeout(loadTimer); removeEventListener('message', onMessage); removeEventListener('beforeunload', onUnload);
     layer.remove(); document.body.classList.remove('pptx-open'); open = null; ctx.render();
   }
 
   // ---------------------------------------------------------------- targeted revision
-  const rv = { built: false, running: false };
+  const rv = { built: false, running: false, pending: null };
+  const openBuffer = async b => { await request('document:open-buffer', { fileName, buffer: await b.arrayBuffer(), readonly: false }, 120000); state.dirty = false; saveBtn.disabled = true; setStatus('ok', 'Saved'); };
   async function toggleRevise() {
     side.hidden = !side.hidden; reviseBtn.setAttribute('aria-expanded', String(!side.hidden));
     if (side.hidden) return;
     if (!rv.built) buildRevise();
     try { const d = await macro(READ_MACRO, null, true); rv.count = d.count; if (!rv.touched) rv.slides.value = String(d.current + 1); } catch (err) { rv.out.replaceChildren(notice('error', err.message)); }
     rv.text.focus();
+    let agents = {}; if (account.settings.bridgeToken) try { agents = (await bridgeHealth(account.settings)).agents || {}; } catch { agents = {}; }
+    for (const opt of rv.agent.options) if (opt.value !== 'builtin') { opt.disabled = !agents[opt.value]; opt.textContent = AGENT_NAMES[opt.value] + (agents[opt.value] ? '' : ' · not connected'); }
+    if (rv.agent.selectedOptions[0]?.disabled) rv.agent.value = 'builtin';
   }
   function buildRevise() {
     rv.built = true;
     rv.slides = input({ id: 'rv-slides', placeholder: 'e.g. 2, 5-7', inputmode: 'numeric', oninput: () => { rv.touched = true; } });
     rv.text = textarea({ id: 'rv-text', rows: 5, placeholder: 'Tighten the bullets and add an example' });
-    rv.agent = select([['builtin', 'Built-in'], ['claude', 'Claude Code'], ['codex', 'Codex']], 'builtin', { id: 'rv-agent' });
-    for (const o of rv.agent.options) if (o.value !== 'builtin') { o.disabled = true; o.textContent += ' · not connected'; }
-    rv.run = button({ label: 'Run', icon: 'play', variant: 'primary', onClick: () => { if (rv.running) { rv.stopped = true; ctx.pipe?.cancel(); } else runRevision(); } });
+    rv.agent = select(Object.entries(AGENT_NAMES), 'builtin', { id: 'rv-agent' });
+    rv.run = button({ label: 'Run', icon: 'play', variant: 'primary', onClick: () => rv.running ? stopRevision() : runRevision() });
     rv.out = el('div', { class: 'pptx-side-out', 'aria-live': 'polite' });
     side.append(field('Slides', rv.slides, { id: 'rv-slides' }), field('Instruction', rv.text, { id: 'rv-text' }), field('Agent', rv.agent, { id: 'rv-agent' }), rv.run, rv.out);
     rv.text.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) runRevision(); });
   }
+  function stopRevision() {
+    rv.stopped = true;
+    if (rv.abort) { rv.abort.abort(); bridgeCancel(account.settings); } else ctx.pipe?.cancel();
+  }
   async function runRevision() {
-    if (rv.running || !ctx.requireKey()) return;
+    const agent = rv.agent.value;
+    if (rv.running || rv.pending || (agent === 'builtin' && !ctx.requireKey())) return;
     const instruction = rv.text.value.trim(); if (!instruction) { rv.text.focus(); return; }
     const setRun = on => { rv.running = on; rv.run.lastChild.textContent = on ? 'Stop' : 'Run'; };
     rv.stopped = false; setRun(true); rv.out.replaceChildren(el('p', { class: 'muted' }, 'Reading slides…'));
     try {
       const targets = parseSlideRange(rv.slides.value, rv.count || (await macro(READ_MACRO, null, true)).count);
-      const deck = await macro(READ_MACRO, { slides: targets }, true);
-      rv.out.replaceChildren(el('p', { class: 'muted' }, 'Thinking…'));
-      const res = await ctx.pipe.call({ where: ch.title, stage: o.label, agent: 'Slide reviser', messages: revisionMessages({ course: store.project.course.name, chapter: ch.title, deck, instruction }), json: true });
-      const { summary, ops } = parseRevision(res.text, deck, targets);
-      if (!ops.length) { rv.out.replaceChildren(notice('info', summary || 'No changes suggested.')); return; }
-      await macro(APPLY_MACRO, { ops });
-      store.log({ type: 'slide_revision', where: ch.title, stage: o.label, agent: 'built-in', slides: targets.map(i => i + 1), instruction: instruction.slice(0, 500), ops: ops.length }); store.save();
-      rv.out.replaceChildren(...(summary ? [el('p', {}, summary)] : []), el('ul', {}, ...describeOps(ops).map(t => el('li', {}, t))));
+      if (agent === 'builtin') await runBuiltin(targets, instruction); else await runAgent(agent, targets, instruction);
     } catch (err) { rv.out.replaceChildren(rv.stopped ? notice('info', 'Stopped.') : notice('error', err.message)); }
-    finally { setRun(false); }
+    finally { setRun(false); rv.abort = null; }
+  }
+  const logRevision = (agent, targets, instruction, extra) => { store.log({ type: 'slide_revision', where: ch.title, stage: o.label, agent, slides: targets.map(i => i + 1), instruction: instruction.slice(0, 500), ...extra }); store.save(); };
+
+  async function runBuiltin(targets, instruction) {
+    const deck = await macro(READ_MACRO, { slides: targets }, true);
+    rv.out.replaceChildren(el('p', { class: 'muted' }, 'Thinking…'));
+    const res = await ctx.pipe.call({ where: ch.title, stage: o.label, agent: 'Slide reviser', messages: revisionMessages({ course: store.project.course.name, chapter: ch.title, deck, instruction }), json: true });
+    const { summary, ops } = parseRevision(res.text, deck, targets);
+    if (!ops.length) { rv.out.replaceChildren(notice('info', summary || 'No changes suggested.')); return; }
+    await macro(APPLY_MACRO, { ops });
+    logRevision('built-in', targets, instruction, { ops: ops.length });
+    rv.out.replaceChildren(...(summary ? [el('p', {}, summary)] : []), el('ul', {}, ...describeOps(ops).map(t => el('li', {}, t))));
+  }
+
+  // Claude Code / Codex edit the saved deck on this machine; the result is previewed in the editor until kept or discarded.
+  async function runAgent(agent, targets, instruction) {
+    if (state.dirty && !(await save())) return;
+    const base = await deckBlob(store, ch.id);
+    const steps = el('ol', { class: 'pptx-steps' }); rv.out.replaceChildren(steps);
+    rv.abort = new AbortController();
+    const { summary, file } = await bridgeRevise(account.settings, { agent, slides: targets.map(i => i + 1), instruction, chapter: ch.title, blob: base }, {
+      signal: rv.abort.signal, onProgress: t => { steps.append(el('li', {}, t)); while (steps.children.length > 6) steps.firstChild.remove(); },
+    });
+    const check = await compareDecks(base, file, targets);
+    await openBuffer(file);
+    rv.pending = { agent, targets, instruction, file, base, check };
+    const keep = button({ label: 'Keep', icon: 'check', variant: 'primary', onClick: () => keepAgent() });
+    const discard = button({ label: 'Discard', variant: 'ghost', onClick: () => discardAgent() });
+    rv.out.replaceChildren(
+      ...(summary ? [el('p', {}, summary)] : []),
+      ...(check.after !== check.before ? [el('p', { class: 'muted' }, `${check.before} → ${check.after} slides`)] : []),
+      ...(check.changedOutside.length ? [notice('warn', `Also changed slide${check.changedOutside.length > 1 ? 's' : ''} ${check.changedOutside.join(', ')}, outside your selection.`)] : []),
+      el('div', { class: 'btn-row' }, keep, discard));
+  }
+  async function keepAgent() {
+    const p = rv.pending; if (!p) return;
+    const ok = state.dirty ? await save() : await commit(p.file, false).catch(err => { toast(err.message, 'error'); return false; });
+    if (!ok) return;
+    logRevision(p.agent, p.targets, p.instruction, { changedOutside: p.check.changedOutside, slidesBefore: p.check.before, slidesAfter: p.check.after });
+    rv.out.replaceChildren(el('p', { class: 'muted' }, status.textContent));
+  }
+  async function discardAgent() {
+    const p = rv.pending; if (!p) return;
+    try { await openBuffer(p.base); rv.pending = null; rv.out.replaceChildren(); } catch (err) { toast(err.message, 'error'); }
   }
 
   open = { layer, close };

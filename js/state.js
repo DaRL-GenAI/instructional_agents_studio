@@ -26,6 +26,8 @@ export const DEFAULT_SETTINGS = {
   reviewRounds: 2,         // review → repair rounds for the storyboard
   videoRes: '1080p',       // exported video resolution
   editorUrl: 'https://edit.chaxus.com', // presentation editor (ONLYOFFICE document-editor build, runs in the browser)
+  bridgeUrl: 'http://127.0.0.1:8794', // studio-bridge on this machine: slide revision with Claude Code / Codex
+  bridgeToken: '',
   theme: 'system',
   rememberKey: false,
   language: 'en',

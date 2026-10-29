@@ -6,6 +6,7 @@ import { db } from '../db.js';
 import { href, go } from '../router.js';
 import { download, textBlob, slug } from '../export.js';
 import { packDecks } from '../pptxdeck.js';
+import { bridgeHealth, AGENT_NAMES } from '../slideagent.js';
 import { importButton } from './home.js';
 
 const TABS = [['settings', 'Generation defaults', 'sliders'], ['privacy', 'API key & privacy', 'key'], ['projects', 'Projects', 'folder'], ['storage', 'Data & storage', 'database'], ['about', 'About', 'info']];
@@ -41,14 +42,18 @@ function settingsTab(ctx, body) {
   const rrounds = input({ type: 'number', min: 0, max: 4, value: s.reviewRounds ?? 2 });
   const vres = select([['1080p', '1080p (1920 × 1080)'], ['720p', '720p (1280 × 720, faster)']], s.videoRes || '1080p');
   const editorUrl = input({ value: s.editorUrl || '', placeholder: DEFAULT_SETTINGS.editorUrl, type: 'url' });
-  const save = async () => { Object.assign(s, { model: model.value.trim() || DEFAULT_SETTINGS.model, baseUrl: baseUrl.value.trim() || DEFAULT_SETTINGS.baseUrl, deliberation: delib.value, slidesPerChapter: Number(per.value) || 10, quizQuestions: Number(quizN.value) || 8, temperature: temp.value, seed: seed.value, ttsModel: tts.value, voice: voice.value, theme: theme.value, characters: chars.value === 'on', illustrations: illus.value === 'on', imageQuality: iq.value, practice: practice.value === 'on', reviewModel: rmodel.value.trim(), reviewRounds: Math.max(0, Math.min(4, Number(rrounds.value) || 0)), videoRes: vres.value, editorUrl: editorUrl.value.trim().replace(/\/+$/, '') || DEFAULT_SETTINGS.editorUrl }); await saveAccount(); toast('Defaults saved', 'ok'); ctx.render(); };
+  const bridgeUrl = input({ value: s.bridgeUrl || '', placeholder: DEFAULT_SETTINGS.bridgeUrl, type: 'url' });
+  const bridgeToken = input({ type: 'password', value: s.bridgeToken || '', autocomplete: 'off', spellcheck: 'false' });
+  const bridgeStatus = el('span', { class: 'meta' });
+  const testBridge = async () => { bridgeStatus.textContent = 'Connecting…'; try { const h = await bridgeHealth({ bridgeUrl: bridgeUrl.value.trim() || DEFAULT_SETTINGS.bridgeUrl, bridgeToken: bridgeToken.value.trim() }); bridgeStatus.textContent = `Connected: ${['claude', 'codex'].filter(a => h.agents[a]).map(a => AGENT_NAMES[a]).join(', ') || 'no agents found'}`; } catch (e) { bridgeStatus.textContent = `Failed: ${e.message}`; } };
+  const save = async () => { Object.assign(s, { model: model.value.trim() || DEFAULT_SETTINGS.model, baseUrl: baseUrl.value.trim() || DEFAULT_SETTINGS.baseUrl, deliberation: delib.value, slidesPerChapter: Number(per.value) || 10, quizQuestions: Number(quizN.value) || 8, temperature: temp.value, seed: seed.value, ttsModel: tts.value, voice: voice.value, theme: theme.value, characters: chars.value === 'on', illustrations: illus.value === 'on', imageQuality: iq.value, practice: practice.value === 'on', reviewModel: rmodel.value.trim(), reviewRounds: Math.max(0, Math.min(4, Number(rrounds.value) || 0)), videoRes: vres.value, editorUrl: editorUrl.value.trim().replace(/\/+$/, '') || DEFAULT_SETTINGS.editorUrl, bridgeUrl: bridgeUrl.value.trim().replace(/\/+$/, '') || DEFAULT_SETTINGS.bridgeUrl, bridgeToken: bridgeToken.value.trim() }); await saveAccount(); toast('Defaults saved', 'ok'); ctx.render(); };
   body.append(section('Model', 'Used by every project unless a project overrides it under Course basics.', el('div', { class: 'form-grid' }, field('Text model', model, { hint: 'Any chat model your endpoint serves.' }), field('API base URL', baseUrl, { hint: 'OpenAI, Azure, OpenRouter, vLLM or Ollama-compatible.' }), field('Temperature', temp, { hint: 'Empty = model default.' }), field('Seed', seed, { hint: 'For reproducible runs when supported.' }))),
     section('Generation', 'How much the agents deliberate and how large each deliverable is.', el('div', { class: 'form-grid' }, el('div', { class: 'span-2' }, field('Deliberation mode', delib)), field('Slides per chapter', per), field('Quiz questions per chapter', quizN))),
     section('Narration', 'Text-to-speech for lecture videos.', el('div', { class: 'form-grid' }, field('TTS model', tts), field('Voice', voice))),
     section('Animated lessons', 'Option 2 of Lecture videos (EduCast-style scenes).', el('div', { class: 'form-grid' }, field('Character accents', chars), field('Illustration scenes', illus), field('Illustration quality', iq), field('Practice scenes', practice, { hint: 'Interactive checks (multiple choice, fill in the blank, drag to sort, number line, lever) that pause the lesson player.' }))),
     section('Visual review', 'An independent vision model audits rendered frames of every scene (EduCast reviewer): key elements visible, no clipped or overlapping text. Failed scenes are patched or re-planned, then re-reviewed.', el('div', { class: 'form-grid' }, field('Reviewer model', rmodel, { hint: 'Must accept images (gpt-4o-mini, gpt-4.1-mini, gpt-5-mini…).' }), field('Review → repair rounds', rrounds, { hint: '0 = review once, never repair automatically.' }))),
     section('Video export', 'Videos are encoded frame by frame in your browser (WebCodecs → MP4 H.264/AAC; WebM fallback).', el('div', { class: 'form-grid' }, field('Resolution', vres))),
-    section('Slides editor', null, el('div', { class: 'form-grid' }, field('Editor address', editorUrl))),
+    section('Slides editor', null, el('div', { class: 'form-grid' }, field('Editor address', editorUrl), el('span'), field('Agent bridge', bridgeUrl), field('Bridge token', bridgeToken), el('div', { class: 'btn-row span-2' }, button({ label: 'Test bridge', onClick: testBridge }), bridgeStatus))),
     section('Appearance', null, el('div', { class: 'form-grid' }, field('Theme', theme))),
     el('div', { class: 'btn-row', style: 'margin-top:24px' }, button({ label: 'Save defaults', variant: 'primary', onClick: save }), button({ label: 'Reset to factory defaults', variant: 'ghost', onClick: async () => { if (await confirmDialog({ title: 'Reset all defaults?', body: 'Your API key and projects are not affected.', confirmLabel: 'Reset' })) { Object.assign(account.settings, DEFAULT_SETTINGS, { rememberKey: account.settings.rememberKey }); await saveAccount(); ctx.render(); } } })),
     el('datalist', { id: 'model-list' }, ...['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1', 'gpt-5-mini', 'gpt-5', 'o4-mini'].map(m => el('option', { value: m }))));
@@ -66,6 +71,7 @@ function privacyTab(ctx, body) {
       el('li', {}, 'Nothing is sent to the host of this page. There is no analytics or telemetry.'),
       el('li', {}, 'Third-party libraries load on demand from public CDNs: JSZip, pdf.js and marked from cdnjs.cloudflare.com, PptxGenJS from cdn.jsdelivr.net (fallback unpkg.com).'),
       el('li', {}, `Slides open in the editor page from ${account.settings.editorUrl || DEFAULT_SETTINGS.editorUrl}; the file is handed to it inside your browser and is not uploaded.`),
+      el('li', {}, `Revising slides with Claude Code or Codex sends the chapter deck and your instruction to the agent bridge at ${account.settings.bridgeUrl || DEFAULT_SETTINGS.bridgeUrl}, which runs the agent on that machine.`),
       el('li', {}, 'Projects, media and the audit trail live in this browser’s IndexedDB; use Export to move them.'))));
 }
 

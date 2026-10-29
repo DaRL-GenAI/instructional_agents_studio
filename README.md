@@ -53,6 +53,31 @@ downloaded `.pptx` is your template file with the new slides written as real pla
 exactly like the original. Slides that use Studio-only visuals (stat callouts, process flows, grids, charts, code)
 keep the template background and title placeholder and draw their content into the layout's content area.
 
+## Editing and revising slides
+
+A chapter's deck is a `.pptx` file. **Edit slides** opens it in an embedded presentation editor (ONLYOFFICE,
+running in the browser from the address under **Account → Slides editor**); every save is a new version in
+History. **Import .pptx** makes an existing PowerPoint the chapter's deck.
+
+**Revise** (in the editor) changes chosen slides from an instruction, with one of three agents:
+
+- **Built-in**: your API model reads the slides as a list of shapes and answers with fixed edit operations
+  (rewrite text or notes, remove a text box, add, move or delete slides), applied in the editor as one undo
+  step. Needs a self-hosted editor build that supports `document:run-macro`.
+- **Claude Code / Codex**: run on your machine through the agent bridge. The agent edits a copy of the saved
+  deck in a sandbox; Studio previews the result, flags slides changed outside your selection, and keeps it only
+  when you click Keep.
+
+```bash
+node bridge/studio-bridge.mjs --origin https://your-studio-origin   # prints where the token is kept
+```
+
+The bridge listens on 127.0.0.1:8794, accepts requests only from the listed origins and with its token
+(`~/.config/studio-bridge/config.json`), and runs one job at a time under bubblewrap: read-only system, an
+empty home holding only the agent's credentials, write access to the job directory only. With `systemd-run`
+available each job is its own unit in `exp.slice` capped at 4 GB. Enter the bridge address and token under
+**Account → Slides editor**.
+
 ## Video
 
 Two options per chapter, both produced entirely in the browser:

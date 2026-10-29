@@ -406,3 +406,5 @@ body.pptx-open { overflow: hidden; }
 .pptx-side-out { font-size: var(--fs-2); }
 .pptx-side-out ul { margin: 6px 0 0; padding-left: 18px; color: var(--text-2); }
 @media (max-width: 760px) { .pptx-body { flex-direction: column; } .pptx-side { width: auto; max-height: 45vh; border-left: 0; border-top: 1px solid var(--line); } }
+.pptx-steps { margin: 0; padding-left: 18px; display: grid; gap: 4px; color: var(--text-2); font-size: var(--fs-1); font-family: var(--mono, ui-monospace, monospace); overflow-wrap: anywhere; }
+.pptx-side-out .btn-row { margin-top: 10px; }

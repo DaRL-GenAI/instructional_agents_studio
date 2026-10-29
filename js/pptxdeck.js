@@ -51,6 +51,29 @@ export async function readPptx(blob) {
   return slides;
 }
 
+/** A content signature per slide (presentation order): element names, attributes and text, so a file that was
+ *  re-serialized (python-pptx, another editor) still matches where the slide itself did not change. */
+export async function slideSignatures(blob) {
+  const JSZip = await loadJSZip(); const zip = await JSZip.loadAsync(blob);
+  const read = async p => { const f = zip.file(p); return f ? new DOMParser().parseFromString(await f.async('string'), 'application/xml') : null; };
+  const pres = await read('ppt/presentation.xml'); const rels = await read('ppt/_rels/presentation.xml.rels');
+  if (!pres || !rels) throw new Error('Not a PowerPoint file (ppt/presentation.xml is missing).');
+  const target = Object.fromEntries([...rels.getElementsByTagName('Relationship')].map(r => [r.getAttribute('Id'), resolvePath('ppt/', r.getAttribute('Target') || '')]));
+  const sig = n => n.nodeType === 3 ? (n.nodeValue.trim() ? JSON.stringify(n.nodeValue) : '') : n.nodeType !== 1 ? '' : `${n.localName}(${[...n.attributes].filter(a => !a.name.startsWith('xmlns')).map(a => `${a.localName}=${a.value}`).sort().join(',')})[${[...n.childNodes].map(sig).join('')}]`;
+  const out = [];
+  for (const id of [...pres.getElementsByTagNameNS('*', 'sldId')].map(n => n.getAttributeNS(NS_R, 'id'))) { const doc = target[id] && await read(target[id]); out.push(doc ? await sha256(new Blob([sig(doc.documentElement)])) : ''); }
+  return out;
+}
+
+/** What a revision did to the deck: slides outside `targets` (0-based) that changed, and the slide counts. */
+export async function compareDecks(before, after, targets) {
+  const [a, b] = await Promise.all([slideSignatures(before), slideSignatures(after)]);
+  const left = new Map(); for (const h of b) left.set(h, (left.get(h) || 0) + 1);
+  const keep = new Set(targets); const changedOutside = [];
+  a.forEach((h, i) => { if (keep.has(i)) return; if (left.get(h)) left.set(h, left.get(h) - 1); else changedOutside.push(i + 1); });
+  return { before: a.length, after: b.length, changedOutside };
+}
+
 /** Palette and fonts from the file's theme, in the shape resolveTheme() takes (used by the animated lesson). */
 async function themeOf(blob, name) {
   try { const t = await parseTemplate(new File([blob], name || 'deck.pptx')); return { palette: t.palette, fonts: t.fonts }; } catch { return null; }
