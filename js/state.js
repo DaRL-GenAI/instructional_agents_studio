@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS = {
   reviewModel: '',         // vision model for the visual reviewer ('' = same as the text model)
   reviewRounds: 2,         // review → repair rounds for the storyboard
   videoRes: '1080p',       // exported video resolution
+  editorUrl: 'https://edit.chaxus.com', // presentation editor (ONLYOFFICE document-editor build, runs in the browser)
   theme: 'system',
   rememberKey: false,
   language: 'en',
