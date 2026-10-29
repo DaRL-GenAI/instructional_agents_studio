@@ -40,6 +40,8 @@ export async function openPptxEditor(ctx, o) {
     if (type === 'document:opened') { state.opened = true; setStatus('ok', 'Saved'); }
     if (type === 'document:dirty-changed') { state.dirty = !!payload.dirty; saveBtn.disabled = !state.dirty || !!state.saving; setStatus(state.dirty ? 'dirty' : 'ok', state.dirty ? 'Unsaved changes' : 'Saved'); }
     if (type === 'document:saved') state.saving?.resolve(payload);
+    // Ctrl+S / the editor's own download (self-hosted editor): the deck commits, other formats download.
+    if (type === 'document:exported' && payload.file) { if (payload.regularSave) commit(payload.file, payload.dirty).catch(err => { setStatus('error', err.message); toast(err.message, 'error'); }); else downloadFile(payload.file); }
     if (type === 'document:error') { if (state.saving) state.saving.reject(new Error(payload.message || 'Save failed')); else setStatus('error', payload.message || 'Editor error'); }
   };
   const onUnload = e => { if (state.dirty) { e.preventDefault(); e.returnValue = ''; } };
@@ -50,12 +52,21 @@ export async function openPptxEditor(ctx, o) {
     saveBtn.disabled = true; setStatus('', 'Saving…');
     try {
       const payload = await new Promise((resolve, reject) => { state.saving = { resolve, reject }; send('document:save', { targetExt: 'PPTX' }); setTimeout(() => reject(new Error('The editor did not return the file in time')), 60000); });
-      const changed = await commitDeck(store, ch.id, payload.file, { name: deckManifest(o.stage.output)?.name, label: o.label, where: ch.title });
-      state.dirty = !!payload.dirty;
-      setStatus(state.dirty ? 'dirty' : 'ok', changed ? `Saved as v${store.chapterStage(ch.id, 'slides').version}` : 'No changes');
-      ctx.render(); return true;
+      return await commit(payload.file, payload.dirty);
     } catch (err) { setStatus('error', err.message); toast(err.message, 'error'); return false; }
     finally { state.saving = null; saveBtn.disabled = !state.dirty; }
+  }
+
+  async function commit(file, dirty) {
+    const changed = await commitDeck(store, ch.id, file, { name: deckManifest(o.stage.output)?.name, label: o.label, where: ch.title });
+    state.dirty = !!dirty; saveBtn.disabled = !state.dirty || !!state.saving;
+    setStatus(state.dirty ? 'dirty' : 'ok', changed ? `Saved as v${store.chapterStage(ch.id, 'slides').version}` : 'No changes');
+    ctx.render(); return true;
+  }
+
+  function downloadFile(file) {
+    const a = el('a', { href: URL.createObjectURL(file), download: `${fileName.replace(/\.pptx$/i, '')}.${(file.name.split('.').pop() || 'bin').toLowerCase()}` });
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 30000);
   }
 
   async function close() {
