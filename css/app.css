@@ -399,3 +399,10 @@ body.pptx-open { overflow: hidden; }
 .pptx-status[data-s="error"]::before { background: var(--danger); }
 .pptx-frame { flex: 1; width: 100%; border: 0; background: var(--surface); }
 @media (max-width: 640px) { .pptx-bar { padding: 6px 12px; } .pptx-bar b { max-width: 30vw; } }
+.pptx-body { flex: 1; display: flex; min-height: 0; }
+.pptx-side { width: 340px; flex: none; display: flex; flex-direction: column; gap: 12px; padding: 16px; overflow-y: auto; background: var(--surface); border-left: 1px solid var(--line); }
+.pptx-side[hidden] { display: none; }
+.pptx-side > .btn { align-self: flex-start; }
+.pptx-side-out { font-size: var(--fs-2); }
+.pptx-side-out ul { margin: 6px 0 0; padding-left: 18px; color: var(--text-2); }
+@media (max-width: 760px) { .pptx-body { flex-direction: column; } .pptx-side { width: auto; max-height: 45vh; border-left: 0; border-top: 1px solid var(--line); } }

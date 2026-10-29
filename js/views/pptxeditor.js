@@ -2,9 +2,10 @@
 // document-editor build at settings.editorUrl). The editor is a full-screen layer outside #main, so app re-renders
 // never reload it; it talks to Studio over the editor's postMessage API (open-buffer in, save → File out), and every
 // save is committed as a new version of the slides stage.
-import { el, button, toast, confirmDialog, icon } from '../ui.js';
+import { el, button, toast, confirmDialog, icon, field, input, textarea, select, notice } from '../ui.js';
 import { account, DEFAULT_SETTINGS } from '../state.js';
 import { deckBlob, commitDeck, deckManifest } from '../pptxdeck.js';
+import { READ_MACRO, APPLY_MACRO, parseSlideRange, revisionMessages, parseRevision, describeOps } from '../slideagent.js';
 
 let open = null; // the one editor layer, while it is open
 
@@ -21,23 +22,34 @@ export async function openPptxEditor(ctx, o) {
   const frame = el('iframe', { class: 'pptx-frame', title: `Slides editor · ${ch.title}`, allow: 'clipboard-read; clipboard-write; fullscreen', src: `${base}/editor?embed=1&locale=${encodeURIComponent(account.settings.language || 'en')}&embedOrigin=${encodeURIComponent(location.origin)}` });
   const status = el('span', { class: 'pptx-status', role: 'status', 'aria-live': 'polite' }, 'Loading editor…');
   const saveBtn = button({ label: 'Save', icon: 'check', variant: 'primary', size: 'sm', disabled: true, onClick: () => save() });
+  const reviseBtn = button({ label: 'Revise', icon: 'message', size: 'sm', disabled: true, onClick: () => toggleRevise(), attrs: { 'aria-expanded': 'false' } });
+  const side = el('aside', { class: 'pptx-side', 'aria-label': 'Revise slides', hidden: true });
   const closeBtn = button({ label: 'Close', size: 'sm', variant: 'ghost', onClick: () => close() });
   const layer = el('div', { class: 'pptx-layer', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Edit slides: ${ch.title}` },
-    el('div', { class: 'pptx-bar' }, icon('presentation'), el('b', {}, ch.title), status, el('span', { class: 'spacer' }), saveBtn, closeBtn),
-    frame);
+    el('div', { class: 'pptx-bar' }, icon('presentation'), el('b', {}, ch.title), status, el('span', { class: 'spacer' }), reviseBtn, saveBtn, closeBtn),
+    el('div', { class: 'pptx-body' }, frame, side));
   document.body.append(layer); document.body.classList.add('pptx-open');
 
   const state = { ready: false, opened: false, dirty: false, saving: null };
   const setStatus = (s, text) => { status.dataset.s = s; status.textContent = text; };
-  const send = (type, payload = {}) => frame.contentWindow?.postMessage({ id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, type, payload }, origin);
+  const send = (type, payload = {}, id = `${Date.now()}-${Math.random().toString(16).slice(2)}`) => { frame.contentWindow?.postMessage({ id, type, payload }, origin); return id; };
+  // Request/reply by message id (run-macro). An editor without the call never answers, hence the timeout.
+  const pending = new Map();
+  const request = (type, payload, ms = 30000) => new Promise((resolve, reject) => {
+    const id = send(type, payload); const t = setTimeout(() => { pending.delete(id); reject(new Error('The editor did not answer. Slide revision needs the self-hosted editor (Account → Slides editor).')); }, ms);
+    pending.set(id, { resolve: v => { clearTimeout(t); resolve(v); }, reject: e => { clearTimeout(t); reject(e); } });
+  });
+  const macro = async (code, args, readonly = false) => (await request('document:run-macro', { code, args, readonly })).result;
   const loadTimer = setTimeout(() => { if (!state.ready) setStatus('error', `The editor at ${origin} did not respond`); }, 45000);
 
   const onMessage = async e => {
     if (e.origin !== origin || e.source !== frame.contentWindow) return;
     const { type, payload = {} } = e.data || {};
     if (!type?.startsWith('document:')) return;
+    const waiter = e.data.id && pending.get(e.data.id);
+    if (waiter) { pending.delete(e.data.id); return type === 'document:error' ? waiter.reject(new Error(payload.message || 'Editor error')) : waiter.resolve(payload); }
     if (type === 'document:ready' && !state.ready) { state.ready = true; clearTimeout(loadTimer); setStatus('', 'Opening…'); send('document:open-buffer', { fileName, buffer: await blob.arrayBuffer(), readonly: false }); }
-    if (type === 'document:opened') { state.opened = true; setStatus('ok', 'Saved'); }
+    if (type === 'document:opened') { state.opened = true; reviseBtn.disabled = false; setStatus('ok', 'Saved'); }
     if (type === 'document:dirty-changed') { state.dirty = !!payload.dirty; saveBtn.disabled = !state.dirty || !!state.saving; setStatus(state.dirty ? 'dirty' : 'ok', state.dirty ? 'Unsaved changes' : 'Saved'); }
     if (type === 'document:saved') state.saving?.resolve(payload);
     // Ctrl+S / the editor's own download (self-hosted editor): the deck commits, other formats download.
@@ -73,6 +85,45 @@ export async function openPptxEditor(ctx, o) {
     if (state.dirty && !(await confirmDialog({ title: 'Discard unsaved slide edits?', body: 'Changes since the last save will be lost. Save first to keep them as a new version.', confirmLabel: 'Discard changes', danger: true }))) return;
     clearTimeout(loadTimer); removeEventListener('message', onMessage); removeEventListener('beforeunload', onUnload);
     layer.remove(); document.body.classList.remove('pptx-open'); open = null; ctx.render();
+  }
+
+  // ---------------------------------------------------------------- targeted revision
+  const rv = { built: false, running: false };
+  async function toggleRevise() {
+    side.hidden = !side.hidden; reviseBtn.setAttribute('aria-expanded', String(!side.hidden));
+    if (side.hidden) return;
+    if (!rv.built) buildRevise();
+    try { const d = await macro(READ_MACRO, null, true); rv.count = d.count; if (!rv.touched) rv.slides.value = String(d.current + 1); } catch (err) { rv.out.replaceChildren(notice('error', err.message)); }
+    rv.text.focus();
+  }
+  function buildRevise() {
+    rv.built = true;
+    rv.slides = input({ id: 'rv-slides', placeholder: 'e.g. 2, 5-7', inputmode: 'numeric', oninput: () => { rv.touched = true; } });
+    rv.text = textarea({ id: 'rv-text', rows: 5, placeholder: 'Tighten the bullets and add an example' });
+    rv.agent = select([['builtin', 'Built-in'], ['claude', 'Claude Code'], ['codex', 'Codex']], 'builtin', { id: 'rv-agent' });
+    for (const o of rv.agent.options) if (o.value !== 'builtin') { o.disabled = true; o.textContent += ' · not connected'; }
+    rv.run = button({ label: 'Run', icon: 'play', variant: 'primary', onClick: () => { if (rv.running) { rv.stopped = true; ctx.pipe?.cancel(); } else runRevision(); } });
+    rv.out = el('div', { class: 'pptx-side-out', 'aria-live': 'polite' });
+    side.append(field('Slides', rv.slides, { id: 'rv-slides' }), field('Instruction', rv.text, { id: 'rv-text' }), field('Agent', rv.agent, { id: 'rv-agent' }), rv.run, rv.out);
+    rv.text.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) runRevision(); });
+  }
+  async function runRevision() {
+    if (rv.running || !ctx.requireKey()) return;
+    const instruction = rv.text.value.trim(); if (!instruction) { rv.text.focus(); return; }
+    const setRun = on => { rv.running = on; rv.run.lastChild.textContent = on ? 'Stop' : 'Run'; };
+    rv.stopped = false; setRun(true); rv.out.replaceChildren(el('p', { class: 'muted' }, 'Reading slides…'));
+    try {
+      const targets = parseSlideRange(rv.slides.value, rv.count || (await macro(READ_MACRO, null, true)).count);
+      const deck = await macro(READ_MACRO, { slides: targets }, true);
+      rv.out.replaceChildren(el('p', { class: 'muted' }, 'Thinking…'));
+      const res = await ctx.pipe.call({ where: ch.title, stage: o.label, agent: 'Slide reviser', messages: revisionMessages({ course: store.project.course.name, chapter: ch.title, deck, instruction }), json: true });
+      const { summary, ops } = parseRevision(res.text, deck, targets);
+      if (!ops.length) { rv.out.replaceChildren(notice('info', summary || 'No changes suggested.')); return; }
+      await macro(APPLY_MACRO, { ops });
+      store.log({ type: 'slide_revision', where: ch.title, stage: o.label, agent: 'built-in', slides: targets.map(i => i + 1), instruction: instruction.slice(0, 500), ops: ops.length }); store.save();
+      rv.out.replaceChildren(...(summary ? [el('p', {}, summary)] : []), el('ul', {}, ...describeOps(ops).map(t => el('li', {}, t))));
+    } catch (err) { rv.out.replaceChildren(rv.stopped ? notice('info', 'Stopped.') : notice('error', err.message)); }
+    finally { setRun(false); }
   }
 
   open = { layer, close };
