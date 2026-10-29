@@ -3,6 +3,7 @@ import { el, button, field, input, select, textarea, empty, icon, fmtRel, toast,
 import { createProject, deleteProject, duplicateProject, importProject, moduleProgress, account } from '../state.js';
 import { href, go } from '../router.js';
 import { download, textBlob, slug } from '../export.js';
+import { packDecks } from '../pptxdeck.js';
 
 export function render(ctx) {
   const page = el('div', { class: 'page' });
@@ -24,7 +25,7 @@ export function render(ctx) {
           el('div', { class: 'prog-row' }, chip('Design', prog.design), chip('Slides', prog.slides), chip('Assessments', prog.assessments), chip('Videos', prog.videos))),
         el('div', { class: 'btn-row', onClick: e => { e.preventDefault(); e.stopPropagation(); } },
           button({ icon: 'copy', size: 'sm', variant: 'ghost', title: 'Duplicate', onClick: async () => { await duplicateProject(p.id); toast('Project duplicated', 'ok'); await ctx.reloadProjects(); ctx.render(); } }),
-          button({ icon: 'download', size: 'sm', variant: 'ghost', title: 'Export JSON', onClick: () => download(textBlob(JSON.stringify(p, null, 2), 'application/json'), `${slug(p.name)}_project.json`) }),
+          button({ icon: 'download', size: 'sm', variant: 'ghost', title: 'Export JSON', onClick: async () => download(textBlob(JSON.stringify({ ...p, decks: await packDecks(p) }, null, 2), 'application/json'), `${slug(p.name)}_project.json`) }),
           button({ icon: 'trash', size: 'sm', variant: 'ghost', title: 'Delete', onClick: async () => { if (await confirmDialog({ title: `Delete “${p.name}”?`, body: 'All generated material, media and the audit trail of this project are removed from this browser. Export it first if you want a copy.', confirmLabel: 'Delete project', danger: true })) { await deleteProject(p.id); await ctx.reloadProjects(); ctx.render(); toast('Project deleted'); } } }))));
     }
   }

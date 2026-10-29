@@ -5,6 +5,7 @@ import { normalizeDeck, deckOf, PALETTE_NAMES, resolveTheme } from './deck.js';
 import { normalizeStoryboard, storyboardGaps, storyboardOf, drawScene, collectGuard } from './scenes.js';
 import { reviewScene, samplePoints, applyOps, blankFrameFindings, frameDataUrl } from './review.js';
 import { auditPracticeDom } from './practice.js';
+import { storeDeck, draftToPptx } from './pptxdeck.js';
 
 export class Pipeline {
   constructor(store) {
@@ -178,7 +179,7 @@ export class Pipeline {
       const json = ['outline', 'slides', 'script', 'quiz', 'storyboard'].includes(stageId);
       const messages = [{ role: 'system', content: prompt.agents[0].system }, { role: 'user', content: prompt.user }];
       let text = await this.stream(key, transcript, usage, { where: ch.title, stage: st.name, agent: prompt.agents[0].name, json, messages });
-      const parse = (t) => {
+      const parse = async (t) => {
         if (stageId === 'outline') return JSON.stringify(normalizeOutline(extractJson(t, 'array')), null, 2);
         if (stageId === 'slides') {
           const outline = itemsOf(ch.stages.outline?.output);
@@ -186,7 +187,8 @@ export class Pipeline {
           if (!d.slides.length) throw new Error('The model returned no slides. Re-run, or check the Transcript tab for the raw response.');
           const expected = Math.max(3, Math.ceil(outline.length * 0.6));
           if (d.slides.length < expected) throw new Error(`Only ${d.slides.length} of ${outline.length} outline slides were returned`);
-          return JSON.stringify(d, null, 2);
+          // The JSON is only the draft: render it once to a .pptx, which becomes the chapter's deck.
+          return storeDeck(this.store, chapterId, await draftToPptx(this.store, ch, d), { name: 'slides.pptx', theme: d.theme });
         }
         if (stageId === 'script') return JSON.stringify(normalizeScript(extractJson(t, 'array'), itemsOf(ch.stages.slides?.output)), null, 2);
         if (stageId === 'quiz') return JSON.stringify(normalizeQuiz(extractJson(t, 'array')), null, 2);
@@ -200,13 +202,13 @@ export class Pipeline {
         return t.trim();
       };
       let output;
-      try { output = parse(text); }
+      try { output = await parse(text); }
       catch (e) {
         if (!json) throw e;
         // One strict retry: the model answered in an unexpected shape; ask for the bare array.
         const strict = [...messages, { role: 'assistant', content: text }, { role: 'user', content: stageId === 'storyboard' ? `That reply could not be used (${e.message}). Reply again with ONLY the complete JSON object {"scenes": [...]} requested above: 6-8 complete scene objects, each with a NON-EMPTY "visual" object filled for its beat exactly as in the example, no prose, no code fences.` : stageId === 'slides' ? `That reply could not be used (${e.message}). Reply again with ONLY the complete JSON object {"theme":…,"slides":[…]} requested above: one slide object for EVERY outline item, in order, with slides as a top-level array of objects, no prose, no code fences.` : stageId === 'script' ? `That reply could not be used (${e.message}). Reply again with ONLY a JSON array containing one {"slide_id", "narration"} object for EVERY slide listed above, in order, no wrapper object, no prose, no code fences.` : `That reply could not be used (${e.message}). Reply again with ONLY the JSON array requested above, as a top-level array of objects with exactly the specified fields, no wrapper object, no prose, no code fences.` }];
         text = await this.stream(key, transcript, usage, { where: ch.title, stage: `${st.name} (retry)`, agent: prompt.agents[0].name, json: false, messages: strict });
-        output = parse(text);
+        output = await parse(text);
       }
 
       this.store.applyResult(stage, st.name, { output, usage, durationMs: Math.round(performance.now() - t0), transcript, prompt, inputHash: this.inputHash(inputs), provenance: inputs.map(i => ({ label: i.label, hash: sha1Short(i.text), version: i.version, chunks: i.chunks })) }, ch.title);

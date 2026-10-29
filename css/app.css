@@ -382,3 +382,5 @@ dialog.dlg::backdrop { background: rgba(31, 42, 36, .45); }
 .player-frame iframe { display: block; width: 100%; height: min(78vh, 760px); border: 0; }
 .practice-warn { font-size: var(--fs-1); color: var(--warn); }
 @media (max-width: 720px) { .step-row { grid-template-columns: 30px minmax(0, 1fr); } .step-row .btn-row { grid-column: 1 / -1; justify-content: flex-start; } }
+.pptx-index { margin: 12px 0 0; padding-left: 22px; display: grid; gap: 10px; font-size: var(--fs-2); }
+.pptx-index ul { margin: 4px 0 0; padding-left: 18px; color: var(--text-2); }

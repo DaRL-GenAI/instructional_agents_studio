@@ -1,6 +1,7 @@
 // state.js — account settings, project registry and the per-project store (with audit trail).
 import { db, mediaKey } from './db.js';
 import { sha1Short } from './llm.js';
+import { copyDecks, unpackDecks } from './pptxdeck.js';
 
 export const SCHEMA = 2;
 const KEY_LOCAL = 'ia-studio.apiKey';
@@ -119,11 +120,13 @@ export async function duplicateProject(id) {
   const src = await getProject(id); if (!src) return null;
   const copy = JSON.parse(JSON.stringify(src)); copy.id = 'prj_' + uid(); copy.name = `${src.name} (copy)`; copy.createdAt = copy.updatedAt = new Date().toISOString();
   copy.audit = [{ id: 1, ts: copy.createdAt, type: 'project', note: `duplicated from ${src.name}` }];
-  await db.put('projects', copy.id, copy); return copy;
+  await copyDecks(src.id, copy.id); await db.put('projects', copy.id, copy); return copy;
 }
 export async function importProject(json) {
   const p = migrate(JSON.parse(json)); if (!p.course) throw new Error('Not a Studio project file');
-  p.id = 'prj_' + uid(); p.updatedAt = new Date().toISOString(); await db.put('projects', p.id, p); return p;
+  p.id = 'prj_' + uid(); p.updatedAt = new Date().toISOString();
+  const decks = p.decks; delete p.decks; await unpackDecks(p.id, decks);
+  await db.put('projects', p.id, p); return p;
 }
 
 // ---------------------------------------------------------------- per-project store
@@ -196,6 +199,7 @@ export class ProjectStore {
   async putMedia(chapterId, kind, value) { await db.put('media', mediaKey(this.id, chapterId, kind), value); }
   async getMedia(chapterId, kind) { return db.get('media', mediaKey(this.id, chapterId, kind)); }
   async delMedia(chapterId, kind) { await db.del('media', mediaKey(this.id, chapterId, kind)); }
+  async mediaKeys(prefix) { return (await db.keys('media')).filter(k => String(k).startsWith(prefix)); }
 }
 
 export const sum = (arr, f) => arr.reduce((a, x) => a + (f(x) || 0), 0);

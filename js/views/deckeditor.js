@@ -2,6 +2,7 @@
 import { el, button, field, input, textarea, select, notice, empty, toast, icon, confirmDialog } from '../ui.js';
 import { deckOf, slideToHtml, resolveTheme, LAYOUTS, PALETTES, deckToPptx, DECK_CSS, DECK_CSS_SCALE } from '../deck.js';
 import { download, slug } from '../export.js';
+import { deckBlob, deckManifest } from '../pptxdeck.js';
 
 let cssInjected = false;
 function ensureCss() { if (cssInjected) return; const st = document.createElement('style'); st.textContent = DECK_CSS + DECK_CSS_SCALE; document.head.append(st); cssInjected = true; }
@@ -26,6 +27,7 @@ const SCHEMA = {
 export function deckEditor(ctx, o) {
   ensureCss();
   const { store } = ctx; const st = o.stage; const ch = o.chapter; const p = store.project;
+  const m = deckManifest(st.output); if (m) return pptxIndex(m);
   const deck = deckOf(st.output);
   if (!deck.slides.length) return null;
   const theme = resolveTheme(deck.theme, p.deck);
@@ -99,6 +101,8 @@ function present(deck, theme, meta, start = 0) {
 
 export async function downloadPptx(ctx, o) {
   const st = o.stage; const ch = o.chapter; const p = ctx.store.project;
+  const stored = await deckBlob(ctx.store, ch.id, st.output);
+  if (stored) { const name = `${slug(ch.title)}_slides.pptx`; download(stored, name); ctx.store.log({ type: 'export', stage: o.label, file: name, bytes: stored.size }); return; }
   const deck = deckOf(st.output); if (!deck.slides.length) return toast('No slides to export', 'error');
   const theme = resolveTheme(deck.theme, p.deck);
   const script = (() => { try { const v = JSON.parse(ch.stages.script?.output || 'null'); return Array.isArray(v) ? v : []; } catch { return []; } })();
@@ -106,4 +110,11 @@ export async function downloadPptx(ctx, o) {
   if (theme.tpl) { const tm = await ctx.store.getMedia('project', 'template').catch(() => null); templateBlob = tm?.blob || null; if (!templateBlob) toast('The template file is no longer in this browser; exporting with Studio layouts. Re-upload the template under Slides → Deck template to restore it.', 'error'); }
   try { const blob = await deckToPptx(deck, theme, { course: p.course.name, chapter: ch.title }, script, { templateBlob }); download(blob, `${slug(ch.title)}_slides.pptx`); ctx.store.log({ type: 'export', stage: o.label, file: `${slug(ch.title)}_slides.pptx`, bytes: blob.size, template: templateBlob ? theme.name : undefined }); }
   catch (e) { toast(e.message, 'error'); }
+}
+
+/** Read-only text of a .pptx deck (the file itself is edited in the presentation editor). */
+function pptxIndex(m) {
+  return el('div', { class: 'deck-editor' },
+    el('div', { class: 'editor-bar' }, el('span', {}, `${m.slides.length} slides · ${m.name} · ${Math.round(m.bytes / 1024)} KB`)),
+    el('ol', { class: 'pptx-index' }, ...m.slides.map(s => el('li', {}, el('strong', {}, s.title), s.bullets.length ? el('ul', {}, ...s.bullets.map(b => el('li', {}, b))) : null))));
 }

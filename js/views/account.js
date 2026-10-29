@@ -5,6 +5,7 @@ import { LLMClient } from '../llm.js';
 import { db } from '../db.js';
 import { href, go } from '../router.js';
 import { download, textBlob, slug } from '../export.js';
+import { packDecks } from '../pptxdeck.js';
 import { importButton } from './home.js';
 
 const TABS = [['settings', 'Generation defaults', 'sliders'], ['privacy', 'API key & privacy', 'key'], ['projects', 'Projects', 'folder'], ['storage', 'Data & storage', 'database'], ['about', 'About', 'info']];
@@ -74,7 +75,7 @@ function projectsTab(ctx, body) {
     panel.append(el('div', { class: 'list-row' }, el('div', {}, el('a', { class: 'title', href: href('p', p.id, 'overview'), style: 'text-decoration:none' }, p.name), el('div', { class: 'sub' }, `${p.chapters.length} chapters · ${Math.round(pct * 100)}% complete · ${(p.audit || []).length} audit events · updated ${fmtRel(p.updatedAt)}`)),
       el('div', { class: 'aside' }, button({ label: 'Rename', size: 'sm', variant: 'ghost', onClick: async () => { const n = await confirmDialog({ title: 'Rename project', confirmLabel: 'Rename', input: { label: 'Name', value: p.name } }); if (n && n.trim()) { p.name = n.trim(); p.course.name = n.trim(); await db.put('projects', p.id, p); await ctx.reloadProjects(); ctx.render(); } } }),
         button({ label: 'Duplicate', size: 'sm', variant: 'ghost', onClick: async () => { await duplicateProject(p.id); await ctx.reloadProjects(); ctx.render(); } }),
-        button({ label: 'Export', size: 'sm', variant: 'ghost', onClick: () => download(textBlob(JSON.stringify(p, null, 2), 'application/json'), `${slug(p.name)}_project.json`) }),
+        button({ label: 'Export', size: 'sm', variant: 'ghost', onClick: async () => download(textBlob(JSON.stringify({ ...p, decks: await packDecks(p) }, null, 2), 'application/json'), `${slug(p.name)}_project.json`) }),
         button({ label: 'Delete', size: 'sm', variant: 'danger', onClick: async () => { if (await confirmDialog({ title: `Delete “${p.name}”?`, body: 'Removes the project, its media and audit trail from this browser.', confirmLabel: 'Delete', danger: true })) { await deleteProject(p.id); await ctx.reloadProjects(); ctx.render(); } } }))));
   }
   body.append(panel);

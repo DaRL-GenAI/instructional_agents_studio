@@ -46,11 +46,12 @@ export async function buildZip(project, media = {}) {
       const st = ch.stages[s.id]; if (!st?.output) continue;
       if (s.kind === 'md' || s.kind === 'json') dir.file(s.file, st.output);
       if (s.kind === 'quiz') { dir.file('quiz.json', st.output); dir.file('quiz.md', quizMarkdown(ch, safeJson(st.output, []))); }
-      if (s.kind === 'slides') dir.file('slides.json', st.output);
+      if (s.kind === 'slides' && !media[ch.id]?.deck) dir.file('slides.json', st.output);
       if (s.kind === 'script') { dir.file('script.json', st.output); dir.file('script.md', scriptMarkdown(ch, script)); }
       if (st.transcript?.length) dir.file(`transcripts/${s.id}.md`, transcriptMarkdown(s.name, st));
     }
-    if (slides) {
+    if (media[ch.id]?.deck) dir.file('slides.pptx', media[ch.id].deck);
+    else if (slides) {
       try { const deck = deckOf(ch.stages.slides.output); if (deck.slides.length) dir.file('slides.pptx', await deckToPptx(deck, resolveTheme(deck.theme, project.deck), { course: project.course.name, chapter: ch.title }, script, { templateBlob: media.template?.blob || null })); }
       catch (e) { dir.file('slides_pptx_error.txt', String(e.message || e)); }
     }

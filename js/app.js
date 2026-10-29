@@ -4,6 +4,7 @@ import { parse, href, go, onRoute } from './router.js';
 import { account, loadAccount, listProjects, getProject, ProjectStore, MODULES, moduleProgress, projectTotals } from './state.js';
 import { Pipeline } from './pipeline.js';
 import { buildZip, download } from './export.js';
+import { deckBlob, migrateLegacyDeck } from './pptxdeck.js';
 import { slug } from './export.js';
 import * as home from './views/home.js';
 import * as accountView from './views/account.js';
@@ -37,7 +38,8 @@ const ctx = {
       const media = {};
       for (const ch of ctx.store.project.chapters) {
         const [audios, video, scene_audios, anim_video, images, lesson] = await Promise.all(['audios', 'video', 'scene_audios', 'anim_video', 'images', 'lesson_bundle'].map(k => ctx.store.getMedia(ch.id, k)));
-        if (audios || video || scene_audios || anim_video || images || lesson) media[ch.id] = { audios, video, scene_audios, anim_video, images, lesson };
+        const deck = await deckBlob(ctx.store, ch.id);
+        if (audios || video || scene_audios || anim_video || images || lesson || deck) media[ch.id] = { audios, video, scene_audios, anim_video, images, lesson, deck };
       }
       media.template = await ctx.store.getMedia('project', 'template');
       const blob = await buildZip(ctx.store.project, media);
@@ -58,7 +60,15 @@ async function openProject(id) {
   if (ctx.store) await ctx.store.flush();
   ctx.store = new ProjectStore(p); ctx.pipe = new Pipeline(ctx.store); ctx.ui = {}; ctx.media = {};
   ctx.pipe.onLive = renderLive;
+  convertLegacyDecks(ctx.store);
   return true;
+}
+
+/** Chapters saved before decks became .pptx files are converted once, in the background. */
+async function convertLegacyDecks(store) {
+  let n = 0;
+  for (const ch of store.project.chapters) { try { if (await migrateLegacyDeck(store, ch.id)) n++; } catch (e) { console.warn('deck conversion failed', ch.title, e); } }
+  if (n && ctx.store === store) { toast(`${n} chapter deck${n > 1 ? 's' : ''} converted to .pptx`, 'ok'); render(); }
 }
 
 // ------------------------------------------------------------------ render
