@@ -46,8 +46,8 @@ async function doctor() {
   const row = (name, ok, detail, need) => rows.push([ok ? 'ok ' : need ? 'MISSING' : '-- ', name, detail]);
   row('Node.js', true, process.version, true);
   for (const [name, bin, use] of [['Claude Code', 'claude', 'revise slides with Claude Code'], ['Codex', 'codex', 'revise slides with Codex']]) { const b = which(bin); row(name, !!b, b ? `${version(b) || 'installed'} (${b})` : `not found: needed to ${use}`); }
-  const tex = ['tectonic', 'latexmk'].map(b => [b, which(b)]).filter(([, p]) => p);
-  row('LaTeX', tex.length > 0, tex.length ? tex.map(([b, p]) => `${b} (${p})`).join(', ') : 'tectonic or latexmk not found: needed to compile .tex files');
+  const { findTex } = await import('../server/tex.mjs'); const tex = findTex();
+  row('LaTeX', !!tex, tex ? `${tex.engine} (${tex.bin})` : 'tectonic or latexmk not found: needed to compile .tex files (or set IA_TECTONIC)');
   const ed = findEditor();
   row('Editor', !!ed, ed ? `${ed.version} (${ed.dir})` : `not installed: slides open in https://edit.chaxus.com${EDITOR.url ? '' : ' (set IA_EDITOR_DIR to a local build)'}`);
   row('git', true, 'built in (isomorphic-git)');

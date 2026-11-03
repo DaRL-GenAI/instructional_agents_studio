@@ -18,6 +18,7 @@ import { forward } from './llmproxy.mjs';
 import * as files from './files.mjs';
 import * as jobs from './agents/jobs.mjs';
 import * as sessions from './agents/sessions.mjs';
+import * as tex from './tex.mjs';
 
 export const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PKG = JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8'));
@@ -26,7 +27,8 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 const LIMIT = { json: 256 * 1024 * 1024, media: 2 * 1024 * 1024 * 1024 };
 
 /** Start the server. `dir`: the folder the app was started in (a project, or where a new one should go). */
-export async function startServer({ dir = null, port = 8790, token = newToken(), editorDir, watch = true, quiet = false, allowHosts = [] } = {}) {
+export async function startServer({ dir = null, port = 8790, token = newToken(), editorDir, watch = true, quiet = false, allowHosts = [], texEngine } = {}) {
+  const texInfo = () => (texEngine !== undefined ? texEngine : tex.findTex());
   const editor = editorDir !== undefined ? (editorDir ? { dir: path.resolve(editorDir), version: 'local' } : null) : findEditor();
   const clients = new Set();
   const broadcast = ev => { const s = JSON.stringify(ev); for (const c of clients) if (c.readyState === 1) c.send(s); };
@@ -89,7 +91,7 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
   }
 
   function sendIndex(res) {
-    const info = { version: PKG.version, editor: !!editor, projectsRoot: config.projectsRoot(), pendingDir: session.pendingDir, openId: session.openId, home: os.homedir() };
+    const info = { version: PKG.version, editor: !!editor, tex: texInfo()?.engine || null, projectsRoot: config.projectsRoot(), pendingDir: session.pendingDir, openId: session.openId, home: os.homedir() };
     const html = fs.readFileSync(path.join(APP_ROOT, 'index.html'), 'utf8').replace('<script type="importmap">', `<script>window.__IA_LOCAL__=${JSON.stringify(info).replace(/</g, '\\u003c')}</script>\n  <script type="importmap">`);
     res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store', ...headersFor('app') }); res.end(html);
   }
@@ -176,6 +178,26 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
           return { added: [rel], message: `${url.searchParams.get('kind') === 'import' ? 'import' : 'edit'}: ${rel}`, result: { sha: sha256(data) } };
         }));
       }
+    }
+    if ((g = p.match(/^\/api\/projects\/([\w-]+)\/history\/(.+)$/)) && m === 'GET') return send(res, 200, { commits: await vcs.fileLog(projects.state(g[1]).dir, g[2]) });
+    if ((g = p.match(/^\/api\/projects\/([\w-]+)\/at\/([0-9a-f]{40})\/(.+)$/)) && m === 'GET') { // a file as it was in a commit
+      const s = projects.state(g[1]); resolveInside(s.dir, g[3]);
+      const buf = await vcs.readAt(s.dir, g[2], g[3]); if (!buf) return send(res, 404, { error: 'Not in that version' });
+      res.writeHead(200, { 'Content-Type': MIME[path.extname(g[3]).toLowerCase()] || 'application/octet-stream', 'Content-Length': buf.length, 'Cache-Control': 'no-store', ETag: `"${sha256(buf)}"` }); return res.end(buf);
+    }
+    if ((g = p.match(/^\/api\/projects\/([\w-]+)\/restore$/)) && m === 'POST') { // a plain file back to a commit's version, as a new commit
+      const b = await body(req); if (typeof b.path !== 'string' || !/^[0-9a-f]{40}$/.test(b.oid || '')) throw new HttpError(400, 'Bad request');
+      return send(res, 200, await projects.fileOp(g[1], async s => {
+        files.checkWritable(s.dir, b.path);
+        const buf = await vcs.readAt(s.dir, b.oid, b.path); if (!buf) throw new HttpError(404, 'Not in that version');
+        writeFile(s.dir, b.path, buf);
+        return { added: [b.path], message: `edit: restore ${b.path} @${b.oid.slice(0, 7)}`, result: { sha: sha256(buf) } };
+      }));
+    }
+    if ((g = p.match(/^\/api\/projects\/([\w-]+)\/tex$/)) && m === 'POST') { // compile a .tex file into build/
+      const b = await body(req); const s = projects.state(g[1]);
+      if (typeof b.path !== 'string') throw new HttpError(400, 'Bad path');
+      try { return send(res, 200, await tex.compile(s.dir, b.path, { tex: texInfo() })); } catch (e) { throw e.status ? new HttpError(e.status, e.message) : e; }
     }
     if ((g = p.match(/^\/api\/projects\/([\w-]+)\/sources$/)) && m === 'POST') { // course materials dropped in: sources/<path>, one commit
       const list = files.readSources(await raw(req, LIMIT.media));

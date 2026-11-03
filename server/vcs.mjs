@@ -83,3 +83,9 @@ export async function changedPaths(dir, oid) {
   } });
   return { parent: parent || null, message: commit.message.trim(), paths: out.filter(Boolean) };
 }
+
+/** The commits that changed one file, newest first: [{ oid, message, at }] (the file may be gone by now). */
+export async function fileLog(dir, filepath, depth = 100) {
+  let l; try { l = await git.log({ fs, dir, filepath, depth, force: true }); } catch { return []; }
+  return l.map(c => ({ oid: c.oid, message: c.commit.message.trim(), at: new Date(c.commit.author.timestamp * 1000).toISOString() }));
+}
