@@ -205,9 +205,11 @@ class Workspace {
   }
   /** Show an agent's version of a .pptx/.docx in its tab without saving it. */
   async preview(path, blob) {
+    const had = this.tabs.get(path); if (had?.previewBlob) return;
+    if (had) had.previewBlob = blob; // before the tab shows: no context reads while the preview opens
     this.reveal(path); await this.open(path);
     const t = this.tabs.get(path); if (t.kind !== 'office') throw new Error('No preview for this file');
-    await t.ready(); await t.showPreview(blob);
+    t.previewBlob = blob; await t.ready(); await t.showPreview(blob);
     this.agentPanel?.renderReview();
   }
   previewing(path) { return !!this.tabs.get(path)?.previewBlob; }

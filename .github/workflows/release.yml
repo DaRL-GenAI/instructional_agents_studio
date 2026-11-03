@@ -1,0 +1,43 @@
+name: Release to npm
+
+# Publishes the package when a version tag (v0.1.0, …) is pushed. Needs the repository secret NPM_TOKEN
+# (an npm automation token for the `instructional-agents` package). The tag must match package.json.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Tag matches package.json
+        run: |
+          v=$(node -p "require('./package.json').version")
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match package.json version $v"; exit 1; }
+
+      - run: npm ci
+      - run: node --test test/
+        env:
+          IA_GIT_NAME: CI
+          IA_GIT_EMAIL: ci@localhost
+      - run: node scripts/pack-check.mjs
+      - run: node scripts/ci-smoke.mjs
+
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -102,11 +102,12 @@ export class AgentPanel {
     this.chatSel.replaceChildren(...opts);
     this.stopBtn.hidden = !this.running;
   }
-  setAgent(a) { if (!this.available[a]) return; this.agent = a; setPref('agent', a); if (this.session && !this.session.messages.length) this.session.agent = a; this.renderPicker(); }
+  setAgent(a) { if (!this.available[a]) return; this.agent = a; setPref('agent', a); if (this.session && !this.session.messages.length) this.session.agent = a; this.renderPicker(); this.renderLog(); }
   async newChat() {
     if (this.running) return toast('Stop the agent first', 'error');
     if (!(await this.dropReview())) return;
-    this.session = null; this.renderAll(); this.input.focus();
+    this.session = null; this.review = null; const a = pref('agent', 'builtin'); this.agent = this.available[a] ? a : 'builtin';
+    this.renderAll(); this.input.focus();
   }
   async openChat(id) {
     if (!id) return this.newChat();
@@ -124,7 +125,7 @@ export class AgentPanel {
     const msgs = this.session?.messages || [];
     if (!msgs.length && !this.running) {
       this.log.replaceChildren(el('div', { class: 'ag-empty' }, icon('message'), el('p', {}, AGENTS[this.agent]),
-        !LOCAL || this.agent !== 'builtin' ? null : el('p', { class: 'meta' }, 'Edits are reviewed before they are saved.'),
+        el('p', { class: 'meta' }, 'Changes are reviewed before they are saved.'),
         this.agent === 'builtin' && !this.ctx.store.apiKey ? notice('warn', 'Add an API key under Account → Settings.') : null));
       return;
     }
@@ -160,6 +161,7 @@ export class AgentPanel {
   // ---------------------------------------------------------------- context chips
   async refreshContext() {
     const t = this.ws.activeTab(); const path = t?.path || null;
+    if (t?.previewBlob || t?.locked) return; // the agent's preview or its running edit: keep the chip as it was
     if (!path) { this.auto = null; this.renderChips(); return; }
     if (this.autoOff && this.autoOff !== path) this.autoOff = null;
     if (this.autoOff === path) return;

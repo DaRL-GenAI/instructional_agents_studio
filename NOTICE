@@ -1,0 +1,39 @@
+Instructional Agents Studio
+Copyright (c) DaRL Lab, Arizona State University, and contributors.
+Licensed under the MIT License (see LICENSE).
+
+This package does not contain the slides / documents editor. The local app downloads it on first use into
+~/.cache/instructional-agents/editor/<version>/ (or uses a build named by IA_EDITOR_DIR), checks its SHA-256,
+and serves it to the browser at /editor/. Without it, the app uses the hosted editor at https://edit.chaxus.com.
+
+
+Editor (separate program, downloaded at run time)
+-------------------------------------------------
+
+The editor is a trimmed build of ranuts/document (https://github.com/ranuts/document), the web front end that
+embeds the ONLYOFFICE document editors:
+
+  * ONLYOFFICE sdkjs and web-apps, Copyright (C) Ascensio System SIA
+    https://github.com/ONLYOFFICE/sdkjs, https://github.com/ONLYOFFICE/web-apps
+  * ranuts/document, Copyright (C) its authors
+
+Both are licensed under the GNU Affero General Public License version 3 (AGPL-3.0) with the additional terms
+permitted by its Section 7. The build Instructional Agents distributes is a modified version of ranuts/document
+(branch studio-embed: an embedding API for opening, saving and running macros from the host page, and a build
+that keeps only the presentation and document editors). Its complete corresponding source code is published in
+its own repository, a fork of ranuts/document, and every editor release asset names the commit it was built
+from. The editor package carries its own LICENSE and NOTICE files, which apply to it.
+
+Instructional Agents talks to the editor only through its postMessage interface from a separate page; it does not
+link to or include editor code. The MIT license of this package does not apply to the editor.
+
+
+Bundled JavaScript libraries (js/vendor/, built by scripts/vendor.mjs)
+---------------------------------------------------------------------
+
+  * CodeMirror 6 (codemirror, @codemirror/*), MIT License, Copyright (C) Marijn Haverbeke and others
+  * docx, MIT License, Copyright (c) Dolan Miu
+  * mammoth, BSD 2-Clause License, Copyright (c) Michael Williamson
+  * marked, MIT License, Copyright (c) Christopher Jeffrey and contributors
+
+Runtime dependencies installed by npm: isomorphic-git (MIT), ws (MIT), chokidar (MIT).

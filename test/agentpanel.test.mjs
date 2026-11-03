@@ -161,3 +161,27 @@ test('apply: plain files and the project in one agent commit; sources/ and paths
     assert.equal((await call('POST', `${P}/undo`, { oid: created.head })).status, 400, 'only agent commits');
   } finally { await app.close(); }
 });
+
+test('built-in agent: tool calls write to an overlay; sources/ is refused; JSON actions when tools are rejected; step cap', async () => {
+  const { runBuiltin, writeRefusal } = await import('../js/agent/builtin.js');
+  const files = { 'notes.md': 'a\nb\n', 'sources/old.md': 'keep' };
+  const src = { list: async () => ({ entries: Object.keys(files).map(p => ({ path: p, dir: false })) }), read: async p => p in files ? { blob: new Blob([files[p]]) } : null, search: async () => [] };
+  const call = (name, args) => ({ message: { role: 'assistant', content: null, tool_calls: [{ id: name, type: 'function', function: { name, arguments: JSON.stringify(args) } }] }, usage: { total_tokens: 1 } });
+  const script = [call('read_file', { path: 'notes.md' }), call('write_file', { path: 'sources/old.md', content: 'x' }), call('write_file', { path: 'notes.md', content: 'a\nB\n' }), { message: { role: 'assistant', content: 'Done.' }, usage: {} }];
+  const seen = [];
+  const llm = { chatTools: async msgs => { seen.push(msgs.at(-1)); return script.shift(); } };
+  const r = await runBuiltin({ env: { llm, src }, message: 'capitalize b' });
+  assert.equal(r.text, 'Done.'); assert.deepEqual([...r.overlay], [['notes.md', 'a\nB\n']]);
+  assert.equal(files['notes.md'], 'a\nb\n', 'the source is not written');
+  assert.match(seen[2].content, /Refused: sources\/ is read-only/);
+  assert.deepEqual(r.steps, ['read notes.md', 'write sources/old.md', 'write notes.md']);
+  assert.match(writeRefusal('../x.md'), /inside/); assert.match(writeRefusal('AGENTS.md'), /managed/); assert.match(writeRefusal('a.pptx'), /macro/); assert.equal(writeRefusal('lab/new.md'), null);
+  // an endpoint without tools: the same work through JSON actions
+  const replies = ['{"tool":"write_file","args":{"path":"notes.md","content":"z\\n"}}', '{"final":"Rewrote it."}'];
+  const llm2 = { chatTools: async () => { throw Object.assign(new Error('API error 400'), { status: 400 }); }, chat: async () => ({ text: replies.shift(), usage: {} }) };
+  const r2 = await runBuiltin({ env: { llm: llm2, src }, message: 'x' });
+  assert.equal(r2.text, 'Rewrote it.'); assert.equal(r2.overlay.get('notes.md'), 'z\n'); assert.match(r2.steps[0], /JSON/);
+  const llm3 = { chatTools: async () => call('list_files', {}) };
+  const r3 = await runBuiltin({ env: { llm: llm3, src }, message: 'loop', maxSteps: 3 });
+  assert.match(r3.text, /Stopped after 3 steps/); assert.equal(r3.steps.length, 3);
+});

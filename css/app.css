@@ -524,7 +524,8 @@ body.ws-mode .shell { height: 100vh; }
 .ag { flex: 1; min-height: 0; display: flex; flex-direction: column; font-size: var(--fs-2); }
 .ag-head { display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--line-soft); }
 .ag-head .select { height: 28px; padding: 0 24px 0 8px; font-size: var(--fs-1); min-width: 0; }
-.ag-head .ag-chats { flex: 1; }
+.ag-head .select { width: auto; flex: none; max-width: 45%; }
+.ag-head .ag-chats { flex: 1; max-width: none; }
 .ag-log { flex: 1; min-height: 60px; overflow: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
 .ag-empty { margin: auto; text-align: center; color: var(--text-3); display: grid; justify-items: center; gap: 4px; }
 .ag-empty .icon { width: 28px; height: 28px; }

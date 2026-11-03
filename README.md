@@ -65,8 +65,8 @@ History. **Import .pptx** makes an existing PowerPoint the chapter's deck.
   (rewrite text or notes, remove a text box, add, move or delete slides), applied in the editor as one undo
   step. Needs a self-hosted editor build that supports `document:run-macro`.
 - **Claude Code / Codex** (local app only): the agent runs on your machine with the course folder as its working
-  directory, so it can read the rest of the course for context. It edits a copy of the saved deck under
-  `.studio/jobs/`; Studio previews the result, flags slides changed outside your selection, and keeps it only when
+  directory, so it can read the rest of the course for context (the Workspace's agent panel does the same for any
+  file, see below). It edits a copy of the saved deck under `.studio/jobs/`; Studio previews the result, flags slides changed outside your selection, and keeps it only when
   you click Keep.
 
 ## Video
@@ -93,15 +93,32 @@ bundle or a single standalone HTML file — both work offline. The project ZIP c
 
 ## Local app
 
-The same Studio runs as a local app in which every course is a folder on your computer and a git repository:
+The same Studio runs as a local app in which every course is a folder on your computer and a git repository.
+
+**Install.** Node.js 20.19 or newer, on macOS or Linux. No global install is needed:
 
 ```bash
-npx instructional-agents [folder] [--port 8790] [--no-open]
-npx instructional-agents doctor                     # Node, Claude Code, Codex, LaTeX, editor
+npx instructional-agents [folder] [--port 8790] [--no-open]   # start; opens the browser
+npx instructional-agents doctor                               # Node, Claude Code, Codex, LaTeX, editor
 npx instructional-agents import old_project.json [folder] [--force]
 ```
 
-Without a folder it opens the project list (recent courses, new course, open an existing folder). Node.js 20.19+.
+or `npm install -g instructional-agents` and run `instructional-agents …`. Without a folder it opens the project
+list (recent courses, new course, open an existing folder). To use Claude Code or Codex from the app, install and
+sign in to them as usual (`claude`, `codex login`); `doctor` shows what it found.
+
+**Workspace.** *Workspace* shows the course as files: a tree with stage badges, tabs (slides and Word files in the
+embedded editor, text in a code editor, PDFs, media), search and history, and the agent panel (right or bottom).
+
+**Agent panel.** Pick an agent (Built-in uses your API model; Claude Code and Codex run on this computer) and chat.
+The current file and selection (lines, slides, paragraphs) are attached automatically; `@` adds other files.
+Each turn runs on a copy of the course under `.studio/jobs/`, so nothing changes until you review it: text files
+show their changes hunk by hunk (keep any of them), slides and Word files open as a preview in their tab with a
+check for changes outside your selection. **Keep** saves the accepted changes as one commit (`agent: …`) with a new
+version of each stage; **Undo** reverts that commit. `sources/` and the app's own files cannot be changed by an
+agent. Chats are kept in `.studio/sessions/`; a follow-up message resumes the same Claude Code or Codex session.
+The app writes `AGENTS.md` and `CLAUDE.md` at the course root (layout, which file backs which stage, editing
+rules), so an agent you start yourself in the folder knows the course too.
 
 A course folder looks like this; every file is plain text you can edit in any editor, and the app picks up the
 change (it becomes a new version of that stage and a commit):
@@ -123,7 +140,11 @@ cookie, and requests from any other origin (including other ports on localhost) 
 `~/.cache/instructional-agents/editor/<version>/`; without one the app uses https://edit.chaxus.com.
 `node scripts/trim-editor.mjs <editor dist> [out]` makes the trimmed editor package from an ONLYOFFICE web build.
 
-Tests: `npm test` (Node's test runner).
+Tests: `npm test` (Node's test runner); `npm run pack:check` checks what `npm pack` would publish (the app and
+its server, no editor build, tests or scripts); `node scripts/ci-smoke.mjs` starts the server and creates a course in
+Chrome (the CI smoke test, run on Ubuntu and macOS with Node 20 and 22). Tagging `vX.Y.Z` publishes to npm
+(`.github/workflows/release.yml`, needs the `NPM_TOKEN` secret). See NOTICE for the editor's license (AGPL-3.0,
+downloaded separately, not part of this package).
 
 ## Development
 

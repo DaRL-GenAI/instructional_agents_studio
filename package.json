@@ -2,6 +2,24 @@
   "name": "instructional-agents",
   "version": "0.1.0",
   "description": "Instructional Agents Studio as a local app: each course is a folder (a git repository) edited in the browser, with Claude Code, Codex or a built-in agent.",
+  "keywords": [
+    "education",
+    "course-design",
+    "slides",
+    "agents",
+    "claude-code",
+    "codex",
+    "onlyoffice"
+  ],
+  "homepage": "https://github.com/DaRL-GenAI/instructional_agents_studio#readme",
+  "bugs": {
+    "url": "https://github.com/DaRL-GenAI/instructional_agents_studio/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DaRL-GenAI/instructional_agents_studio.git"
+  },
+  "license": "MIT",
   "type": "module",
   "bin": {
     "instructional-agents": "bin/cli.mjs"
@@ -9,6 +27,10 @@
   "engines": {
     "node": ">=20.19"
   },
+  "os": [
+    "darwin",
+    "linux"
+  ],
   "files": [
     "bin",
     "server",
@@ -17,17 +39,14 @@
     "assets",
     "index.html",
     "LICENSE",
+    "NOTICE",
     "README.md"
   ],
   "scripts": {
     "start": "node bin/cli.mjs",
-    "test": "node --test test/"
+    "test": "node --test test/",
+    "pack:check": "node scripts/pack-check.mjs"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/DaRL-GenAI/instructional_agents_studio.git"
-  },
-  "license": "MIT",
   "dependencies": {
     "chokidar": "^5.0.0",
     "isomorphic-git": "^1.44.10",

@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Unit tests
+        run: node --test test/
+        env:
+          IA_GIT_NAME: CI
+          IA_GIT_EMAIL: ci@localhost
+
+      - name: Package contents
+        run: node scripts/pack-check.mjs
+
+      - name: Doctor
+        run: node bin/cli.mjs doctor
+
+      - name: Install from the packed tarball
+        shell: bash
+        run: |
+          npm pack --ignore-scripts
+          mkdir -p "$RUNNER_TEMP/install" && cd "$RUNNER_TEMP/install"
+          npm init -y > /dev/null
+          npm install "$GITHUB_WORKSPACE"/instructional-agents-*.tgz
+          npx --no-install instructional-agents --help
+          npx --no-install instructional-agents doctor
+
+      # the runner's own Google Chrome, driven by playwright-core (no browser download)
+      - name: Smoke test (server + Chrome)
+        run: node scripts/ci-smoke.mjs
+        env:
+          IA_GIT_NAME: CI
+          IA_GIT_EMAIL: ci@localhost
