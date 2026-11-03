@@ -19,6 +19,9 @@ import { commitDoc, docManifest, convertToWord, convertToMarkdown, CONVERTIBLE }
 import { download } from '../export.js';
 import { AgentPanel } from '../agent/panel.js';
 import { openImport, filesFromDrop, hasFiles } from '../import/dialog.js';
+import { outOfDate, upstreamChanges } from '../linkage.js';
+import { api } from '../fs/api.js';
+import { fileVersions, versionText, restoreVersion, showDiff } from '../ws/history.js';
 
 let ws = null; // the Workspace of the open project
 
@@ -33,7 +36,7 @@ const MEDIA = { png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: '
 const isInternal = p => p === '.studio' || p.startsWith('.studio/') || p === '.git' || p.startsWith('.git/');
 const ICON = { pptx: 'presentation', docx: 'file-text', md: 'file-text', pdf: 'book', image: 'image', video: 'video', audio: 'mic' };
 const fileIcon = p => { const e = extOf(p); return ICON[e] || ICON[MEDIA[e]] || 'file'; };
-const BADGE = { generated: ['G', 'Generated'], edited: ['E', 'Edited'], imported: ['I', 'Imported'], stale: ['!', 'Inputs changed: re-run or keep'], running: ['…', 'Running'], error: ['×', 'Last run failed'] };
+const BADGE = { generated: ['G', 'Generated'], edited: ['E', 'Edited'], imported: ['I', 'Imported'], stale: ['!', 'Out of date: something it was made from changed'], running: ['…', 'Running'], error: ['×', 'Last run failed'] };
 
 /** The Workspace element for the open project (built on first use). */
 export function mount(ctx, host) {
@@ -234,9 +237,10 @@ class Workspace {
         button({ icon: 'folder', size: 'sm', variant: 'ghost', title: 'New folder', onClick: () => this.newFolder('') }),
         button({ icon: 'upload', size: 'sm', variant: 'ghost', title: 'Upload files', onClick: () => this.pickUpload('') }));
       this.sideHead.append(button({ icon: 'refresh', size: 'sm', variant: 'ghost', title: 'Refresh', onClick: () => this.refresh() }));
+      this.oodBox = el('div', { class: 'ws-ood', hidden: true });
       this.tree = el('div', { class: 'ws-tree', role: 'tree', 'aria-label': 'Project files' });
       this.tree.addEventListener('contextmenu', e => { const row = e.target.closest('[data-path]'); e.preventDefault(); this.menu(e, row ? row.dataset.path : '', row ? row.dataset.dir === '1' : true); });
-      this.sideBody.append(this.tree); this.renderTree();
+      this.sideBody.append(this.oodBox, this.tree); this.renderTree();
     }
     if (v === 'search') this.renderSearch();
     if (v === 'history') this.renderHistory();
@@ -247,13 +251,15 @@ class Workspace {
     if (!this.tree || this.view !== 'files') return;
     if (!this.entries.length) { this.tree.replaceChildren(this.listError ? notice('error', this.listError) : el('p', { class: 'meta', style: 'padding:8px 12px' }, 'Loading…')); return; }
     const owners = this.owners(); const kids = new Map();
+    const ood = new Set(this.renderOod().map(x => x.path));
     for (const e of this.entries) { const d = dirOf(e.path); if (!kids.has(d)) kids.set(d, []); kids.get(d).push(e); }
     const order = (a, b) => (b.dir - a.dir) || (a.path.startsWith('.') - b.path.startsWith('.')) || a.path.localeCompare(b.path);
     const rows = [];
     const walk = (dir, depth) => {
       for (const e of (kids.get(dir) || []).sort(order)) {
         const open = e.dir && this.expanded.has(e.path) && !(isInternal(e.path) && !this.expanded.has(e.path));
-        const key = owners.get(e.path); const info = key ? stageInfo(this.ctx, key) : null; const b = info ? this.badgeOf(info) : null;
+        const key = owners.get(e.path); const info = key ? stageInfo(this.ctx, key) : null; const b0 = info ? this.badgeOf(info) : null;
+        const b = ood.has(e.path) && b0 !== 'running' && b0 !== 'error' ? 'stale' : b0;
         const dirty = this.tabs.get(e.path)?.dirty;
         rows.push(el('div', { class: `ws-row${this.active === e.path ? ' active' : ''}${isInternal(e.path) || e.path === 'build' ? ' dim' : ''}`, role: 'treeitem', tabindex: this.active === e.path ? '0' : '-1', 'aria-level': depth + 1, 'aria-expanded': e.dir ? String(open) : null, 'aria-selected': String(this.active === e.path), dataset: { path: e.path, dir: e.dir ? '1' : '0' }, style: `padding-left:${8 + depth * 14}px`, title: e.path,
           onClick: () => e.dir ? this.toggleDir(e.path) : go(...wsParts(this.id, e.path)),
@@ -268,6 +274,41 @@ class Workspace {
     walk('', 0);
     if (!this.tree.querySelector('[tabindex="0"]') && rows[0]) rows[0].tabIndex = 0;
     this.tree.replaceChildren(...rows);
+  }
+  /** Stage files whose upstream changed since they were made or edited: [{ key, path, changes }] (cached per project state). */
+  outOfDate() {
+    const p = this.ctx.store.project; const stamp = `${p.updatedAt}|${p.audit?.length}|${p.chapters?.length}`;
+    if (this._ood?.stamp === stamp) return this._ood.list;
+    const owners = this.owners(); const fileOf = new Map([...owners].map(([f, k]) => [k, f]));
+    const stale = key => { const info = stageInfo(this.ctx, key); return !!(info?.inputs && this.ctx.pipe.isStale(info.stage, info.inputs)); };
+    const list = outOfDate(p, stale).filter(x => fileOf.has(x.key)).map(x => ({ ...x, path: fileOf.get(x.key) }));
+    this._ood = { stamp, list }; return list;
+  }
+  renderOod() {
+    const list = this.outOfDate(); if (!this.oodBox) return list;
+    this.oodBox.hidden = !list.length; if (!list.length) { this.oodBox.replaceChildren(); return list; }
+    const fileOf = new Map([...this.owners()].map(([f, k]) => [k, f]));
+    const tip = 'Something these files were made from changed since. Draft an update to review it; nothing is rewritten on its own.';
+    const det = el('details', { class: 'ws-ood-box', open: pref('oodOpen', true), onToggle: e => setPref('oodOpen', e.target.open) },
+      el('summary', {}, el('span', {}, `Out of date (${list.length})`), el('button', { type: 'button', class: 'info-tip', 'aria-label': tip, 'data-tip': tip, onClick: e => e.preventDefault() }, icon('info', 'sm'))),
+      ...list.map(x => el('div', { class: 'ws-ood-row', title: x.path },
+        el('a', { href: wsHref(this.id, x.path), class: 'name' }, icon(fileIcon(x.path), 'sm'), el('span', {}, x.path.split('/').slice(-2).join('/'))),
+        el('span', { class: 'meta from' }, x.changes.length ? `← ${x.changes.map(c => baseName(fileOf.get(c.key) || c.label)).join(', ')}` : '← inputs'),
+        button({ icon: 'message', size: 'sm', variant: 'ghost', title: `Draft targeted update of ${baseName(x.path)}`, onClick: () => this.draftUpdate(x) }))));
+    this.oodBox.replaceChildren(det);
+    return list;
+  }
+  /** Open an agent task for one out-of-date file, the upstream diffs as context. It is not sent: the instructor reviews it. */
+  async draftUpdate(x) {
+    const fileOf = new Map([...this.owners()].map(([f, k]) => [k, f]));
+    this.reveal(x.path); await this.open(x.path);
+    const changes = upstreamChanges(this.ctx.store.project, x.key);
+    const chips = changes.map(c => ({ key: `upstream:${c.key}`, path: x.path, label: `${baseName(fileOf.get(c.key) || c.label)} v${c.from ?? '?'}→v${c.to}`, text: `${fileOf.get(c.key) || c.label} changed (version ${c.from ?? '?'} → ${c.to}):\n${c.text}` }));
+    if (!chips.length) {
+      const info = stageInfo(this.ctx, x.key);
+      chips.push({ key: 'upstream:inputs', path: x.path, label: 'Inputs changed', text: `The inputs this file was generated from changed since: ${(info?.inputs || []).map(i => i.label).join(', ')}.` });
+    }
+    return this.askAgent({ text: `Update ${baseName(x.path)} for the upstream changes attached: change only what they affect and keep everything else as it is.`, chips, fresh: true });
   }
   toggleDir(p) { if (this.expanded.has(p)) this.expanded.delete(p); else this.expanded.add(p); setPref(`open.${this.id}`, [...this.expanded].filter(x => !isInternal(x))); this.renderTree(); this.tree.querySelector(`[data-path="${CSS.escape(p)}"]`)?.focus(); }
   treeKey(ev, e) {
@@ -368,10 +409,52 @@ class Workspace {
     this.sideBody.append(el('div', { style: 'padding:8px 10px' }, q), out); q.focus(); if (q.value) run();
   }
   async renderHistory() {
-    if (this.src.kind !== 'local') { this.sideBody.append(el('p', { class: 'meta', style: 'padding:8px 12px' }, 'Local app only')); return; }
+    const file = this.active && this.tabs.has(this.active) ? this.active : null;
+    if (!file || (this.src.kind !== 'local' && !this.owners().has(file))) this.histMode = 'project';
+    else if (!this.histMode || this.histFile !== file) this.histMode = 'file';
+    this.histFile = file;
+    if (file) this.sideBody.append(el('div', { class: 'seg ws-histseg', role: 'group', 'aria-label': 'History of' },
+      ...[['file', baseName(file)], ['project', 'Project']].map(([m, l]) => el('button', { type: 'button', 'aria-pressed': String(this.histMode === m), title: m === 'file' ? file : 'Every commit', disabled: m === 'file' && this.src.kind !== 'local' && !this.owners().has(file), onClick: () => { this.histMode = m; this.renderSide(); } }, l))));
+    if (this.histMode === 'file') return this.renderFileHistory(file);
+    if (this.src.kind !== 'local') { this.sideBody.append(el('p', { class: 'meta', style: 'padding:8px 12px' }, 'Open a stage’s file to see its versions')); return; }
     const list = el('ol', { class: 'ws-log' }); this.sideBody.append(list);
     const log = await this.src.log();
     list.replaceChildren(...log.map(c => el('li', {}, el('span', { class: 'msg', title: c.message }, c.message), el('span', { class: 'meta' }, `${c.oid.slice(0, 7)} · ${fmtRel(c.at)}`))));
+  }
+  async renderFileHistory(path) {
+    const box = el('div', { class: 'ws-hist', 'aria-busy': 'true' }, el('p', { class: 'meta', style: 'padding:8px 12px' }, 'Loading…')); this.sideBody.append(box);
+    let vs; try { vs = await fileVersions(this, path); } catch (e) { box.replaceChildren(notice('error', e.message)); return; }
+    box.removeAttribute('aria-busy');
+    const picked = new Set();
+    const compareBtn = button({ label: 'Compare', icon: 'history', size: 'sm', disabled: true, title: 'Pick one version (compared with the current file) or two', onClick: () => this.compareVersions(path, vs.filter(v => picked.has(v.id))) });
+    const sync = () => { compareBtn.disabled = !picked.size || picked.size > 2; };
+    const canRestore = !this.readOnly(path) || this.owners().has(path);
+    const rows = vs.map(v => el('li', { class: v.current ? 'current' : '' },
+      el('label', { class: 'ws-hist-pick' }, el('input', { type: 'checkbox', 'aria-label': `Compare ${v.label}`, onChange: e => { if (e.target.checked) picked.add(v.id); else picked.delete(v.id); sync(); } }),
+        el('span', { class: 'msg', title: v.message || v.label }, v.current ? v.label : v.message || v.label)),
+      el('span', { class: 'meta' }, v.current ? 'working copy' : `${v.label} · ${fmtRel(v.at)}`),
+      !v.current && canRestore ? button({ label: 'Restore', size: 'sm', variant: 'ghost', title: `Restore this version of ${baseName(path)}`, onClick: () => this.restore(path, v) }) : null));
+    box.replaceChildren(el('div', { class: 'ws-hist-bar' }, el('span', { class: 'meta' }, `${vs.length - 1} version${vs.length === 2 ? '' : 's'}`), el('span', { class: 'spacer' }), compareBtn),
+      el('ol', { class: 'ws-log ws-hist-list' }, ...rows));
+  }
+  async compareVersions(path, picked) {
+    try {
+      let all = picked;
+      if (picked.length === 1) { const vs = await fileVersions(this, path); all = picked[0].current ? [vs[0], vs[1]] : [picked[0], vs[0]]; if (!all[1]) throw new Error('There is no other version yet'); }
+      const [newer, older] = all[0].current ? [all[0], all[1]] : all[1].current ? [all[1], all[0]] : [all[0], all[1]]; // versions are listed newest first
+      const [a, b] = await Promise.all([older, newer].map(async v => ({ label: v.label, text: await versionText(path, await v.read()) })));
+      showDiff({ path, a, b });
+    } catch (e) { toast(e.message, 'error'); }
+  }
+  async restore(path, v) {
+    if (this.tabs.get(path)?.dirty) return toast('Save or discard your edits to this file first', 'error');
+    if (!(await confirmDialog({ title: `Restore ${baseName(path)} to ${v.label}?`, body: 'This makes a new version; the current one stays in the history.', confirmLabel: 'Restore' }))) return;
+    try {
+      await restoreVersion(this, path, v);
+      this.ctx.render(); await this.refresh(); this.checkTabs([path]);
+      toast(`Restored ${baseName(path)} to ${v.label}`, 'ok');
+      if (this.view === 'history') this.renderSide();
+    } catch (e) { toast(e.message, 'error'); }
   }
   renderSettings() {
     const row = (label, control) => el('label', { class: 'ws-set' }, el('span', {}, label), control);
@@ -389,6 +472,7 @@ class Workspace {
     }
     for (const t of this.tabs.values()) t.panel.classList.toggle('active', t.path === path);
     this.expandTo(path); this.renderTabs(); this.renderTree(); this.renderStatus();
+    if (this.view === 'history' && this.histFile !== path) this.renderSide();
     const t = this.tabs.get(path); if (this.pendingLine?.path === path) { t.reveal(this.pendingLine.line); this.pendingLine = null; }
     if (this.locks) t.setLocked(this.locks.has(path));
     this.agentPanel?.refreshContext();
@@ -421,6 +505,13 @@ class Workspace {
   onKey(e) {
     if (!this.root.isConnected || this.root.offsetParent === null) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { const t = this.tabs.get(this.active); if (t) { e.preventDefault(); t.save(); } }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') { e.preventDefault(); this.askAgent(); }
+  }
+  /** Open the agent panel on the current file and selection, input focused (a tab's Ask button, Ctrl/⌘+K). */
+  async askAgent(prefill = null) {
+    this.togglePanel(true);
+    if (prefill) return this.agentPanel.prefill(prefill);
+    return this.agentPanel.focusAsk();
   }
 }
 
@@ -439,11 +530,27 @@ return { paragraphs: [...new Set(out)].sort((a, b) => a - b), text };`;
 
 const wsParts = (id, path) => ['p', id, 'workspace', ...path.split('/')];
 
+/** A PDF as a column of page canvases (PDF.js), `width` px wide. alive(): stop early once the tab is gone. */
+async function renderPdfPages(blob, width, alive = () => true) {
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', () => !!window.pdfjsLib);
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const pdf = await window.pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise;
+  const pages = el('div', { class: 'ws-pdf', 'aria-label': `${pdf.numPages} page${pdf.numPages > 1 ? 's' : ''}` });
+  for (let i = 1; i <= Math.min(pdf.numPages, 300); i++) {
+    const page = await pdf.getPage(i); const v1 = page.getViewport({ scale: 1 }); const vp = page.getViewport({ scale: (width / v1.width) * devicePixelRatio });
+    const c = el('canvas', { width: Math.floor(vp.width), height: Math.floor(vp.height), style: `width:${Math.floor(vp.width / devicePixelRatio)}px`, 'aria-label': `Page ${i}`, role: 'img' });
+    pages.append(c); await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+    if (!alive()) break;
+  }
+  return pages;
+}
+
 // ---------------------------------------------------------------- one open file
 class Tab {
   constructor(w, path) {
     this.w = w; this.path = path; this.ext = extOf(path); this.dirty = false; this.baseSha = null; this.busy = false;
     this.kind = officeFormat(path) ? 'office' : TEXT_EXT.has(this.ext) || this.ext === '' ? 'code' : this.ext === 'pdf' ? 'pdf' : MEDIA[this.ext] ? 'media' : 'binary';
+    this.isTex = this.kind === 'code' && this.ext === 'tex'; this.tex = { state: null, errors: [] };
     this.owner = w.ownerInfo(path); this.info = this.owner;
     this.readOnly = w.readOnly(path);
     this.tools = el('div', { class: 'ws-tools' });
@@ -492,9 +599,11 @@ class Tab {
       this.locked ? el('span', { class: 'ws-lock agent', title: 'Read-only while the agent works on it' }, icon('message', 'sm'), 'agent') : null,
       this.previewBlob ? el('span', { class: 'ws-lock preview', title: 'Showing the agent’s version; not saved' }, 'preview') : null,
       el('span', { class: 'spacer' }),
-      this.kind === 'code' && this.ext === 'md' ? el('div', { class: 'seg', role: 'group', 'aria-label': 'View' }, ...[['source', 'Source'], ['split', 'Split'], ['preview', 'Preview']].map(([v, l]) => el('button', { type: 'button', 'aria-pressed': String((this.mode || 'source') === v), onClick: () => this.setMode(v) }, l))) : null,
+      this.kind === 'code' && (this.ext === 'md' || this.isTex) ? el('div', { class: 'seg', role: 'group', 'aria-label': 'View' }, ...[['source', 'Source'], ['split', 'Split'], ['preview', this.isTex ? 'PDF' : 'Preview']].map(([v, l]) => el('button', { type: 'button', 'aria-pressed': String((this.mode || 'source') === v), onClick: () => this.setMode(v) }, l))) : null,
       conv && this.kind === 'code' && this.ext === 'md' ? button({ label: 'Convert to Word', size: 'sm', variant: 'ghost', onClick: () => this.convert(false) }) : null,
       conv && this.ext === 'docx' ? button({ label: 'Convert to Markdown', size: 'sm', variant: 'ghost', onClick: () => this.convert(true) }) : null,
+      this.isTex ? this.texStatus() : null,
+      this.kind === 'office' || this.isTex ? button({ icon: 'message', label: 'Ask', size: 'sm', variant: 'ghost', title: 'Ask the agent about the selection (Ctrl+K)', disabled: !!this.previewBlob || this.locked, onClick: () => this.w.askAgent() }) : null,
       this.kind === 'office' ? button({ label: 'Export PDF', size: 'sm', variant: 'ghost', disabled: !this.office?.state.opened, onClick: () => this.exportPdf() }) : null,
       button({ icon: 'download', size: 'sm', variant: 'ghost', title: 'Download', onClick: () => this.w.download(this.path) }),
       (this.kind === 'code' || this.kind === 'office') && !this.readOnly ? button({ label: 'Save', size: 'sm', variant: this.dirty ? 'primary' : '', disabled: !this.dirty || this.busy || this.locked || !!this.previewBlob, onClick: () => this.save() }) : null);
@@ -521,14 +630,69 @@ class Tab {
   async loadCode(blob) {
     const text = await blob.text(); this.saved = text;
     this.code = await createCodeEditor({ text, ext: this.ext, readOnly: this.readOnly, wrap: pref('wrap', true), onChange: t => { this.setDirty(t !== this.saved); if (this.mode && this.mode !== 'source') this.schedulePreview(); }, onSave: () => this.save() });
-    this.preview = el('div', { class: 'preview md ws-preview' });
-    this.split = el('div', { class: 'ws-code' }, this.code.el, this.preview);
-    this.body.replaceChildren(this.split); this.setMode(this.mode || 'source');
+    if (this.isTex) {
+      this.preview = el('div', { class: 'ws-preview ws-texpdf', 'aria-label': 'PDF preview' });
+      this.texErr = el('div', { class: 'ws-texerr', hidden: true });
+      this.split = el('div', { class: 'ws-code' }, el('div', { class: 'ws-texsrc' }, this.code.el, this.texErr), this.preview);
+      this.body.replaceChildren(this.split); this.setMode(this.mode || 'split');
+      this.compile();
+    } else {
+      this.preview = el('div', { class: 'preview md ws-preview' });
+      this.split = el('div', { class: 'ws-code' }, this.code.el, this.preview);
+      this.body.replaceChildren(this.split); this.setMode(this.mode || 'source');
+    }
     if (this.w.pendingLine?.path === this.path) { this.reveal(this.w.pendingLine.line); this.w.pendingLine = null; }
   }
   setMode(v) { this.mode = v; if (this.split) { this.split.dataset.mode = v; if (v !== 'source') this.renderPreview(); } this.renderTools(); }
   schedulePreview() { clearTimeout(this._pv); this._pv = setTimeout(() => this.renderPreview(), 300); }
-  async renderPreview() { if (this.code) this.preview.innerHTML = await renderMarkdown(this.code.getText()); }
+  async renderPreview() { if (this.code && !this.isTex) this.preview.innerHTML = await renderMarkdown(this.code.getText()); }
+
+  // ---- LaTeX: compiled by the local app on save; errors from the log, the PDF beside the source
+  scheduleCompile(ms = 600) { clearTimeout(this._ct); this._ct = setTimeout(() => this.compile(), ms); }
+  async compile() {
+    if (!this.isTex || !this.preview) return;
+    if (!LOCAL) { this.tex = { state: 'off', errors: [] }; this.preview.replaceChildren(el('div', { class: 'ws-texoff' }, el('p', {}, 'Compile needs the local app'), el('p', { class: 'meta' }, 'npx instructional-agents'))); this.renderTools(); return; }
+    if (!LOCAL.tex) { this.tex = { state: 'off', errors: [] }; this.preview.replaceChildren(el('div', { class: 'ws-texoff' }, el('p', {}, 'No LaTeX engine found', el('button', { type: 'button', class: 'info-tip', 'aria-label': 'Install tectonic or latexmk, then restart the app (instructional-agents doctor checks it). IA_TECTONIC can point at a tectonic binary.', 'data-tip': 'Install tectonic or latexmk, then restart the app (instructional-agents doctor checks it). IA_TECTONIC can point at a tectonic binary.' }, icon('info', 'sm'))))); this.renderTools(); return; }
+    if (this.compiling) { this.recompile = true; return; }
+    this.compiling = true; this.tex = { ...this.tex, state: 'compiling' }; this.renderTools();
+    try {
+      const r = await api(`/api/projects/${encodeURIComponent(this.w.id)}/tex`, { method: 'POST', body: { path: this.path } });
+      this.tex = { state: r.ok ? 'ok' : 'error', errors: r.errors || [], log: r.log || '', ms: r.ms };
+      if (r.pdf && (r.ok || !this.pdfShown)) await this.showTexPdf(r.pdf);
+      else if (!r.pdf) this.preview.replaceChildren(el('div', { class: 'ws-texoff' }, el('p', { class: 'meta' }, 'No PDF yet')));
+    } catch (e) { this.tex = { state: 'error', errors: [{ message: e.message, here: true }], log: '' }; }
+    finally {
+      this.compiling = false; this.renderTools(); this.renderTexErrors();
+      if (this.recompile) { this.recompile = false; this.compile(); }
+    }
+  }
+  texStatus() {
+    const s = this.tex.state; if (!s || s === 'off') return null;
+    const n = this.tex.errors.length;
+    const text = s === 'compiling' ? 'Compiling…' : s === 'ok' ? 'PDF' : `${n || 1} error${n > 1 ? 's' : ''}`;
+    return el('span', { class: `ws-texst ${s}`, role: 'status', title: s === 'ok' && this.tex.ms ? `Compiled in ${(this.tex.ms / 1000).toFixed(1)} s` : '' }, s === 'ok' ? icon('check', 'sm') : s === 'error' ? icon('alert', 'sm') : el('i', { class: 'ag-pulse' }), text);
+  }
+  renderTexErrors() {
+    const errs = this.tex.state === 'error' ? this.tex.errors : [];
+    this.texErr.hidden = !errs.length; if (!errs.length) { this.texErr.replaceChildren(); return; }
+    this.texErr.replaceChildren(
+      el('div', { class: 'ws-texerr-head' }, el('b', {}, `${errs.length} error${errs.length > 1 ? 's' : ''}`), el('span', { class: 'spacer' }),
+        button({ icon: 'message', label: 'Fix with agent', size: 'sm', onClick: () => this.fixWithAgent() })),
+      el('ul', { class: 'ws-texerr-list', 'aria-label': 'LaTeX errors' }, ...errs.map(e => el('li', {}, el('button', { type: 'button', disabled: !(e.here && e.line), onClick: () => this.reveal(e.line) },
+        el('span', { class: 'n' }, e.line ? (e.here ? `${e.line}` : `${baseName(e.file || '')}:${e.line}`) : '—'), el('span', {}, e.message))))));
+  }
+  fixWithAgent() {
+    const errs = this.tex.errors; const name = baseName(this.path);
+    const text = `${errs.map(e => `${e.file || name}${e.line ? `:${e.line}` : ''}: ${e.message}`).join('\n')}\n\nEnd of the log:\n${String(this.tex.log || '').slice(-3000)}`;
+    return this.w.askAgent({ text: `Fix the LaTeX errors in ${name}.`, chips: [{ key: `${this.path}#errors`, path: this.path, label: `${errs.length} LaTeX error${errs.length > 1 ? 's' : ''}`, text }] });
+  }
+  async showTexPdf(path) {
+    const r = await this.w.src.read(path); if (!r) return;
+    const width = Math.max(280, (this.preview.clientWidth || 600) - 32);
+    const pages = await renderPdfPages(r.blob, width, () => this.panel.isConnected);
+    const top = this.preview.scrollTop; // keep the reader's place: same page, same offset
+    this.preview.replaceChildren(pages); this.preview.scrollTop = top; this.pdfShown = true;
+  }
   reveal(line) {
     const v = this.code?.view; if (!v || !line) return;
     const l = v.state.doc.line(Math.min(line, v.state.doc.lines)); v.dispatch({ selection: { anchor: l.from, head: l.to }, scrollIntoView: true }); v.focus();
@@ -545,7 +709,27 @@ class Tab {
     this.body.replaceChildren(this.office.el);
     await this.office.load(blob);
     this.panel.dataset.ready = '1'; this._readyR();
+    this.hookKeys(this.office.el.contentWindow);
   }
+  /** Ctrl/⌘+K inside the editor (same origin when the local app serves it) opens the agent on the selection. */
+  hookKeys(win, depth = 0) {
+    try {
+      win.document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') { e.preventDefault(); e.stopPropagation(); this.w.askAgent(); } }, true);
+      if (depth < 2) for (const f of win.document.querySelectorAll('iframe')) if (f.contentWindow) this.hookKeys(f.contentWindow, depth + 1);
+    } catch { /* another origin: the toolbar button still works */ }
+  }
+  /** A light edit the built-in agent applied in the open document: save it as a new version, or put it back. */
+  showLive({ summary, snapshot, wasDirty }) {
+    this.live = { snapshot, wasDirty }; this.setDirty(true);
+    this.banner.replaceChildren(notice('ok', el('b', {}, 'Applied in editor. '), summary ? `${summary} ` : '',
+      button({ label: 'Save', size: 'sm', variant: 'primary', onClick: () => this.save() }), ' ',
+      button({ label: 'Undo', size: 'sm', variant: 'ghost', onClick: () => this.undoLive() })));
+  }
+  async undoLive() {
+    const l = this.live; if (!l) return; this.live = null; this.banner.replaceChildren();
+    try { await this.office.openBuffer(l.snapshot); this.setDirty(l.wasDirty); } catch (e) { toast(e.message, 'error'); }
+  }
+  clearLive() { if (this.live) { this.live = null; this.banner.replaceChildren(); } }
   async exportPdf() {
     if (this.busy) return; this.busy = true; this.renderTools();
     try {
@@ -564,23 +748,15 @@ class Tab {
     else if (o?.kind === 'doc') { await commitDoc(this.store, o.chapter.id, o.stageId, file, { name: docManifest(o.stage.output)?.name, label: o.label, where: o.where }); await this.store.flush(); }
     else if (this.w.src.writable) { const r = await this.write(file); if (!r) return false; }
     else throw new Error('This file cannot be saved in the browser edition');
-    this.baseSha = sha; this.pendingSha = null; this.w.ctx.render();
+    this.baseSha = sha; this.pendingSha = null; this.clearLive(); this.w.ctx.render();
     return true;
   }
 
   // ---- PDF and media
   async loadPdf(blob) {
-    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', () => !!window.pdfjsLib);
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    const pdf = await window.pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise;
-    const pages = el('div', { class: 'ws-pdf', 'aria-label': `${pdf.numPages} pages` }); this.body.replaceChildren(pages);
     const width = Math.max(320, Math.min(1100, this.body.clientWidth - 48 || 900));
-    for (let i = 1; i <= Math.min(pdf.numPages, 300); i++) {
-      const page = await pdf.getPage(i); const v1 = page.getViewport({ scale: 1 }); const scale = width / v1.width; const vp = page.getViewport({ scale: scale * devicePixelRatio });
-      const c = el('canvas', { width: Math.floor(vp.width), height: Math.floor(vp.height), style: `width:${Math.floor(vp.width / devicePixelRatio)}px`, 'aria-label': `Page ${i}`, role: 'img' });
-      pages.append(c); await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
-      if (!this.panel.isConnected) return;
-    }
+    const holder = el('div', { class: 'ws-pdf' }); this.body.replaceChildren(holder);
+    holder.replaceWith(await renderPdfPages(blob, width, () => this.panel.isConnected));
   }
   loadMedia(blob) {
     this.url = URL.createObjectURL(blob); const k = MEDIA[this.ext];
@@ -608,6 +784,7 @@ class Tab {
       if (o?.kind === 'text') { this.store.userEdit(o.stage, o.label, text, o.where); await this.store.flush(); this.w.ctx.render(); }
       else if (!(await this.write(text))) return false;
       this.baseSha = sha; this.pendingSha = null; this.saved = text; this.setDirty(this.code.getText() !== text); this.banner.replaceChildren();
+      if (this.isTex) this.scheduleCompile(300);
       return true;
     } catch (e) { toast(e.message, 'error'); return false; }
     finally { this.busy = false; this.w.saving--; this.w.renderStatus(); this.renderTools(); }
@@ -638,7 +815,7 @@ class Tab {
   async reloadFrom(r) {
     r ||= await this.w.src.read(this.path); if (!r) return;
     this.baseSha = r.sha; this.banner.replaceChildren();
-    if (this.kind === 'code') { const t = await r.blob.text(); this.saved = t; this.code.setText(t); this.setDirty(false); }
+    if (this.kind === 'code') { const t = await r.blob.text(); this.saved = t; this.code.setText(t); this.setDirty(false); if (this.isTex) this.scheduleCompile(); }
     else if (this.kind === 'office') { await this.office.openBuffer(r.blob); this.setDirty(false); }
     else { this.destroyBody(); await this.load(); }
   }

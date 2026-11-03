@@ -619,3 +619,54 @@ dialog.dlg.imp-dlg.wide { width: min(1080px, calc(100vw - 32px)); }
 .info-tip::after { content: attr(data-tip); position: absolute; right: calc(100% + 6px); top: 50%; transform: translateY(-50%); z-index: 5; width: max-content; max-width: 280px; padding: 6px 9px; border-radius: 6px; background: var(--text); color: var(--surface); font-size: var(--fs-1); line-height: 1.35; text-align: left; white-space: normal; pointer-events: none; opacity: 0; transition: opacity .12s; }
 .info-tip:hover::after, .info-tip:focus-visible::after { opacity: 1; }
 .badge.imported { background: var(--info-soft); color: var(--info); }
+
+/* ---------- M5: live edits, LaTeX, out of date, file history ---------- */
+.ag-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.ag-actions[hidden] { display: none; }
+.ag-actions .btn { border: 1px dashed var(--line); }
+.ws-code[data-mode="preview"] .ws-texsrc { display: none; }
+.ws-texsrc { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.ws-texsrc .cm-host { flex: 1; }
+.ws-texpdf { padding: 0; background: var(--bg-2); }
+.ws-texpdf .ws-pdf { overflow: visible; min-height: 100%; }
+.ws-texoff { height: 100%; display: grid; place-content: center; text-align: center; color: var(--text-2); padding: 24px; }
+.ws-texoff p { margin: 2px 0; }
+.ws-texst { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-1); color: var(--text-2); white-space: nowrap; }
+.ws-texst.ok { color: var(--ok); }
+.ws-texst.error { color: var(--danger); }
+.ws-texerr { flex: none; max-height: 38%; overflow: auto; border-top: 1px solid var(--line-soft); background: var(--surface); font-size: var(--fs-1); }
+.ws-texerr[hidden] { display: none; }
+.ws-texerr-head { position: sticky; top: 0; display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--danger-soft); color: var(--danger); }
+.ws-texerr-list { list-style: none; margin: 0; padding: 0; }
+.ws-texerr-list button { display: flex; gap: 8px; width: 100%; padding: 3px 8px; text-align: left; color: var(--text); font: inherit; }
+.ws-texerr-list button:hover:not(:disabled), .ws-texerr-list button:focus-visible { background: var(--bg-2); }
+.ws-texerr-list .n { flex: none; min-width: 3em; text-align: right; color: var(--text-3); font-family: var(--mono); }
+.ws-ood { padding: 4px 6px 6px; border-bottom: 1px solid var(--line-soft); }
+.ws-ood[hidden] { display: none; }
+.ws-ood-box summary { display: flex; align-items: center; gap: 2px; cursor: pointer; padding: 2px 4px; font-size: var(--fs-1); font-weight: 600; color: var(--warn); }
+.ws-ood-box summary .info-tip::after { left: calc(100% + 6px); right: auto; }
+.ws-ood-row { display: flex; align-items: center; gap: 4px; padding: 1px 2px 1px 8px; font-size: var(--fs-1); }
+.ws-ood-row .name { flex: 1 1 auto; display: flex; align-items: center; gap: 4px; min-width: 0; color: var(--text); text-decoration: none; }
+.ws-ood-row .name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-ood-row .from { flex: 0 1 auto; max-width: 45%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-histseg { margin: 6px 10px; display: flex; }
+.ws-histseg button { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-hist-bar { display: flex; align-items: center; gap: 6px; padding: 2px 10px 6px; }
+.ws-hist-list li { display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 4px; }
+.ws-hist-list li .meta { grid-column: 1; padding-left: 22px; }
+.ws-hist-list li .btn { grid-column: 2; grid-row: 1 / span 2; }
+.ws-hist-list li.current .msg { font-weight: 600; }
+.ws-hist-pick { display: flex; align-items: center; gap: 6px; min-width: 0; }
+dialog.dlg.hist-dlg { width: min(1100px, calc(100vw - 32px)); }
+.hist-top { display: flex; align-items: center; gap: 10px; }
+.hist-top h3 { margin: 0; }
+.hist-body { max-height: 70vh; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.hist-body .ag-diff { max-height: none; }
+.hist-hunk { border: 1px solid var(--line-soft); border-radius: var(--r-1); overflow: hidden; }
+.hist-hunk-head { padding: 2px 8px; background: var(--bg-2); }
+.hist-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-weight: 600; }
+.hist-side { width: 100%; border-collapse: collapse; table-layout: fixed; font: 12px/1.45 var(--mono); border: 1px solid var(--line-soft); }
+.hist-side td { padding: 0 6px; vertical-align: top; white-space: pre-wrap; overflow-wrap: anywhere; border-right: 1px solid var(--line-soft); }
+.hist-side td.del { background: var(--danger-soft); }
+.hist-side td.add { background: var(--ok-soft); }
+.hist-side td.gap { background: var(--bg-2); }

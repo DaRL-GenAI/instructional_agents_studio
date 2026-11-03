@@ -120,6 +120,26 @@ agent. Chats are kept in `.studio/sessions/`; a follow-up message resumes the sa
 The app writes `AGENTS.md` and `CLAUDE.md` at the course root (layout, which file backs which stage, editing
 rules), so an agent you start yourself in the folder knows the course too.
 
+**Ask in a slide or Word tab.** *Ask* (or Ctrl/⌘+K) opens the panel on the current slides or paragraphs. With
+the built-in agent a small edit (rewrite text, add or move slides, add a paragraph, change a heading) is applied
+straight in the open document as one step: *Save* keeps it as a new version, *Undo* puts the document back.
+Larger work (restructuring, layout) goes to Claude Code or Codex, reviewed as above.
+
+**Drafting upstream, staying in sync.** On a chapter's slides the panel offers *Draft outline* and *Draft script*;
+on the syllabus *Draft objectives* and *Draft chapters* (one model call each, reviewed before it is kept). Every
+stage remembers the versions of the stages it was made from; when one of those changes, the stage is listed under
+*Out of date* in the file tree, and *Draft targeted update* opens the agent on it with the upstream diff attached.
+Nothing is rewritten on its own.
+
+**LaTeX.** A `.tex` tab shows the source beside its PDF and compiles on save (tectonic, or latexmk; `IA_TECTONIC`
+points at a tectonic binary) in a copy under `.studio/jobs/`, without shell escape, with a 60 s limit; the PDF and
+log go to `build/`. Errors are listed with their line (click to jump) and *Fix with agent* sends them to the panel.
+
+**History.** For the open file, *History* lists the commits that changed it; compare any two (or one with the
+current file) inline or side by side (slides and Word files by their text), and *Restore* one as a new commit
+(`edit: restore …`; a stage's file becomes a new version of the stage). The browser edition shows a stage's own
+versions instead.
+
 A course folder looks like this; every file is plain text you can edit in any editor, and the app picks up the
 change (it becomes a new version of that stage and a commit):
 
