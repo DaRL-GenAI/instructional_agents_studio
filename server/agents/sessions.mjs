@@ -13,9 +13,13 @@ const file = (root, id) => { if (!idOk(id)) throw new HttpError(400, 'Bad sessio
 
 function writeJson(f, v) { fs.mkdirSync(path.dirname(f), { recursive: true }); const tmp = `${f}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(v, null, 1)); fs.renameSync(tmp, f); }
 
+// strictly increasing stamps, so two changes in the same millisecond still sort newest first
+let lastStamp = 0;
+const stamp = () => { lastStamp = Math.max(Date.now(), lastStamp + 1); return new Date(lastStamp).toISOString(); };
+
 export function create(root, { agent = 'builtin', title = '' } = {}) {
   if (!AGENTS.includes(agent)) throw new HttpError(400, 'Unknown agent');
-  const now = new Date().toISOString();
+  const now = stamp();
   const s = { id: crypto.randomBytes(6).toString('hex'), agent, title: String(title).slice(0, 120), createdAt: now, updatedAt: now, cli: {}, messages: [] };
   writeJson(file(root, s.id), s); return s;
 }
@@ -35,7 +39,7 @@ export function update(root, id, fn) {
   const s = get(root, id); fn(s);
   if (s.messages.length > MAX_MESSAGES) s.messages.splice(0, s.messages.length - MAX_MESSAGES);
   if (!s.title) s.title = (s.messages.find(m => m.role === 'user')?.text || '').replace(/\s+/g, ' ').trim().slice(0, 60);
-  s.updatedAt = new Date().toISOString(); writeJson(file(root, id), s); return s;
+  s.updatedAt = stamp(); writeJson(file(root, id), s); return s;
 }
 /** What the browser may set (the built-in agent keeps its own transcript; the panel records reviews). */
 export function put(root, id, body) {
