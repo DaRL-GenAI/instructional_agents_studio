@@ -56,7 +56,7 @@ keep the template background and title placeholder and draw their content into t
 ## Editing and revising slides
 
 A chapter's deck is a `.pptx` file. **Edit slides** opens it in an embedded presentation editor (ONLYOFFICE,
-running in the browser from the address under **Account → Slides editor**); every save is a new version in
+running in the browser; the local app serves its own copy at `/editor/`, the browser edition uses the address under **Account → Slides editor**); every save is a new version in
 History. **Import .pptx** makes an existing PowerPoint the chapter's deck.
 
 **Revise** (in the editor) changes chosen slides from an instruction, with one of three agents:
@@ -64,19 +64,10 @@ History. **Import .pptx** makes an existing PowerPoint the chapter's deck.
 - **Built-in**: your API model reads the slides as a list of shapes and answers with fixed edit operations
   (rewrite text or notes, remove a text box, add, move or delete slides), applied in the editor as one undo
   step. Needs a self-hosted editor build that supports `document:run-macro`.
-- **Claude Code / Codex**: run on your machine through the agent bridge. The agent edits a copy of the saved
-  deck in a sandbox; Studio previews the result, flags slides changed outside your selection, and keeps it only
-  when you click Keep.
-
-```bash
-node bridge/studio-bridge.mjs --origin https://your-studio-origin   # prints where the token is kept
-```
-
-The bridge listens on 127.0.0.1:8794, accepts requests only from the listed origins and with its token
-(`~/.config/studio-bridge/config.json`), and runs one job at a time under bubblewrap: read-only system, an
-empty home holding only the agent's credentials, write access to the job directory only. With `systemd-run`
-available each job is its own unit in `exp.slice` capped at 4 GB. Enter the bridge address and token under
-**Account → Slides editor**.
+- **Claude Code / Codex** (local app only): the agent runs on your machine with the course folder as its working
+  directory, so it can read the rest of the course for context. It edits a copy of the saved deck under
+  `.studio/jobs/`; Studio previews the result, flags slides changed outside your selection, and keeps it only when
+  you click Keep.
 
 ## Video
 
@@ -100,9 +91,43 @@ speech API; captions are WebVTT. The **Lesson player** tab wraps the video with 
 pauses at each check until it is solved), captions, chapter rail, resume and an event log, and exports it as a ZIP
 bundle or a single standalone HTML file — both work offline. The project ZIP contains all of it.
 
+## Local app
+
+The same Studio runs as a local app in which every course is a folder on your computer and a git repository:
+
+```bash
+npx instructional-agents [folder] [--port 8790] [--no-open]
+npx instructional-agents doctor                     # Node, Claude Code, Codex, LaTeX, editor
+npx instructional-agents import old_project.json [folder] [--force]
+```
+
+Without a folder it opens the project list (recent courses, new course, open an existing folder). Node.js 20.19+.
+
+A course folder looks like this; every file is plain text you can edit in any editor, and the app picks up the
+change (it becomes a new version of that stage and a commit):
+
+```
+course.json                     course basics
+design/learning_objectives.md   the six ADDIE deliverables, design/chapters.json (chapter list)
+chapters/01-intro/outline.json  per chapter: outline, slides.pptx, script, homework, lab, quiz
+exams/midterm_exam.md
+.studio/meta.json               stage status, versions and input hashes; .studio/stages/* prompts and transcripts
+.studio/audit.jsonl             the audit trail
+build/                          narration, video, images (not committed)
+```
+
+Every save is one commit (`gen:`, `edit:`, `import:`, `agent:`). Older deck versions are kept in `.studio/decks/`.
+The server listens on 127.0.0.1 only; the address it opens carries a one-time token that becomes an HttpOnly
+cookie, and requests from any other origin (including other ports on localhost) are refused. Settings live in
+`~/.config/instructional-agents/`. The slides editor is served locally from `IA_EDITOR_DIR` or
+`~/.cache/instructional-agents/editor/<version>/`; without one the app uses https://edit.chaxus.com.
+`node scripts/trim-editor.mjs <editor dist> [out]` makes the trimmed editor package from an ONLYOFFICE web build.
+
+Tests: `npm test` (Node's test runner).
+
 ## Development
 
-No build step. Serve the folder with any static server and open `index.html`:
+The browser edition has no build step. Serve the folder with any static server and open `index.html`:
 
 ```bash
 python -m http.server 8000
