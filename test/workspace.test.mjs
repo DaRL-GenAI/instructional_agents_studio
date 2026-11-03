@@ -122,3 +122,32 @@ test('Markdown → Word → Markdown keeps headings, emphasis and lists', async 
   const back = await docxToMd(docx);
   for (const s of ['# Homework 1', 'Answer **all** questions.', '1. First', '2. Second', '## Part B', '- a point']) assert.ok(back.includes(s), `${s} in:\n${back}`);
 });
+
+test('import: dropped materials land in sources/ as one commit; a save can name its commit', async () => {
+  const files = [['course-src/hw1.docx', Buffer.from('PK fake docx')], ['course-src/week1/intro.pptx', Buffer.from('PK fake pptx')], ['course-src/notes.md', Buffer.from('# Notes\n')]];
+  const header = { v: 1, skel: { files: files.map(([p], i) => ({ path: p, data: { $bin: i } })) }, parts: files.map(([, b]) => ({ as: 'blob', type: '', len: b.length })) };
+  const body = Buffer.concat([Buffer.from(JSON.stringify(header) + '\n'), ...files.map(([, b]) => b)]);
+  const bundle = { ...auth, 'Content-Type': 'application/x-ia-bundle' };
+  const before = (await vcs.log(dir)).length;
+  let r = await req(app.port, { method: 'POST', path: `${P}/sources`, headers: bundle, body });
+  assert.equal(r.status, 200); assert.deepEqual(r.json.paths, ['sources/course-src/hw1.docx', 'sources/course-src/week1/intro.pptx', 'sources/course-src/notes.md']);
+  assert.equal(fs.readFileSync(path.join(dir, 'sources/course-src/notes.md'), 'utf8'), '# Notes\n');
+  assert.equal((await vcs.log(dir)).length, before + 1, 'one commit');
+  assert.equal(await lastMessage(), 'import: sources/course-src (3 files)');
+  assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8' }), '');
+  // paths stay inside sources/
+  for (const bad of ['../x.md', 'a/../../x.md', '.git/config', 'a/.studio/x']) {
+    const h = { v: 1, skel: { files: [{ path: bad, data: { $bin: 0 } }] }, parts: [{ as: 'blob', type: '', len: 1 }] };
+    r = await req(app.port, { method: 'POST', path: `${P}/sources`, headers: bundle, body: Buffer.concat([Buffer.from(JSON.stringify(h) + '\n'), Buffer.from('x')]) });
+    assert.equal(r.status, 400, bad);
+  }
+  // the project save that follows names its commit (import:/edit:/gen: only)
+  const cur = (await req(app.port, { path: P, headers: auth })).json;
+  cur.project.foundation.objectives.output = '# Objectives\n\n- imported\n';
+  r = await req(app.port, { method: 'PUT', path: P, headers: J, body: { project: cur.project, base: cur.head, message: 'import: 3 files → objectives' } });
+  assert.equal(r.status, 200); assert.equal(await lastMessage(), 'import: 3 files → objectives');
+  const again = (await req(app.port, { path: P, headers: auth })).json;
+  again.project.foundation.objectives.output = '# Objectives\n\n- two\n';
+  r = await req(app.port, { method: 'PUT', path: P, headers: J, body: { project: again.project, base: again.head, message: 'agent: sneaky' } });
+  assert.equal(r.status, 200); assert.notEqual(await lastMessage(), 'agent: sneaky', 'other prefixes are not taken');
+});

@@ -133,7 +133,7 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
     if ((g = p.match(/^\/api\/projects\/([\w-]+)$/))) {
       const id = g[1];
       if (m === 'GET') return send(res, 200, await projects.load(id));
-      if (m === 'PUT') { const b = await body(req); return send(res, 200, await projects.save(id, b.project, b.base)); }
+      if (m === 'PUT') { const b = await body(req); return send(res, 200, await projects.save(id, b.project, b.base, typeof b.message === 'string' && /^(import|edit|gen): /.test(b.message) ? { message: b.message.slice(0, 300) } : {})); }
       if (m === 'DELETE') { projects.forget(id); return send(res, 204); }
     }
     if ((g = p.match(/^\/api\/projects\/([\w-]+)\/duplicate$/)) && m === 'POST') return send(res, 200, await projects.duplicate(g[1]));
@@ -176,6 +176,10 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
           return { added: [rel], message: `${url.searchParams.get('kind') === 'import' ? 'import' : 'edit'}: ${rel}`, result: { sha: sha256(data) } };
         }));
       }
+    }
+    if ((g = p.match(/^\/api\/projects\/([\w-]+)\/sources$/)) && m === 'POST') { // course materials dropped in: sources/<path>, one commit
+      const list = files.readSources(await raw(req, LIMIT.media));
+      return send(res, 200, await projects.fileOp(g[1], s => { const added = files.writeSources(s.dir, list); return { added, message: files.sourcesMessage(added), result: { paths: added } }; }));
     }
     if ((g = p.match(/^\/api\/projects\/([\w-]+)\/agent(\/.*)?$/))) return agentApi(req, res, g[1], g[2] || '', m);
     if ((g = p.match(/^\/api\/projects\/([\w-]+)\/tree$/)) && m === 'GET') { const s = projects.state(g[1]); return send(res, 200, { entries: files.tree(s.dir), managed: [...files.managed(s.dir)] }); }

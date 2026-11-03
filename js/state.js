@@ -128,11 +128,11 @@ export class ProjectStore {
     this.emit();
   }
   /** Write (IndexedDB or the project folder) only when something changed, so a stale tab never overwrites newer data. */
-  flush() {
+  flush({ message } = {}) { // message: the commit message (local app), e.g. for an import
     clearTimeout(this._t);
     if (!this.dirty || this.held) return Promise.resolve();
     this.dirty = false;
-    return backend.put(this.project).then(n => { if (n) { this.emit(); this.onAdopted?.(n); } }) // n: units merged in from disk
+    return backend.put(this.project, { message }).then(n => { if (n) { this.emit(); this.onAdopted?.(n); } }) // n: units merged in from disk
       .catch(e => { this.dirty = true; console.warn('save failed', e); });
   }
   on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }

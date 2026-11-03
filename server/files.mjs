@@ -5,7 +5,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { META } from '../js/fs/serialize.js';
-import { resolveInside, readText } from './workspace.mjs';
+import { resolveInside, readText, writeFile } from './workspace.mjs';
+import { readHeader } from '../js/fs/bundle.js';
 import { HttpError } from './projects.mjs';
 import { GUIDE_FILES, isManagedGuide } from './agents/guide.mjs';
 
@@ -99,4 +100,40 @@ export function search(root, q, { limit = 200 } = {}) {
     if (out.length >= limit) break;
   }
   return out;
+}
+
+// ---------------------------------------------------------------- course materials (import)
+/** A request body (fs/bundle.js: { files: [{ path, data }] }) → [{ path, buf }]. Paths are relative to sources/. */
+export function readSources(body) {
+  const bytes = new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+  let header, offset; try { ({ header, offset } = readHeader(bytes)); } catch (e) { throw new HttpError(400, e.message); }
+  const list = header.skel?.files; if (!Array.isArray(list) || !list.length) throw new HttpError(400, 'No files');
+  if (list.length > 2000) throw new HttpError(413, 'Too many files');
+  const starts = []; let at = offset; for (const p of header.parts) { starts.push(at); at += p.len; }
+  return list.map(f => {
+    const i = f?.data?.$bin; if (typeof f?.path !== 'string' || !Number.isInteger(i) || !header.parts[i]) throw new HttpError(400, 'Bad file entry');
+    return { path: f.path, buf: Buffer.from(bytes.subarray(starts[i], starts[i] + header.parts[i].len)) };
+  });
+}
+
+/** sources/<path> for each file (folders kept). Returns the written paths. */
+export function writeSources(root, list) {
+  const out = [];
+  for (const { path: p, buf } of list) {
+    const clean = String(p).replace(/\\/g, '/').replace(/^\/+/, '').replace(/^sources\//, '');
+    if (!clean || clean.split('/').some(s => s === '..' || s === '.' || s === '' || s === '.git' || s === '.studio')) throw new HttpError(400, `Bad path: ${p}`);
+    const rel = `sources/${clean}`;
+    const abs = resolveInside(root, rel);
+    if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) throw new HttpError(409, `${rel} is a folder`);
+    writeFile(root, rel, buf); out.push(rel);
+  }
+  return out;
+}
+
+/** "import: sources/course-src (9 files)" or "import: sources/hw1.docx". */
+export function sourcesMessage(paths) {
+  if (paths.length === 1) return `import: ${paths[0]}`;
+  const parts = paths.map(p => p.split('/')); let n = 0;
+  while (parts.every(x => x.length > n + 1 && x[n] === parts[0][n])) n++;
+  return `import: ${parts[0].slice(0, Math.max(1, n)).join('/')} (${paths.length} files)`;
 }

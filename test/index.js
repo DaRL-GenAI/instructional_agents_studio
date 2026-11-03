@@ -8,3 +8,4 @@ import './editor.test.mjs';
 import './workspace.test.mjs';
 import './pipeline.test.mjs';
 import './agentpanel.test.mjs';
+import './import.test.mjs';

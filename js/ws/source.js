@@ -35,6 +35,8 @@ function localSource(store) {
       const body = data instanceof Blob ? data : new Blob([data]);
       return api(`${P}/files/${enc(path)}${q.size ? `?${q}` : ''}`, { method: 'PUT', body, headers: { 'Content-Type': 'application/octet-stream' } });
     },
+    /** Course materials → sources/<path> (one commit). files: [{ path, blob }] (path relative to sources/). */
+    importSources: files => backend.importSources(store.id, files),
     mkdir: path => api(`${P}/fs/mkdir`, { method: 'POST', body: { path } }),
     rename: (from, to) => api(`${P}/fs/rename`, { method: 'POST', body: { from, to } }),
     remove: path => api(`${P}/fs/delete`, { method: 'POST', body: { path } }),
@@ -44,19 +46,30 @@ function localSource(store) {
   };
 }
 
+// the browser edition keeps imported materials as media: chapter 'sources', kind 'file:sources/<path>'
+const SRC = 'sources', SRC_KIND = 'file:';
+async function sourcePaths(store) { const pre = `${store.id}:${SRC}:${SRC_KIND}`; return (await backend.mediaKeys(store.id)).filter(k => k.startsWith(pre)).map(k => k.slice(pre.length)); }
+
 function virtualSource(store) {
   const files = () => layout(store.project);
   return {
     kind: 'virtual', writable: false,
+    async importSources(list) {
+      const paths = [];
+      for (const f of list) { const path = `sources/${f.path.replace(/^\/+/, '').replace(/^sources\//, '')}`; await backend.putMedia(store.id, SRC, SRC_KIND + path, f.blob); paths.push(path); }
+      return { paths };
+    },
     async list() {
-      const { files: f, decks } = files(); const paths = [...Object.keys(f), ...Object.keys(decks)];
+      const { files: f, decks } = files(); const srcs = await sourcePaths(store);
+      const paths = [...Object.keys(f), ...Object.keys(decks), ...srcs];
       const dirs = new Set(); for (const p of paths) { const parts = p.split('/'); for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join('/')); }
-      const entries = [...[...dirs].map(path => ({ path, dir: true })), ...Object.entries(f).map(([path, t]) => ({ path, dir: false, size: t.length })), ...Object.keys(decks).map(path => ({ path, dir: false }))];
-      return { entries: entries.sort((a, b) => a.path.localeCompare(b.path)), managed: new Set(paths) };
+      const entries = [...[...dirs].map(path => ({ path, dir: true })), ...Object.entries(f).map(([path, t]) => ({ path, dir: false, size: t.length })), ...Object.keys(decks).map(path => ({ path, dir: false })), ...srcs.map(path => ({ path, dir: false }))];
+      return { entries: entries.sort((a, b) => a.path.localeCompare(b.path)), managed: new Set(paths.filter(x => !x.startsWith('sources/'))) };
     },
     async read(path) {
       const { files: f, decks } = files();
       if (path in f) return { blob: new Blob([f[path]], { type: 'text/plain' }), sha: await shaHex(f[path]) };
+      if (path.startsWith('sources/')) { const blob = await backend.getMedia(store.id, SRC, SRC_KIND + path); return blob ? { blob: new Blob([blob], { type: typeOf(path) }), sha: await shaHex(blob) } : null; }
       const d = decks[path]; if (!d) return null;
       const blob = await backend.getMedia(store.id, d.chapterId, `${BINARY[d.format || 'pptx']}:${d.sha}`);
       return blob ? { blob: new Blob([blob], { type: typeOf(path) }), sha: d.sha } : null;
