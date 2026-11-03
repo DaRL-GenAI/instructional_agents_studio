@@ -10,3 +10,4 @@ import './pipeline.test.mjs';
 import './agentpanel.test.mjs';
 import './import.test.mjs';
 import './allowhost.test.mjs';
+import './m5.test.mjs';
