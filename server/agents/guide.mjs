@@ -22,6 +22,8 @@ export function stageLabel(project, key) {
 /** { 'AGENTS.md': text, 'CLAUDE.md': text } for a project and its serialized meta. */
 export function guideFiles(project, meta) {
   const rows = Object.entries(meta.stages || {}).map(([key, m]) => [m.$file || m.$deck, key]).filter(([f]) => f).sort((x, y) => x[0].localeCompare(y[0]));
+  const kept = Array.isArray(meta.sources) ? meta.sources : [];
+  const inPlace = kept.length ? `\n- Source materials kept where they were (read-only, like \`sources/\`): ${kept.slice(0, 40).map(f => `\`${f}\``).join(', ')}${kept.length > 40 ? ` and ${kept.length - 40} more (listed in .studio/meta.json "sources")` : ''}` : '';
   const chapters = (meta.chapters || []).map((c, i) => `  - \`${c.$dir}/\`: chapter ${i + 1}, ${c.title || 'untitled'}`);
   const agents = `${MARK}
 # ${project.course?.name || project.name || 'Course'}: course project
@@ -34,7 +36,7 @@ commits every change; the files below are what the app reads back, so keep their
 - \`chapters/NN-slug/\`: one folder per chapter: \`outline.json\`, \`slides.pptx\`, \`script.md\` or \`.json\`, \`homework.md\` or \`.docx\`, \`lab\`, \`quiz.json\`, \`storyboard.json\`
 ${chapters.join('\n') || '  - (no chapters yet)'}
 - \`exams/\`: midterm and final exams
-- \`sources/\`: original materials the instructor imported (read-only)
+- \`sources/\`: original materials the instructor imported (read-only)${inPlace}
 - \`build/\`: exported PDFs, audio and video (not in git)
 - \`course.json\`: course facts (managed by the app)
 - \`.studio/\`: the app's own state (versions, history, audit trail)
@@ -49,7 +51,7 @@ ${rows.map(([f, key]) => `| \`${f}\` | ${stageLabel(project, key)} |`).join('\n'
 - Slides (\`.pptx\`): change only the slides you were asked about. Keep the deck's design (layouts, theme, fonts,
   colors, positions); keep text inside its boxes; update the speaker notes of every slide whose content changes.
 - Word files (\`.docx\`): change only the paragraphs in scope and keep their styles.
-- \`sources/\` is read-only: read it for context, never change it.
+- \`sources/\`${kept.length ? ' and the source materials kept in place are' : ' is'} read-only: read them for context, never change them.
 - Do not modify \`.studio/\` (the app's scratch space \`.studio/jobs/\` excepted), \`course.json\`, \`AGENTS.md\` or \`CLAUDE.md\`.
 - Do not run git commands that change the repository; the app commits after the instructor reviews your changes.
 - No network access is needed.

@@ -13,6 +13,10 @@ const EXAM_FILES = { midterm: 'midterm_exam', final: 'final_exam' };
 const INLINE = new Set(['slides', 'video']); // outputs that are manifests of a binary, kept in the sidecar
 const SIDE = ['prompt', 'transcript', 'history'];
 const OWN = new Set(['course', 'textbook', 'audit', 'foundation', 'chaptersStage', 'chapters', 'exams']);
+// project fields kept at the top of meta.json, where the server reads them: sources = files of a folder opened as a
+// course that stay where they are as read-only source material; repo = 'existing' when that folder was a git
+// repository of its own (the app then commits only its own files)
+const TOP = ['sources', 'repo'];
 
 /** Same fingerprint as llm.js sha1Short (FNV-1a), so hashes written here match the app's. */
 export function fnv(text) { let h = 0x811c9dc5; for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, '0'); }
@@ -54,7 +58,7 @@ export function serialize(project) {
     if (Object.keys(side).length) { const f = `.studio/stages/${key}.json`; files[f] = json(side); m.$side = f; }
     stages[key] = m;
   }
-  const rest = {}; for (const [k, v] of Object.entries(p)) if (!OWN.has(k)) rest[k] = v;
+  const rest = {}; for (const [k, v] of Object.entries(p)) if (!OWN.has(k) && !TOP.includes(k)) rest[k] = v;
   const meta = {
     format: FORMAT, version: 1, project: rest,
     has: [...OWN].filter(k => k in p),
@@ -62,6 +66,7 @@ export function serialize(project) {
     chapters: (p.chapters || []).map((ch, i) => { const { stages: s, ...c } = ch; return { ...c, $dir: chapterDir(ch, i), $stages: Object.keys(s || {}), ...(s ? {} : { $noStages: true }) }; }),
     stages,
   };
+  for (const k of TOP) if (p[k] !== undefined) meta[k] = p[k];
   if ('course' in p) files[COURSE] = json(p.course);
   if ('textbook' in p) files[TEXTBOOK] = json(p.textbook);
   if ('audit' in p) files[AUDIT] = (p.audit || []).map(e => JSON.stringify(e) + '\n').join('');
@@ -75,6 +80,7 @@ export function deserialize(read, { light = false } = {}) {
   const metaText = read(META); if (metaText == null) throw new Error('Not an Instructional Agents project (no .studio/meta.json)');
   const meta = JSON.parse(metaText); if (meta.format !== FORMAT) throw new Error('Unknown project format');
   const p = { ...meta.project };
+  for (const k of TOP) if (k in meta) p[k] = meta[k];
   const has = new Set(meta.has || []);
   const readJson = (f, fallback) => { const t = read(f); return t == null ? fallback : JSON.parse(t); };
   if (has.has('course')) p.course = readJson(COURSE, {});

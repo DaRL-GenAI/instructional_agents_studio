@@ -33,3 +33,8 @@ export function removeFile(root, rel) {
   const realRoot = fs.realpathSync(root);
   for (let d = path.dirname(abs); d !== realRoot && d.startsWith(realRoot); d = path.dirname(d)) { try { fs.rmdirSync(d); } catch { break; } }
 }
+
+/** Files of a folder opened as a course that stay in place as source material (.studio/meta.json "sources"). */
+export function sourcesOf(root) {
+  try { const m = JSON.parse(fs.readFileSync(path.join(root, '.studio', 'meta.json'), 'utf8')); return new Set(Array.isArray(m.sources) ? m.sources.filter(x => typeof x === 'string') : []); } catch { return new Set(); }
+}

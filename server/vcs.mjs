@@ -19,6 +19,28 @@ export async function init(dir) {
   if (!fs.existsSync(path.join(dir, '.gitignore'))) fs.writeFileSync(path.join(dir, '.gitignore'), GITIGNORE);
 }
 
+/** Folders that never belong in a course's history (dependencies, caches); written to .git/info/exclude of a
+ *  repository the app created, so a folder opened in place does not commit them. */
+export const EXCLUDE = ['node_modules/', '.venv/', 'venv/', '__pycache__/', '.ipynb_checkpoints/', '.tox/', '.mypy_cache/', '.pytest_cache/', '.cache/', '.DS_Store', 'Thumbs.db'];
+/** The app's scratch space as a .gitignore inside .studio/: works in any repository without touching the user's
+ *  own .gitignore. */
+export const STUDIO_IGNORE = '# Instructional Agents: scratch space\ndecks/\njobs/\ntrash/\nbackup/\nsessions/\n';
+
+/** A folder opened in place: a new repository when it has none (with EXCLUDE), an existing one is used as it is.
+ *  Returns 'new' | 'existing'. */
+export async function initInPlace(dir) {
+  const existing = fs.existsSync(path.join(dir, '.git'));
+  if (!existing) {
+    await git.init({ fs, dir, defaultBranch: 'main' });
+    fs.mkdirSync(path.join(dir, '.git', 'info'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.git', 'info', 'exclude'), EXCLUDE.join('\n') + '\n');
+    if (!fs.existsSync(path.join(dir, '.gitignore'))) fs.writeFileSync(path.join(dir, '.gitignore'), GITIGNORE);
+  }
+  fs.mkdirSync(path.join(dir, '.studio'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.studio', '.gitignore'), STUDIO_IGNORE);
+  return existing ? 'existing' : 'new';
+}
+
 /** Older project folders: add ignore lines added since (only to a .gitignore the app wrote). */
 export function ensureIgnores(dir) {
   const f = path.join(dir, '.gitignore'); let t; try { t = fs.readFileSync(f, 'utf8'); } catch { return; }
@@ -29,23 +51,49 @@ export function ensureIgnores(dir) {
 
 export async function head(dir) { try { return await git.resolveRef({ fs, dir, ref: 'HEAD' }); } catch { return null; } }
 
-/** Stage the given paths (added, changed or deleted) and commit them. Returns the new head, or the old one when
- *  nothing changed. Ignored paths are skipped. */
+/** Commit the given paths (added, changed or deleted) and nothing else: the new tree is HEAD's tree with these
+ *  paths replaced by what is on disk, so whatever else sits in the index (changes the user staged in a repository of
+ *  their own) is neither committed nor touched. The index is updated for these paths. Returns the new head, or the old
+ *  one when nothing changed. Ignored paths are skipped. */
 export async function commit(dir, paths, message) {
-  let staged = 0;
-  for (const p of new Set(paths)) {
-    if (await git.isIgnored({ fs, dir, filepath: p })) continue;
-    if (fs.existsSync(path.join(dir, p))) await git.add({ fs, dir, filepath: p });
-    else { try { await git.remove({ fs, dir, filepath: p }); } catch { continue; } }
-    staged++;
-  }
   const prev = await head(dir);
-  if (!staged && prev) return prev;
-  if (prev) { // skip empty commits: compare the index with HEAD for the staged paths
-    const m = await git.statusMatrix({ fs, dir, filepaths: [...new Set(paths)] });
-    if (!m.some(([, h, , s]) => (h === 0 && s !== 0) || (h === 1 && s !== 1))) return prev;
+  const changes = new Map();
+  for (const p of new Set(paths)) {
+    if (!p || await git.isIgnored({ fs, dir, filepath: p })) continue;
+    const abs = path.join(dir, p); let st = null; try { st = fs.lstatSync(abs); } catch { /* deleted */ }
+    if (st && st.isFile()) changes.set(p, { oid: await git.writeBlob({ fs, dir, blob: fs.readFileSync(abs) }), mode: st.mode & 0o111 ? '100755' : '100644' });
+    else if (!st) changes.set(p, null);
   }
-  return git.commit({ fs, dir, message, author: author() });
+  if (!changes.size && prev) return prev;
+  const base = prev ? (await git.readCommit({ fs, dir, oid: prev })).commit.tree : null;
+  const tree = (await treeWith(dir, base, changes)) || await git.writeTree({ fs, dir, tree: [] });
+  if (prev && tree === base) { await syncIndex(dir, changes); return prev; }
+  const oid = await git.commit({ fs, dir, message, author: author(), tree, parent: prev ? [prev] : [] });
+  await syncIndex(dir, changes);
+  return oid;
+}
+
+/** A tree: `base` (oid or null) with `changes` (relative path → { oid, mode } | null) applied. null when empty. */
+async function treeWith(dir, base, changes) {
+  const entries = new Map(base ? (await git.readTree({ fs, dir, oid: base })).tree.map(e => [e.path, e]) : []);
+  const sub = new Map();
+  for (const [p, v] of changes) {
+    const i = p.indexOf('/');
+    if (i < 0) { if (v) entries.set(p, { mode: v.mode, path: p, oid: v.oid, type: 'blob' }); else entries.delete(p); continue; }
+    const name = p.slice(0, i); if (!sub.has(name)) sub.set(name, new Map()); sub.get(name).set(p.slice(i + 1), v);
+  }
+  for (const [name, ch] of sub) {
+    const cur = entries.get(name);
+    const oid = await treeWith(dir, cur?.type === 'tree' ? cur.oid : null, ch);
+    if (oid) entries.set(name, { mode: '040000', path: name, oid, type: 'tree' }); else if (cur?.type === 'tree') entries.delete(name);
+  }
+  if (!entries.size) return null;
+  return git.writeTree({ fs, dir, tree: [...entries.values()] });
+}
+async function syncIndex(dir, changes) {
+  for (const [p, v] of changes) {
+    try { if (v) await git.add({ fs, dir, filepath: p }); else await git.remove({ fs, dir, filepath: p }); } catch { /* the index follows on the next commit */ }
+  }
 }
 
 /** Stage everything git does not ignore (first commit, import, duplicate). */

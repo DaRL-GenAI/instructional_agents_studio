@@ -11,7 +11,8 @@ import { readText, readBuf, writeFile, removeFile, sha256 } from './workspace.mj
 import * as vcs from './vcs.mjs';
 import * as media from './media.mjs';
 import * as config from './config.mjs';
-import { guideFiles, isManagedGuide } from './agents/guide.mjs';
+import { guideFiles, isManagedGuide, GUIDE_FILES } from './agents/guide.mjs';
+import * as folders from './folders.mjs';
 
 export class HttpError extends Error { constructor(status, message, body) { super(message); this.status = status; this.body = body; } }
 
@@ -32,7 +33,7 @@ export const isProjectDir = dir => fs.existsSync(path.join(dir, META));
 
 const COMMIT_KIND = e => e.type === 'slide_revision' && /claude|codex/i.test(e.agent || '') ? 'agent' : e.type === 'import' ? 'import' : ['stage_done', 'auto_repair'].includes(e.type) ? 'gen' : 'edit';
 const RANK = { agent: 3, import: 2, gen: 1, edit: 0 };
-const IGNORED = /(^|\/)(\.git|node_modules|build|\.studio\/(decks|jobs|trash|backup|sessions))(\/|$)|\.tmp$|~$|\.swp$/;
+const IGNORED = /(^|\/)(\.git|node_modules|\.venv|venv|__pycache__|\.ipynb_checkpoints|build|\.studio\/(decks|jobs|trash|backup|sessions))(\/|$)|\.tmp$|~$|\.swp$/;
 
 export class Projects {
   constructor({ onChange = () => {}, watch = true } = {}) { this.byId = new Map(); this.onChange = onChange; this.watch = watch; }
@@ -87,7 +88,7 @@ export class Projects {
   list() {
     const out = [];
     for (const r of config.recent()) {
-      if (!isProjectDir(r.dir)) continue;
+      if (!isProjectDir(r.dir)) { if (fs.existsSync(r.dir)) out.push({ plain: true, dir: r.dir, name: r.name || path.basename(r.dir) }); continue; } // the course files are gone: offer to open it again
       try { const s = this.open(r.dir); out.push({ project: this.read(s.dir, { light: true }), dir: s.dir }); } catch (e) { console.warn(`skipping ${r.dir}: ${e.message}`); }
     }
     return out;
@@ -223,6 +224,33 @@ export class Projects {
     return this.load(s.id);
   }
 
+  /** A plain folder → a course, in place. The user's files stay where they are (the import records the ones it uses
+   *  as sources). A folder without git becomes a repository whose first commit holds those files as they are; an
+   *  existing repository is used as it is, on its current branch, and only the app's own files are committed.
+   *  Returns load() + { files: the folder's files (for the import), repo: 'new' | 'existing' }. */
+  async adopt(project, dir) {
+    if (!project?.id || !project.course) throw new HttpError(400, 'Bad project');
+    const info = folders.inspect(dir, { withFiles: true }); dir = info.dir;
+    fs.mkdirSync(dir, { recursive: true });
+    const repo = await vcs.initInPlace(dir);
+    if (repo === 'existing') project.repo = 'existing';
+    writeFile(dir, META, JSON.stringify({ format: 'instructional-agents', version: 1, project: { id: project.id, name: project.name } }));
+    const s = this.open(dir, { watch: false });
+    await this.locked(s, async () => {
+      await this.write(s, project, { commit: false });
+      const message = `init: ${project.name}`;
+      if (repo === 'new') s.head = await vcs.commitAll(dir, message);
+      else {
+        const { files, decks } = serialize(project);
+        const own = [...Object.keys(files), ...Object.keys(decks), '.studio/.gitignore', ...GUIDE_FILES.filter(f => isManagedGuide(readText(dir, f)))];
+        s.head = await vcs.commit(dir, own, message);
+      }
+      s.auditLen = (project.audit || []).length;
+    });
+    if (this.watch) { this.startWatch(s); await s.ready; }
+    return { ...(await this.load(s.id)), files: info.files, repo };
+  }
+
   /** A project JSON exported from Studio (with its decks inside) → a new folder. The original file is kept in
    *  .studio/backup/. */
   async importJson(json, dir, { source = 'project.json' } = {}) {
@@ -288,7 +316,11 @@ export class Projects {
       }
       if (edits) project.updatedAt = new Date().toISOString();
       for (const f of paths) { const b = readBuf(s.dir, f); if (b) s.written.set(f, sha256(b)); }
-      await this.write(s, project, { message: `edit: ${paths[0]}${paths.length > 1 ? ` (+${paths.length - 1})` : ''} (on disk)`, extra: paths });
+      // a repository of the user's own: their files are theirs to commit; only the app's files go in
+      const own = f => f === META || f === 'course.json' || f.startsWith('.studio/') || fileOwner(meta, f) || (GUIDE_FILES.includes(f) && isManagedGuide(readText(s.dir, f)));
+      const extra = meta.repo === 'existing' ? paths.filter(own) : paths;
+      if (!extra.length && !edits) return;
+      await this.write(s, project, { message: `edit: ${extra[0]}${extra.length > 1 ? ` (+${extra.length - 1})` : ''} (on disk)`, extra });
       this.onChange({ type: 'changed', id: s.id, head: s.head, paths, source: 'disk' });
     });
   }

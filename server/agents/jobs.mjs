@@ -6,7 +6,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { sha256, resolveInside } from '../workspace.mjs';
+import { sha256, resolveInside, sourcesOf } from '../workspace.mjs';
 import { available, panelCommand, panelPrompt, eventOf, searchPath } from './cli.mjs';
 import { GUIDE_FILES } from './guide.mjs';
 import * as sessions from './sessions.mjs';
@@ -45,19 +45,20 @@ function rmJob(dir) {
 /** Copy the project into dir. Returns the snapshot: { path: sha256 }. */
 export function copyProject(root, dir) {
   rmJob(dir); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const base = {};
+  const base = {}; const sources = sourcesOf(root);
   for (const [rel, abs] of walk(root)) {
     const buf = fs.readFileSync(abs); const to = path.join(dir, rel);
     fs.mkdirSync(path.dirname(to), { recursive: true }); fs.writeFileSync(to, buf);
-    if (READ_ONLY.test(rel)) fs.chmodSync(to, 0o444);
+    if (READ_ONLY.test(rel) || sources.has(rel)) fs.chmodSync(to, 0o444);
     base[rel] = sha256(buf);
   }
   return base;
 }
 
-/** Why a change to `rel` cannot be applied (or null). */
-export function rejectReason(rel, managed = new Set()) {
+/** Why a change to `rel` cannot be applied (or null). sources: the in-place source files (workspace.sourcesOf). */
+export function rejectReason(rel, managed = new Set(), sources = new Set()) {
   if (/^sources(\/|$)/.test(rel)) return 'sources/ is read-only';
+  if (sources.has(rel)) return 'source material is read-only';
   if (/^\.studio(\/|$)|^\.git(\/|$)/.test(rel)) return 'app files cannot be changed';
   if (GUIDE_FILES.includes(rel) && managed.has(rel)) return 'managed by the app';
   if (rel === 'course.json') return 'managed by the app';
@@ -66,7 +67,7 @@ export function rejectReason(rel, managed = new Set()) {
 
 /** The job copy vs. its snapshot: [{ path, status: added|modified|deleted, text, sha, conflict, rejected }].
  *  conflict: the project file changed since the copy was made; managed: files the app owns (see files.managed). */
-export function changes(root, dir, base, { managed = new Set() } = {}) {
+export function changes(root, dir, base, { managed = new Set(), sources = sourcesOf(root) } = {}) {
   const links = []; const now = walk(dir, { links }); const out = [];
   for (const [rel, abs] of now) {
     const buf = fs.readFileSync(abs); const sha = sha256(buf);
@@ -76,7 +77,7 @@ export function changes(root, dir, base, { managed = new Set() } = {}) {
   for (const rel of Object.keys(base)) if (!now.has(rel) && !links.includes(rel)) out.push({ path: rel, status: 'deleted', sha: null, text: isText(rel) });
   for (const rel of links) out.push({ path: rel, status: rel in base ? 'modified' : 'added', sha: null, text: false, rejected: 'symbolic links are not allowed' });
   for (const c of out) {
-    c.rejected ||= rejectReason(c.path, managed);
+    c.rejected ||= rejectReason(c.path, managed, sources);
     let cur = null; try { cur = sha256(fs.readFileSync(resolveInside(root, c.path))); } catch { cur = null; }
     c.conflict = (base[c.path] || null) !== cur;
   }

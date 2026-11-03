@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createGuard, newToken } from './security.mjs';
 import { Projects, HttpError, checkDir, isProjectDir, allowedRoots } from './projects.mjs';
-import { resolveInside, sha256, writeFile } from './workspace.mjs';
+import { resolveInside, sha256, writeFile, sourcesOf } from './workspace.mjs';
+import * as folders from './folders.mjs';
 import { findEditor } from './editor-pkg.mjs';
 import * as media from './media.mjs';
 import * as config from './config.mjs';
@@ -125,7 +126,12 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
     }
     if (p === '/api/projects' && m === 'GET') return send(res, 200, { projects: projects.list() });
     if (p === '/api/projects' && m === 'POST') { const b = await body(req); const r = await projects.create(b.project, b.dir || (session.pendingDir && !isProjectDir(session.pendingDir) ? session.pendingDir : null)); if (r.dir === session.pendingDir) session.pendingDir = null; return send(res, 200, r); }
-    if (p === '/api/projects/open' && m === 'POST') { const d = checkDir((await body(req)).dir); if (!isProjectDir(d)) throw new HttpError(400, 'Not a course folder (no .studio/meta.json). Create a new course there instead.'); return send(res, 200, await projects.load(projects.open(d).id)); }
+    if (p === '/api/projects/open' && m === 'POST') { // a course folder opens; any other folder comes back described, to be opened as a course (adopt)
+      const d = checkDir((await body(req)).dir);
+      if (isProjectDir(d)) return send(res, 200, await projects.load(projects.open(d).id));
+      return send(res, 200, { folder: folders.inspect(d) });
+    }
+    if (p === '/api/projects/adopt' && m === 'POST') { const b = await body(req); const r = await projects.adopt(b.project, b.dir); if (r.dir === session.pendingDir) session.pendingDir = null; return send(res, 200, r); }
     if (p === '/api/projects/import' && m === 'POST') { const b = await body(req); return send(res, 200, await projects.importJson(b.json, b.dir, { source: b.name || 'project.json' })); }
     if (p === '/api/fs/dirs' && m === 'GET') return send(res, 200, browse(url.searchParams.get('path')));
     if (p === '/api/llm') return forward(req, res);
@@ -252,7 +258,7 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
       for (const rel of list) {
         if (typeof rel !== 'string') throw new HttpError(400, 'Bad path');
         resolveInside(s.dir, rel);
-        const why = jobs.rejectReason(rel, mg); if (why) throw new HttpError(403, `${rel}: ${why}`);
+        const why = jobs.rejectReason(rel, mg, sourcesOf(s.dir)); if (why) throw new HttpError(403, `${rel}: ${why}`);
         if (mg.has(rel)) throw new HttpError(409, `${rel} belongs to a stage: send it as part of the project`);
       }
       const r = await projects.applyAgent(id, { project: b.project || null, base: b.base || null, files: b.files || [], removed: b.removed || [], message: String(b.message || 'agent: changes').slice(0, 300) });
