@@ -3,11 +3,12 @@ import { el, button, icon, badge, fmtRel, fmtInt } from '../ui.js';
 import { moduleProgress, projectTotals, MODULES } from '../state.js';
 import { FOUNDATION, CHAPTER_STAGES } from '../prompts.js';
 import { href, go } from '../router.js';
+import { openImport } from '../import/dialog.js';
 
 export function render(ctx) {
   const p = ctx.store.project; const prog = moduleProgress(p); const totals = projectTotals(p);
   const page = el('div', { class: 'page' });
-  page.append(el('div', { class: 'page-head' }, el('div', {}, el('h1', {}, p.name), el('p', {}, `${p.course.subject || 'Subject not set'} · ${p.course.level} · ${p.course.weeks} weeks · ${p.course.language}`)), el('div', { class: 'btn-row' }, button({ label: 'Export everything', icon: 'download', onClick: () => ctx.exportAll() }))));
+  page.append(el('div', { class: 'page-head' }, el('div', {}, el('h1', {}, p.name), el('p', {}, `${p.course.subject || 'Subject not set'} · ${p.course.level} · ${p.course.weeks} weeks · ${p.course.language}`)), el('div', { class: 'btn-row' }, button({ label: 'Import materials', icon: 'upload', onClick: () => openImport(ctx) }), button({ label: 'Export everything', icon: 'download', onClick: () => ctx.exportAll() }))));
 
   const next = nextAction(ctx);
   if (next) page.append(el('div', { class: 'panel', style: 'padding:18px 22px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:28px' }, el('div', { style: 'flex:1;min-width:240px' }, el('h2', {}, next.title), el('p', { class: 'muted', style: 'font-size:var(--fs-2);margin-top:4px' }, next.body)), button({ label: next.cta, icon: 'arrow-right', variant: 'primary', onClick: next.go })));

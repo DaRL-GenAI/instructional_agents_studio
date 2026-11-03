@@ -18,6 +18,7 @@ import { commitDeck, deckManifest } from '../pptxdeck.js';
 import { commitDoc, docManifest, convertToWord, convertToMarkdown, CONVERTIBLE } from '../docstage.js';
 import { download } from '../export.js';
 import { AgentPanel } from '../agent/panel.js';
+import { openImport, filesFromDrop, hasFiles } from '../import/dialog.js';
 
 let ws = null; // the Workspace of the open project
 
@@ -94,10 +95,16 @@ class Workspace {
     this.setDock(this.dock, true);
     this.root.style.setProperty('--ws-font', `${pref('font', 13)}px`);
     this.renderSide(); this.renderTabs(); this.renderStatus();
-    // drag files from the computer into the tree (local app)
-    this.side.addEventListener('dragover', e => { if (!this.src.writable || !e.dataTransfer?.types?.includes('Files')) return; e.preventDefault(); this.side.classList.add('drop'); });
+    // drag files or a folder from the computer: onto a folder of the tree → upload there (local app); anywhere else
+    // in the explorer → import them as course materials (sorted into stages after a confirmation)
+    this.side.addEventListener('dragover', e => { if (!hasFiles(e)) return; e.preventDefault(); this.side.classList.add('drop'); });
     this.side.addEventListener('dragleave', e => { if (!this.side.contains(e.relatedTarget)) this.side.classList.remove('drop'); });
-    this.side.addEventListener('drop', e => { this.side.classList.remove('drop'); if (!this.src.writable || !e.dataTransfer?.files?.length) return; e.preventDefault(); const row = e.target.closest?.('[data-path]'); const p = row?.dataset.path || ''; this.upload([...e.dataTransfer.files], row?.dataset.dir === '1' ? p : dirOf(p)); });
+    this.side.addEventListener('drop', e => {
+      this.side.classList.remove('drop'); if (!hasFiles(e)) return; e.preventDefault();
+      const row = e.target.closest?.('[data-path]');
+      if (this.src.writable && row?.dataset.dir === '1' && !isInternal(row.dataset.path)) return this.upload([...e.dataTransfer.files], row.dataset.path);
+      filesFromDrop(e.dataTransfer).then(f => f.length && openImport(this.ctx, f)).then(r => { if (r) this.refresh(); });
+    });
   }
   splitter(name, def, min, max, target, dir, horizontal = false) {
     const dim = horizontal ? 'height' : 'width'; const w = pref(`w.${name}`, def);
@@ -221,6 +228,7 @@ class Workspace {
     const title = { files: 'Files', search: 'Search', history: 'History', settings: 'Settings' }[v];
     this.sideHead.append(el('b', {}, title), el('span', { class: 'spacer' }));
     if (v === 'files') {
+      this.sideHead.append(button({ icon: 'database', size: 'sm', variant: 'ghost', title: 'Import materials', onClick: async () => { if (await openImport(this.ctx)) this.refresh(); } }));
       if (this.src.writable) this.sideHead.append(
         button({ icon: 'file', size: 'sm', variant: 'ghost', title: 'New file', onClick: () => this.newFile('') }),
         button({ icon: 'folder', size: 'sm', variant: 'ghost', title: 'New folder', onClick: () => this.newFolder('') }),

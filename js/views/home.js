@@ -6,6 +6,7 @@ import { download, textBlob, slug } from '../export.js';
 import { LOCAL } from '../fs/api.js';
 import { dirs, folderBackend } from '../fs/backend-folder.js';
 import { pickFolder } from './folderpicker.js';
+import { startFromMaterials } from '../import/dialog.js';
 
 export function render(ctx) {
   const page = el('div', { class: 'page' });
@@ -57,7 +58,15 @@ function createPanel(ctx) {
   form.append(el('div', { class: 'panel-head' }, el('h2', {}, 'New course')), el('div', { class: 'panel-body', style: 'display:flex;flex-direction:column;gap:14px' },
     field('Course name', name), field('Subject area', subject), el('div', { class: 'form-grid' }, field('Level', level), field('Weeks', weeks)), field('Language of the materials', language), field('Learners', audience, { hint: 'Optional now; refine it under Course basics.' }),
     folder ? field('Folder', el('div', { class: 'btn-row', style: 'flex-wrap:nowrap' }, folder, browse), { hint: 'Created if missing. Files already in it are kept.' }) : null,
-    el('div', { class: 'btn-row' }, button({ label: 'Create project', icon: 'plus', variant: 'primary', type: 'submit' }))));
+    el('div', { class: 'btn-row' }, button({ label: 'Create project', icon: 'plus', variant: 'primary', type: 'submit' }), button({ label: 'Start from existing materials', icon: 'upload', onClick: () => startFromMaterials(ctx, { create: fromMaterials }) }))));
+  // the same course facts; the name defaults to the folder that was picked
+  async function fromMaterials(folderName) {
+    const n = name.value.trim() || folderName || 'Imported course';
+    const dir = folder?.dataset.touched ? folder.value.trim() : (folder && !name.value.trim() && folderName ? `${LOCAL.projectsRoot}/${slug(n).replace(/_/g, '-')}` : folder?.value.trim());
+    const p = await createProject({ course: { name: n, subject: subject.value.trim(), level: level.value, weeks: Number(weeks.value) || 14, language: language.value, audience: audience.value.trim() } }, { dir: dir || undefined }).catch(err => { toast(err.message, 'error'); return null; });
+    if (p) await ctx.reloadProjects();
+    return p;
+  }
   return form;
 }
 

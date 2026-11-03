@@ -153,7 +153,7 @@ export class ProjectStore {
 
   userEdit(stage, label, newOutput, where) {
     if (newOutput === stage.output) return false;
-    stage.history.push({ version: stage.version, output: stage.output, at: stage.ranAt, reason: stage.edited ? 'user edit' : 'model output' });
+    stage.history.push({ version: stage.version, output: stage.output, at: stage.ranAt, reason: stage.origin === 'import' ? 'imported' : stage.edited ? 'user edit' : 'model output' });
     if (stage.history.length > 10) stage.history.shift();
     Object.assign(stage, { output: newOutput, version: stage.version + 1, edited: true, status: 'done', error: null, outputHash: sha1Short(newOutput) });
     delete stage.origin; // 'import' | 'convert' when the caller says so, after this
@@ -170,9 +170,10 @@ export class ProjectStore {
     this.save(); return true;
   }
   applyResult(stage, label, result, where, extra = {}) {
-    if (stage.output) stage.history.push({ version: stage.version, output: stage.output, at: stage.ranAt, reason: stage.edited ? 'user edit' : 'model output' });
+    if (stage.output) stage.history.push({ version: stage.version, output: stage.output, at: stage.ranAt, reason: stage.origin === 'import' ? 'imported' : stage.edited ? 'user edit' : 'model output' });
     if (stage.history.length > 10) stage.history.shift();
     Object.assign(stage, { status: 'done', edited: false, error: null, ranAt: new Date().toISOString(), version: stage.version + 1, reviewed: false, ...extra });
+    delete stage.origin; // sourcePath stays: where the material first came from
     stage.output = result.output; stage.outputHash = sha1Short(result.output || ''); stage.usage = result.usage; stage.durationMs = result.durationMs;
     stage.transcript = result.transcript || []; stage.prompt = result.prompt || stage.prompt; stage.inputHash = result.inputHash || null; stage.provenance = result.provenance || null;
     this.log({ type: 'stage_done', stage: label, where, version: stage.version, hash: stage.outputHash, tokens: result.usage?.total_tokens, ms: result.durationMs, calls: (result.transcript || []).length });

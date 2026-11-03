@@ -46,7 +46,7 @@ export function toggle(checked, onChange, label) {
   return sw;
 }
 
-export const STATUS_LABEL = { idle: 'Not started', running: 'Running', done: 'Generated', edited: 'Edited', stale: 'Inputs changed', error: 'Failed', partial: 'In progress' };
+export const STATUS_LABEL = { idle: 'Not started', running: 'Running', done: 'Generated', edited: 'Edited', imported: 'Imported', stale: 'Inputs changed', error: 'Failed', partial: 'In progress' };
 export const badge = (status, label) => el('span', { class: `badge ${status}` }, label || STATUS_LABEL[status] || status);
 export const dot = status => el('i', { class: `dot ${status || ''}` });
 

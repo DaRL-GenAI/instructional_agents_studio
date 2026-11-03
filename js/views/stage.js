@@ -16,6 +16,7 @@ export function stageStatus(pipe, stage, inputs) {
   if (stage.status === 'running') return 'running';
   if (stage.status === 'error') return 'error';
   if (stage.status === 'done' && inputs && pipe.isStale(stage, inputs)) return 'stale';
+  if (stage.status === 'done' && stage.origin === 'import') return 'imported';
   if (stage.status === 'done' && stage.edited) return 'edited';
   return stage.status;
 }
@@ -38,16 +39,18 @@ export function stageDetail(ctx, o) {
 
   const running = stage.status === 'running';
   const pptx = o.kind === 'slides' && !!deckManifest(stage.output);
+  const imported = stage.origin === 'import' && !!stage.output; // default action: Revise (Generate asks first)
   const docx = !!docManifest(stage.output);
   const wsFile = stage.output ? fileOfKey(store.project, keyOfStage(o)) : null;
   const convertible = !!o.chapter && CONVERTIBLE.has(keyOfStage(o)?.split('.')[2]) && !!stage.output && !running;
   const actions = el('div', { class: 'stage-actions' },
     pptx ? button({ label: 'Edit slides', icon: 'presentation', variant: 'primary', disabled: !!ctx.busy, onClick: () => openPptxEditor(ctx, o) }) : null,
-    button({ label: stage.status === 'done' ? 'Re-run' : 'Generate', icon: stage.status === 'done' ? 'refresh' : 'play', variant: pptx ? '' : 'primary', disabled: !!ctx.busy, onClick: () => o.run({}) }),
+    imported ? button({ label: 'Revise', icon: 'message', variant: pptx ? '' : 'primary', disabled: !!ctx.busy, onClick: () => { ui.feedbackOpen = !ui.feedbackOpen; ctx.render(); } }) : null,
+    button({ label: stage.status === 'done' ? (imported ? 'Generate' : 'Re-run') : 'Generate', icon: stage.status === 'done' ? 'refresh' : 'play', variant: pptx || imported ? '' : 'primary', disabled: !!ctx.busy, onClick: async () => { if (imported && !(await confirmDialog({ title: 'Replace imported material?', body: `The agents write ${o.label} from scratch. Your imported version stays in History.`, confirmLabel: 'Generate' }))) return; o.run({}); } }),
     o.kind === 'slides' ? button({ label: 'Import .pptx', icon: 'upload', disabled: !!ctx.busy || running, onClick: () => importPptx(ctx, o) }) : null,
     wsFile ? el('a', { class: 'btn', href: wsHref(store.id, wsFile), title: wsFile }, icon('code'), 'Open in Workspace') : null,
     convertible ? button({ label: docx ? 'Convert to Markdown' : 'Convert to Word', icon: 'file-text', disabled: !!ctx.busy, onClick: () => convertStage(ctx, o, docx) }) : null,
-    stage.output ? button({ label: 'Re-run with comments', icon: 'message', variant: ui.feedbackOpen ? 'ghost' : '', disabled: !!ctx.busy, onClick: () => { ui.feedbackOpen = !ui.feedbackOpen; ctx.render(); } }) : null,
+    stage.output && !imported ? button({ label: 'Re-run with comments', icon: 'message', variant: ui.feedbackOpen ? 'ghost' : '', disabled: !!ctx.busy, onClick: () => { ui.feedbackOpen = !ui.feedbackOpen; ctx.render(); } }) : null,
     o.runAll ? button({ label: o.runAllLabel || 'Generate remaining', icon: 'fast-forward', disabled: !!ctx.busy, onClick: o.runAll }) : null,
     running ? button({ label: 'Cancel', variant: 'danger', onClick: () => pipe.cancel() }) : null,
     stage.output ? button({ label: stage.reviewed ? 'Reviewed' : 'Mark reviewed', icon: 'check', variant: stage.reviewed ? 'ghost' : '', onClick: () => { stage.reviewed = !stage.reviewed; store.log({ type: stage.reviewed ? 'approve' : 'unapprove', stage: o.label, where: o.where, version: stage.version }); store.save(); ctx.render(); } }) : null,
@@ -108,8 +111,9 @@ async function convertStage(ctx, o, toMarkdown) {
 export function stageText(o) {
   const st = o.stage;
   if (docManifest(st.output)) return outputText(st.output);
-  if (o.kind === 'script') return scriptMarkdown(o.chapter, safeJson(st.output, []));
-  if (o.kind === 'quiz') return quizMarkdown(o.chapter, safeJson(st.output, []));
+  const items = safeJson(st.output, null); // imported scripts and quizzes may be plain Markdown
+  if (o.kind === 'script') return Array.isArray(items) ? scriptMarkdown(o.chapter, items) : st.output;
+  if (o.kind === 'quiz') return Array.isArray(items) ? quizMarkdown(o.chapter, items) : st.output;
   return st.output;
 }
 
@@ -140,6 +144,16 @@ function outputEditor(ctx, o) {
     if (o.kind === 'script') return scriptEditor(ctx, o);
     if (o.kind === 'quiz') return quizEditor(ctx, o);
   }
+  return rawEditor(ctx, o);
+}
+
+/** An output that is not in the stage's usual format (an imported Markdown quiz or script): edit it as text. */
+function invalidOutput(ctx, o, what) {
+  return el('div', {}, el('div', { style: 'margin-bottom:10px' }, notice('info', o.stage.origin === 'import' ? `Imported as text, not as a structured ${what}. Edit it here, or Revise to restructure it.` : `This is not a valid ${what}; showing the text.`)), rawEditor(ctx, o));
+}
+
+function rawEditor(ctx, o) {
+  const st = o.stage;
   const mode = editorMode(ctx);
   const box = el('div', { class: `editor-split mode-${mode}` });
   const ta = textarea({ class: 'textarea editor', spellcheck: 'false', 'aria-label': 'Editable source' }, st.output);
