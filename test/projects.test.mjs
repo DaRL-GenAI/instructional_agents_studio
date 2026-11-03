@@ -125,10 +125,10 @@ test('duplicate copies the folder under a new id and a fresh history', async () 
 test('bookkeeping saves (a stage marked running) wait for the next real change to be committed', async () => {
   const projects = new Projects({ watch: false });
   const dir = path.join(tmpdir(), 'c-book'); const r = await projects.create(sampleProject(), dir);
-  const q = norm(r.project); q.foundation.syllabus.status = 'running';
+  const q = norm(r.project); q.foundation.syllabus.status = 'running'; q.audit.push({ id: 3, type: 'llm_call', status: 'running' });
   const s1 = await projects.save(q.id, q, r.head); assert.equal(s1.head, r.head, 'no commit for a status flip');
   assert.match(fs.readFileSync(path.join(dir, '.studio/meta.json'), 'utf8'), /"status": "running"/, 'but it is on disk');
-  q.foundation.syllabus.status = 'done'; q.foundation.syllabus.output = 'New syllabus'; q.audit.push({ id: 3, type: 'stage_done', stage: 'Syllabus' });
+  q.foundation.syllabus.status = 'done'; q.foundation.syllabus.output = 'New syllabus'; q.audit.push({ id: 4, type: 'stage_done', stage: 'Syllabus' });
   const s2 = await projects.save(q.id, q, s1.head); assert.notEqual(s2.head, r.head);
   assert.equal((await vcs.log(dir))[0].message, 'gen: design/syllabus.md (+2)');
   assert.equal(execFileSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8' }), '', 'everything committed');

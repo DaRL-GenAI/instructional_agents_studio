@@ -118,8 +118,8 @@ export class Projects {
     for (const f of prevMeta.files || []) if (!now.has(f) && f !== META) { s.removed.add(f); removeFile(s.dir, f); s.written.delete(f); changed.push(f); }
     if (!changed.length || !commit) return { head: s.head };
     const fresh = (project.audit || []).slice(s.auditLen);
-    // bookkeeping only (a stage marked running, a transcript growing): on disk now, committed with the next change
-    if (!fresh.length && !message && changed.every(f => f.startsWith('.studio/'))) { for (const f of changed) s.uncommitted.add(f); return { head: s.head }; }
+    // bookkeeping only (a stage marked running, a model call started): on disk now, committed with the next change
+    if (fresh.every(e => e.type === 'llm_call') && !message && changed.every(f => f.startsWith('.studio/'))) { for (const f of changed) s.uncommitted.add(f); return { head: s.head }; }
     changed.unshift(...[...s.uncommitted].filter(f => !changed.includes(f))); s.uncommitted.clear();
     const kind = fresh.map(COMMIT_KIND).reduce((a, k) => RANK[k] > RANK[a] ? k : a, 'edit');
     const shown = changed.filter(f => !f.startsWith('.studio/')); const first = shown[0] || changed[0];
