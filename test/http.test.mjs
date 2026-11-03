@@ -74,3 +74,18 @@ test('project paths cannot leave the folder', async () => {
   assert.equal((await req(app.port, { method: 'POST', path: '/api/projects/open', headers: { ...auth, 'Content-Type': 'application/json' }, body: { dir: '/etc' } })).status, 403);
   assert.equal((await req(app.port, { path: `/api/fs/dirs?path=${encodeURIComponent('/etc')}`, headers: auth })).status, 403);
 });
+
+test('model calls are forwarded for the page (endpoints without CORS), only for the app itself', async () => {
+  const up = http.createServer((q, r) => { const c = []; q.on('data', d => c.push(d)); q.on('end', () => { r.writeHead(200, { 'Content-Type': 'text/event-stream', 'Set-Cookie': 'x=1' }); r.write('data: {"auth":' + JSON.stringify(q.headers.authorization || null) + '}\n\n'); r.end('data: ' + Buffer.concat(c).toString() + '\n\n'); }); });
+  await new Promise(r => up.listen(0, '127.0.0.1', r));
+  try {
+    const target = `http://127.0.0.1:${up.address().port}/v1/chat/completions`;
+    const h = { ...auth, 'Content-Type': 'application/json', 'X-IA-Target': target, Cookie: 'ia_token=x' };
+    const r = await req(app.port, { method: 'POST', path: '/api/llm', headers: { ...h, Authorization: `Bearer ${app.token}` }, body: { model: 'm' } });
+    assert.equal(r.status, 200); assert.equal(r.headers['content-type'], 'text/event-stream'); assert.equal(r.headers['set-cookie'], undefined);
+    assert.match(r.body, /"model":"m"/);
+    assert.equal((await req(app.port, { method: 'POST', path: '/api/llm', headers: { 'Content-Type': 'application/json', 'X-IA-Target': target }, body: {} })).status, 401);
+    assert.equal((await req(app.port, { method: 'POST', path: '/api/llm', headers: { ...auth, 'X-IA-Target': target, Origin: 'http://127.0.0.1:9999' }, body: {} })).status, 403);
+    for (const t of ['file:///etc/passwd', 'not a url', 'http://user:pw@127.0.0.1/']) assert.equal((await req(app.port, { method: 'POST', path: '/api/llm', headers: { ...auth, 'X-IA-Target': t }, body: {} })).status, 400, t);
+  } finally { up.close(); }
+});

@@ -14,6 +14,7 @@ import * as media from './media.mjs';
 import * as config from './config.mjs';
 import * as vcs from './vcs.mjs';
 import * as agents from './agents/runner.mjs';
+import { forward } from './llmproxy.mjs';
 
 export const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PKG = JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8'));
@@ -119,6 +120,7 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
     if (p === '/api/projects/open' && m === 'POST') { const d = checkDir((await body(req)).dir); if (!isProjectDir(d)) throw new HttpError(400, 'Not a course folder (no .studio/meta.json). Create a new course there instead.'); return send(res, 200, await projects.load(projects.open(d).id)); }
     if (p === '/api/projects/import' && m === 'POST') { const b = await body(req); return send(res, 200, await projects.importJson(b.json, b.dir, { source: b.name || 'project.json' })); }
     if (p === '/api/fs/dirs' && m === 'GET') return send(res, 200, browse(url.searchParams.get('path')));
+    if (p === '/api/llm') return forward(req, res);
     if (p === '/api/agents/health' && m === 'GET') return send(res, 200, agents.health());
     if (p === '/api/agents/cancel' && m === 'POST') return send(res, 200, { cancelled: agents.cancel() });
     if (p === '/api/agents/revise' && m === 'POST') return revise(req, res);

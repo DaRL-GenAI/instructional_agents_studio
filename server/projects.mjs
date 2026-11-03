@@ -41,7 +41,7 @@ export class Projects {
     dir = fs.realpathSync(dir);
     for (const s of this.byId.values()) if (s.dir === dir) return s;
     const meta = JSON.parse(readText(dir, META) || 'null'); if (!meta?.project?.id) throw new HttpError(400, `${dir} is not an Instructional Agents project`);
-    const s = { id: meta.project.id, dir, head: null, written: new Map(), removed: new Set(), lock: Promise.resolve(), auditLen: 0, pending: new Set(), timer: null, watcher: null };
+    const s = { id: meta.project.id, dir, head: null, written: new Map(), removed: new Set(), uncommitted: new Set(), lock: Promise.resolve(), auditLen: 0, pending: new Set(), timer: null, watcher: null };
     // what the app last wrote = what is on disk now; decks: the sha the manifest names
     for (const [key, m] of Object.entries(meta.stages || {})) if (m.$deck) { const st = stageAt(this.read(dir), key); const sha = deckShaOf(st?.output); if (sha) s.written.set(m.$deck, sha); }
     s.auditLen = (readText(dir, '.studio/audit.jsonl') || '').split('\n').filter(Boolean).length;
@@ -118,6 +118,9 @@ export class Projects {
     for (const f of prevMeta.files || []) if (!now.has(f) && f !== META) { s.removed.add(f); removeFile(s.dir, f); s.written.delete(f); changed.push(f); }
     if (!changed.length || !commit) return { head: s.head };
     const fresh = (project.audit || []).slice(s.auditLen);
+    // bookkeeping only (a stage marked running, a transcript growing): on disk now, committed with the next change
+    if (!fresh.length && !message && changed.every(f => f.startsWith('.studio/'))) { for (const f of changed) s.uncommitted.add(f); return { head: s.head }; }
+    changed.unshift(...[...s.uncommitted].filter(f => !changed.includes(f))); s.uncommitted.clear();
     const kind = fresh.map(COMMIT_KIND).reduce((a, k) => RANK[k] > RANK[a] ? k : a, 'edit');
     const shown = changed.filter(f => !f.startsWith('.studio/')); const first = shown[0] || changed[0];
     const msg = message || `${kind}: ${first}${changed.length > 1 ? ` (+${changed.length - 1})` : ''}`;

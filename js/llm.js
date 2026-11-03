@@ -1,11 +1,18 @@
 // llm.js — thin OpenAI-compatible client that runs entirely in the browser.
 // Every call is streamed, timed, token-counted and handed to the audit log.
+import { LOCAL } from './fs/api.js';
 
 export class LLMError extends Error {
   constructor(message, detail) { super(message); this.detail = detail; }
 }
 
 function trimSlash(u) { return (u || '').replace(/\/+$/, ''); }
+
+// In the local app the server forwards model calls (many OpenAI-compatible endpoints send no CORS headers).
+function apiFetch(url, init = {}) {
+  if (!LOCAL) return fetch(url, init);
+  return fetch('/api/llm', { ...init, credentials: 'same-origin', headers: { ...(init.headers || {}), 'X-IA-Target': url } });
+}
 
 export function sha1Short(text) {
   // Non-cryptographic fingerprint used to detect stale inputs; stable per string.
@@ -26,7 +33,7 @@ export class LLMClient {
   get base() { return trimSlash(this.settings.baseUrl || 'https://api.openai.com/v1'); }
 
   async listModels() {
-    const r = await fetch(`${this.base}/models`, { headers: this.headers });
+    const r = await apiFetch(`${this.base}/models`, { headers: this.headers });
     if (!r.ok) throw new LLMError(`Model list failed (${r.status})`, await r.text());
     const j = await r.json();
     return (j.data || []).map(m => m.id).sort();
@@ -46,7 +53,7 @@ export class LLMClient {
 
     let r;
     try {
-      r = await fetch(`${this.base}/chat/completions`, { method: 'POST', headers: this.headers, body: JSON.stringify(body), signal });
+      r = await apiFetch(`${this.base}/chat/completions`, { method: 'POST', headers: this.headers, body: JSON.stringify(body), signal });
     } catch (e) {
       throw new LLMError(`Network error contacting ${this.base}: ${e.message}`);
     }
@@ -55,7 +62,7 @@ export class LLMClient {
       // Some OpenAI-compatible servers reject json mode / stream_options; retry once without extras.
       if (r.status === 400 && (json || body.stream_options)) {
         delete body.response_format; delete body.stream_options;
-        r = await fetch(`${this.base}/chat/completions`, { method: 'POST', headers: this.headers, body: JSON.stringify(body), signal });
+        r = await apiFetch(`${this.base}/chat/completions`, { method: 'POST', headers: this.headers, body: JSON.stringify(body), signal });
         if (!r.ok) throw new LLMError(`API error ${r.status}`, await r.text());
       } else {
         throw new LLMError(`API error ${r.status}`, detail);
@@ -102,7 +109,7 @@ export class LLMClient {
   async speak(text, { voice, model, instructions, signal } = {}) {
     const body = { model: model || this.settings.ttsModel || 'gpt-4o-mini-tts', voice: voice || this.settings.voice || 'alloy', input: text, response_format: 'mp3' };
     if (instructions && (body.model || '').includes('gpt-4o')) body.instructions = instructions;
-    const r = await fetch(`${this.base}/audio/speech`, { method: 'POST', headers: this.headers, body: JSON.stringify(body), signal });
+    const r = await apiFetch(`${this.base}/audio/speech`, { method: 'POST', headers: this.headers, body: JSON.stringify(body), signal });
     if (!r.ok) throw new LLMError(`TTS error ${r.status}`, await r.text());
     return await r.arrayBuffer();
   }
@@ -111,7 +118,7 @@ export class LLMClient {
 /** Image generation (OpenAI images API). Returns a data URL. */
 LLMClient.prototype.image = async function (prompt, { model = 'gpt-image-1', size = '1536x1024', quality = 'low', signal } = {}) {
   const body = { model, prompt, size, quality, n: 1, output_format: 'png' };
-  const r = await fetch(`${this.base}/images/generations`, { method: 'POST', headers: this.headers, body: JSON.stringify(body), signal });
+  const r = await apiFetch(`${this.base}/images/generations`, { method: 'POST', headers: this.headers, body: JSON.stringify(body), signal });
   if (!r.ok) throw new LLMError(`Image error ${r.status}`, await r.text());
   const j = await r.json(); const item = j.data?.[0];
   if (item?.b64_json) return `data:image/png;base64,${item.b64_json}`;
