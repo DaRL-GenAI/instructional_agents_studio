@@ -16,6 +16,8 @@ import * as vcs from './vcs.mjs';
 import * as agents from './agents/runner.mjs';
 import { forward } from './llmproxy.mjs';
 import * as files from './files.mjs';
+import * as jobs from './agents/jobs.mjs';
+import * as sessions from './agents/sessions.mjs';
 
 export const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PKG = JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8'));
@@ -175,6 +177,7 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
         }));
       }
     }
+    if ((g = p.match(/^\/api\/projects\/([\w-]+)\/agent(\/.*)?$/))) return agentApi(req, res, g[1], g[2] || '', m);
     if ((g = p.match(/^\/api\/projects\/([\w-]+)\/tree$/)) && m === 'GET') { const s = projects.state(g[1]); return send(res, 200, { entries: files.tree(s.dir), managed: [...files.managed(s.dir)] }); }
     if ((g = p.match(/^\/api\/projects\/([\w-]+)\/search$/)) && m === 'GET') return send(res, 200, { matches: files.search(projects.state(g[1]).dir, url.searchParams.get('q')) });
     if ((g = p.match(/^\/api\/projects\/([\w-]+)\/vcs$/)) && m === 'GET') return send(res, 200, await vcs.summary(projects.state(g[1]).dir));
@@ -209,12 +212,58 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
     res.end();
   }
 
+  // ---------------------------------------------------------------- the agent panel
+  async function agentApi(req, res, id, sub, m) {
+    const s = projects.state(id); let g;
+    const managed = () => files.managed(s.dir);
+    if (sub === '' && m === 'GET') { const a = agents.health().agents; return send(res, 200, { agents: a, running: jobs.runningOf(id) }); }
+    if (sub === '/sessions' && m === 'GET') return send(res, 200, { sessions: sessions.list(s.dir) });
+    if (sub === '/sessions' && m === 'POST') return send(res, 200, sessions.create(s.dir, await body(req)));
+    if (sub === '/cancel' && m === 'POST') return send(res, 200, { cancelled: jobs.cancel(id) });
+    if (sub === '/apply' && m === 'POST') {
+      const b = await body(req); const mg = managed();
+      const list = [...(b.files || []).map(f => f?.path), ...(b.removed || [])];
+      for (const rel of list) {
+        if (typeof rel !== 'string') throw new HttpError(400, 'Bad path');
+        resolveInside(s.dir, rel);
+        const why = jobs.rejectReason(rel, mg); if (why) throw new HttpError(403, `${rel}: ${why}`);
+        if (mg.has(rel)) throw new HttpError(409, `${rel} belongs to a stage: send it as part of the project`);
+      }
+      const r = await projects.applyAgent(id, { project: b.project || null, base: b.base || null, files: b.files || [], removed: b.removed || [], message: String(b.message || 'agent: changes').slice(0, 300) });
+      if (b.session && /^[a-z0-9]+$/.test(b.session)) jobs.discard(s.dir, b.session);
+      return send(res, 200, r);
+    }
+    if (sub === '/undo' && m === 'POST') { const b = await body(req); if (!/^[0-9a-f]{40}$/.test(b.oid || '')) throw new HttpError(400, 'Bad commit'); return send(res, 200, await projects.undoAgent(id, b.oid)); }
+    if ((g = sub.match(/^\/sessions\/([a-z0-9]+)(\/.*)?$/))) {
+      const sid = g[1], rest = g[2] || '';
+      if (rest === '' && m === 'GET') { const x = sessions.get(s.dir, sid); const r = jobs.runningOf(id); return send(res, 200, { ...x, running: r?.session === sid, pending: r?.session === sid ? null : jobs.pending(s.dir, sid, { managed: managed() }) }); }
+      if (rest === '' && m === 'PUT') return send(res, 200, sessions.put(s.dir, sid, await body(req)));
+      if (rest === '' && m === 'DELETE') { if (jobs.runningOf(id)?.session === sid) throw new HttpError(409, 'Stop the agent first'); jobs.discard(s.dir, sid); sessions.remove(s.dir, sid); return send(res, 204); }
+      if (rest === '/run' && m === 'POST') {
+        const b = await body(req);
+        if (typeof b.message !== 'string' || !b.message.trim()) throw new HttpError(400, 'Write a message');
+        const context = (Array.isArray(b.context) ? b.context : []).filter(c => c && typeof c.path === 'string').map(c => ({ path: c.path, label: String(c.label || ''), slides: Array.isArray(c.slides) ? c.slides.filter(Number.isInteger) : undefined, paragraphs: Array.isArray(c.paragraphs) ? c.paragraphs.filter(Number.isInteger) : undefined, lines: Array.isArray(c.lines) ? c.lines.slice(0, 2).map(Number) : undefined, text: typeof c.text === 'string' ? c.text : undefined }));
+        const scope = (Array.isArray(b.scope) ? b.scope : context.map(c => c.path)).filter(x => typeof x === 'string').slice(0, 50);
+        const emit = ev => broadcast({ type: 'agent', id, ...ev });
+        const r = await jobs.run({ id, root: s.dir, session: sid, message: b.message, context, scope, managed, emit });
+        r.done.catch(e => emit({ type: 'done', session: sid, error: e.message, changes: [] }));
+        return send(res, 202, { session: sid, agent: r.agent });
+      }
+      if (rest === '/discard' && m === 'POST') { if (jobs.runningOf(id)?.session === sid) throw new HttpError(409, 'Stop the agent first'); jobs.discard(s.dir, sid); return send(res, 204); }
+      if ((g = rest.match(/^\/file\/(.+)$/)) && m === 'GET') {
+        let buf; try { buf = jobs.readJobFile(s.dir, sid, g[1]); } catch (e) { if (e.code === 'ENOENT') return send(res, 404, { error: 'No such file' }); throw e; }
+        res.writeHead(200, { 'Content-Type': MIME[path.extname(g[1]).toLowerCase()] || 'application/octet-stream', 'Content-Length': buf.length, 'Cache-Control': 'no-store', ETag: `"${sha256(buf)}"` }); return res.end(buf);
+      }
+    }
+    return send(res, 404, { error: 'Not found' });
+  }
+
   const origin = `http://127.0.0.1:${bound}`;
   const startUrl = `${origin}/?token=${token}${session.openId ? `#/p/${session.openId}/overview` : '#/projects'}`;
   if (!quiet) console.log(`Instructional Agents ${PKG.version} on ${origin}${editor ? ` (editor: ${editor.dir})` : ' (editor: https://edit.chaxus.com)'}`);
   return {
     server, port: bound, origin, token, url: startUrl, projects, editor,
-    async close() { agents.cancel('server stopped'); for (const c of clients) c.terminate(); wss.close(); await projects.close(); await new Promise(r => server.close(r)); },
+    async close() { agents.cancel('server stopped'); jobs.cancelAll('server stopped'); for (const c of clients) c.terminate(); wss.close(); await projects.close(); await new Promise(r => server.close(r)); },
   };
 }
 

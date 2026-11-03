@@ -7,6 +7,7 @@ import path from 'node:path';
 import { META } from '../js/fs/serialize.js';
 import { resolveInside, readText } from './workspace.mjs';
 import { HttpError } from './projects.mjs';
+import { GUIDE_FILES, isManagedGuide } from './agents/guide.mjs';
 
 const SKIP_DIRS = new Set(['.git', 'node_modules']);
 const MAX_ENTRIES = 20000;
@@ -33,7 +34,9 @@ export function tree(root) {
 /** Files the app writes itself (through the project store): course.json, .studio/**, every stage output file. */
 export function managed(root) {
   const meta = JSON.parse(readText(root, META) || '{}');
-  return new Set([META, 'course.json', ...(meta.files || [])]);
+  const out = new Set([META, 'course.json', ...(meta.files || [])]);
+  for (const f of GUIDE_FILES) if (isManagedGuide(readText(root, f))) out.add(f);
+  return out;
 }
 export const isInternal = rel => rel === '.git' || rel.startsWith('.git/') || rel === '.studio' || rel.startsWith('.studio/');
 
@@ -87,7 +90,7 @@ export function search(root, q, { limit = 200 } = {}) {
   const needle = String(q || '').toLowerCase(); if (!needle) return [];
   const out = [];
   for (const e of tree(root)) {
-    if (e.dir || e.size > 1024 * 1024 || /^(build|\.studio\/(decks|trash|backup|jobs|stages))\//.test(e.path)) continue;
+    if (e.dir || e.size > 1024 * 1024 || /^(build|\.studio\/(decks|trash|backup|jobs|stages|sessions))\//.test(e.path)) continue;
     if (!TEXT_EXT.has(path.extname(e.path).toLowerCase())) continue;
     const name = e.path.toLowerCase().includes(needle);
     const text = readText(root, e.path) || '';

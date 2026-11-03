@@ -11,6 +11,7 @@ import { readText, readBuf, writeFile, removeFile, sha256 } from './workspace.mj
 import * as vcs from './vcs.mjs';
 import * as media from './media.mjs';
 import * as config from './config.mjs';
+import { guideFiles, isManagedGuide } from './agents/guide.mjs';
 
 export class HttpError extends Error { constructor(status, message, body) { super(message); this.status = status; this.body = body; } }
 
@@ -31,7 +32,7 @@ export const isProjectDir = dir => fs.existsSync(path.join(dir, META));
 
 const COMMIT_KIND = e => e.type === 'slide_revision' && /claude|codex/i.test(e.agent || '') ? 'agent' : e.type === 'import' ? 'import' : ['stage_done', 'auto_repair'].includes(e.type) ? 'gen' : 'edit';
 const RANK = { agent: 3, import: 2, gen: 1, edit: 0 };
-const IGNORED = /(^|\/)(\.git|node_modules|build|\.studio\/(decks|jobs|trash|backup))(\/|$)|\.tmp$|~$|\.swp$/;
+const IGNORED = /(^|\/)(\.git|node_modules|build|\.studio\/(decks|jobs|trash|backup|sessions))(\/|$)|\.tmp$|~$|\.swp$/;
 
 export class Projects {
   constructor({ onChange = () => {}, watch = true } = {}) { this.byId = new Map(); this.onChange = onChange; this.watch = watch; }
@@ -47,6 +48,8 @@ export class Projects {
     for (const [key, m] of Object.entries(meta.stages || {})) if (m.$deck) { const sha = binaryOf(stageAt(project, key)?.output)?.sha; if (sha) s.written.set(m.$deck, sha); }
     s.auditLen = (readText(dir, '.studio/audit.jsonl') || '').split('\n').filter(Boolean).length;
     this.byId.set(s.id, s);
+    vcs.ensureIgnores(dir);
+    if (meta.stages) this.ensureGuide(s, project || this.read(dir));
     config.remember({ id: s.id, dir, name: meta.project.name });
     if (watch) this.startWatch(s);
     return s;
@@ -103,7 +106,7 @@ export class Projects {
   async write(s, project, { message, extra = [], commit = true } = {}) {
     if (project.id !== s.id) throw new HttpError(400, 'Project id mismatch');
     const prevMeta = JSON.parse(readText(s.dir, META) || '{}');
-    const { files, decks } = serialize(project); const changed = [...extra];
+    const { files, decks, meta } = serialize(project); const changed = [...extra];
     for (const [f, text] of Object.entries(files)) {
       const h = sha256(text); if (s.written.get(f) === h && readText(s.dir, f) === text) continue;
       if (readText(s.dir, f) !== text) { writeFile(s.dir, f, text); changed.push(f); }
@@ -116,6 +119,7 @@ export class Projects {
       const src = media.deckFile(s.dir, chapterId, sha, format); if (!src) continue;
       writeFile(s.dir, f, src); s.written.set(f, sha); changed.push(f);
     }
+    for (const f of this.guide(s, project, meta)) changed.push(f);
     const now = new Set([...Object.keys(files), ...Object.keys(decks)]);
     for (const f of prevMeta.files || []) if (!now.has(f) && f !== META) { s.removed.add(f); removeFile(s.dir, f); s.written.delete(f); changed.push(f); }
     if (!changed.length || !commit) return { head: s.head };
@@ -129,6 +133,22 @@ export class Projects {
     s.head = await vcs.commit(s.dir, changed, msg); s.auditLen = (project.audit || []).length;
     this.onChange({ type: 'changed', id: s.id, head: s.head, paths: changed, source: 'app' });
     return { head: s.head };
+  }
+
+  /** Write AGENTS.md / CLAUDE.md when they are missing or ours and out of date; returns the paths written. */
+  guide(s, project, meta = serialize(project).meta) {
+    const out = [];
+    for (const [f, text] of Object.entries(guideFiles(project, meta))) {
+      const cur = readText(s.dir, f);
+      if (cur === text || (cur !== null && !isManagedGuide(cur))) continue;
+      s.written.set(f, sha256(text)); writeFile(s.dir, f, text); out.push(f);
+    }
+    return out;
+  }
+  /** On open: bring the guide up to date (one commit when it changed). */
+  ensureGuide(s, project) {
+    let paths; try { paths = this.guide(s, project); } catch (e) { console.warn('AGENTS.md:', e.message); return; }
+    if (paths.length) this.locked(s, async () => { s.head = await vcs.commit(s.dir, paths, `gen: ${paths.join(', ')}`); }).catch(e => console.warn('AGENTS.md commit:', e.message));
   }
 
   /** A Workspace file operation: fn(s) changes files on disk and returns { added: [paths], removed: [paths], message }.
@@ -146,6 +166,47 @@ export class Projects {
         this.onChange({ type: 'changed', id: s.id, head: s.head, paths, source: 'app', committed: s.head !== before });
       }
       return { head: s.head, ...result };
+    });
+  }
+
+  // ---------------------------------------------------------------- agent changes the instructor kept
+  /** Apply reviewed agent changes as one commit: plain files ({ path, data: base64 }), removed plain files, and the
+   *  project (stage files changed through the store). Paths are checked by the caller (http.mjs). */
+  applyAgent(id, { project, base, files = [], removed = [], message }) {
+    const s = this.state(id);
+    return this.locked(s, async () => {
+      s.head ??= await vcs.head(s.dir);
+      if (base && s.head && base !== s.head) throw new HttpError(409, 'The project changed on disk', { head: s.head, project: this.read(s.dir) });
+      const plain = [];
+      for (const f of files) { const buf = Buffer.from(String(f.data || ''), 'base64'); s.written.set(f.path, sha256(buf)); writeFile(s.dir, f.path, buf); plain.push(f.path); }
+      for (const f of removed) { s.removed.add(f); s.written.delete(f); removeFile(s.dir, f); plain.push(f); }
+      const before = s.head;
+      if (project) await this.write(s, project, { message, extra: plain });
+      else if (plain.length) { s.head = await vcs.commit(s.dir, plain, message); this.onChange({ type: 'changed', id: s.id, head: s.head, paths: plain, source: 'app' }); }
+      return { head: s.head, commit: s.head !== before ? s.head : null };
+    });
+  }
+
+  /** Revert one agent commit (only while none of its files changed since). */
+  undoAgent(id, oid) {
+    const s = this.state(id);
+    return this.locked(s, async () => {
+      s.head ??= await vcs.head(s.dir);
+      let info; try { info = await vcs.changedPaths(s.dir, oid); } catch { throw new HttpError(404, 'No such commit'); }
+      if (!/^agent:/.test(info.message)) throw new HttpError(400, 'Only agent changes can be undone here');
+      if (!info.parent) throw new HttpError(400, 'Nothing to go back to');
+      for (const p of info.paths) {
+        const now = readBuf(s.dir, p); const then = await vcs.readAt(s.dir, oid, p);
+        if ((now ? sha256(now) : null) !== (then ? sha256(then) : null)) throw new HttpError(409, `${p} changed since; undo it from History instead`);
+      }
+      for (const p of info.paths) {
+        const prev = await vcs.readAt(s.dir, info.parent, p);
+        if (prev) { s.written.set(p, sha256(prev)); writeFile(s.dir, p, prev); } else { s.removed.add(p); s.written.delete(p); removeFile(s.dir, p); }
+      }
+      s.head = await vcs.commit(s.dir, info.paths, `agent: undo ${oid.slice(0, 7)} (${info.message.replace(/^agent:\s*/, '').slice(0, 60)})`);
+      s.auditLen = (readText(s.dir, '.studio/audit.jsonl') || '').split('\n').filter(Boolean).length;
+      this.onChange({ type: 'changed', id: s.id, head: s.head, paths: info.paths, source: 'app' });
+      return { head: s.head, paths: info.paths };
     });
   }
 

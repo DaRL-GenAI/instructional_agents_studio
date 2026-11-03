@@ -54,3 +54,44 @@ export function progressOf(agent, line) {
   if (j.type === 'turn.failed' || j.type === 'error') return { error: clip(j.error?.message || j.message || 'Codex failed') };
   return null;
 }
+
+// ---------------------------------------------------------------- the agent panel (a chat over a copy of the project)
+/** argv for one panel turn in `cwd` (the job copy); `resume`: the CLI's session id from the previous turn. */
+export function panelCommand(agent, bin, prompt, cwd, resume = null) {
+  if (agent === 'claude') return [bin, '-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--permission-prompts', 'none', '--allowedTools', 'Read,Write,Edit,Glob,Grep,Bash', '--disallowedTools', 'WebFetch,WebSearch', ...(resume ? ['--resume', resume] : [])];
+  // `exec resume` takes no -C/--sandbox: the cwd comes from the process, the sandbox from a config override
+  if (resume) return [bin, 'exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="workspace-write"', resume, prompt];
+  return [bin, 'exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-C', cwd, prompt];
+}
+
+/** One event line → { step?, text?, session?, error?, final? } (null when nothing to show). */
+export function eventOf(agent, line) {
+  let j; try { j = JSON.parse(line); } catch { return null; }
+  const out = {};
+  if (agent === 'claude') {
+    if (j.session_id && (j.type === 'system' || j.type === 'result')) out.session = j.session_id;
+    if (j.type === 'result') { out.final = true; if (j.is_error) out.error = String(j.result || j.subtype || 'Claude Code failed').slice(0, 600); else out.text = j.result || ''; }
+  } else {
+    if (j.type === 'thread.started' && j.thread_id) out.session = j.thread_id;
+    const item = j.item || {};
+    if (j.type === 'item.completed' && item.type === 'agent_message') out.text = item.text || '';
+    if (j.type === 'turn.failed' || j.type === 'error') out.error = String(j.error?.message || j.message || 'Codex failed').slice(0, 600);
+  }
+  const p = progressOf(agent, line);
+  if (typeof p === 'string' && !(agent === 'codex' && out.text)) out.step = p;
+  return Object.keys(out).length ? out : null;
+}
+
+const clipText = (s, n) => String(s ?? '').slice(0, n);
+/** The instruction for one panel turn. context: [{ path, label, slides?, lines?, text? }] from the editor. */
+export function panelPrompt({ message, context = [], resumed = false }) {
+  const ctx = context.slice(0, 20).map(c => {
+    const where = c.slides?.length ? ` (slide${c.slides.length > 1 ? 's' : ''} ${c.slides.join(', ')})` : c.lines ? ` (lines ${c.lines[0]}-${c.lines[1]})` : c.paragraphs?.length ? ` (paragraph${c.paragraphs.length > 1 ? 's' : ''} ${c.paragraphs.join(', ')})` : '';
+    return `- ${clipText(c.path, 400)}${where}${c.text ? `:\n\`\`\`\n${clipText(c.text, 6000)}\n\`\`\`` : ''}`;
+  });
+  return `${clipText(message, 20000)}
+${ctx.length ? `\nIn scope (the instructor's current file and selection):\n${ctx.join('\n')}\n` : ''}${resumed ? '' : `
+You are working in a copy of the course project (read AGENTS.md for its layout and rules). Edit the files here in
+place: the instructor reviews every change before it is applied to the real project. sources/ and .studio/ are
+read-only. Put scratch files in .scratch/ (discarded). Finish with a short summary of what you changed.`}`;
+}

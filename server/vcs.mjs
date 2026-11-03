@@ -10,12 +10,21 @@ build/
 .studio/jobs/
 .studio/trash/
 .studio/backup/
+.studio/sessions/
 .DS_Store
 `;
 
 export async function init(dir) {
   if (!fs.existsSync(path.join(dir, '.git'))) await git.init({ fs, dir, defaultBranch: 'main' });
   if (!fs.existsSync(path.join(dir, '.gitignore'))) fs.writeFileSync(path.join(dir, '.gitignore'), GITIGNORE);
+}
+
+/** Older project folders: add ignore lines added since (only to a .gitignore the app wrote). */
+export function ensureIgnores(dir) {
+  const f = path.join(dir, '.gitignore'); let t; try { t = fs.readFileSync(f, 'utf8'); } catch { return; }
+  if (!t.startsWith('# Instructional Agents')) return;
+  const missing = GITIGNORE.split('\n').filter(l => l && !l.startsWith('#') && !t.split('\n').includes(l));
+  if (missing.length) fs.writeFileSync(f, t.replace(/\n?$/, '\n') + missing.join('\n') + '\n');
 }
 
 export async function head(dir) { try { return await git.resolveRef({ fs, dir, ref: 'HEAD' }); } catch { return null; } }
@@ -58,4 +67,19 @@ export async function summary(dir) {
   const branch = await git.currentBranch({ fs, dir, fullname: false }).catch(() => null);
   const last = (await log(dir, 1).catch(() => []))[0] || null;
   return { branch, head: last?.oid || null, last };
+}
+
+/** The files a commit changed (against its first parent): [paths]. */
+export async function changedPaths(dir, oid) {
+  const { commit } = await git.readCommit({ fs, dir, oid });
+  const parent = commit.parent[0];
+  const trees = parent ? [git.TREE({ ref: parent }), git.TREE({ ref: oid })] : [git.TREE({ ref: oid })];
+  const out = await git.walk({ fs, dir, trees, map: async (filepath, [a, b]) => {
+    if (filepath === '.') return undefined;
+    const [ta, tb] = [await a?.type(), parent ? await b?.type() : 'blob'];
+    if (ta === 'tree' || tb === 'tree') return undefined;
+    const [oa, ob] = parent ? [await a?.oid(), await b?.oid()] : [null, await a?.oid()];
+    return oa !== ob ? filepath : undefined;
+  } });
+  return { parent: parent || null, message: commit.message.trim(), paths: out.filter(Boolean) };
 }
