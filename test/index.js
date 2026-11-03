@@ -9,3 +9,4 @@ import './workspace.test.mjs';
 import './pipeline.test.mjs';
 import './agentpanel.test.mjs';
 import './import.test.mjs';
+import './allowhost.test.mjs';

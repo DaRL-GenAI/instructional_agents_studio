@@ -9,9 +9,11 @@ import crypto from 'node:crypto';
 export const COOKIE = 'ia_token';
 export const newToken = () => crypto.randomBytes(24).toString('base64url');
 
-export function createGuard({ token, port }) {
+export function createGuard({ token, port, allowHosts = [] }) {
   const hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
   const origins = new Set([...hosts].map(h => `http://${h}`));
+  // opt-in extra hostnames (e.g. a private tunnel in front of the app): https only, token still required
+  for (const h of allowHosts.map(x => String(x).trim().toLowerCase()).filter(Boolean)) { hosts.add(h); origins.add(`https://${h}`); }
   const same = (a, b) => { const x = Buffer.from(String(a || '')), y = Buffer.from(b); return x.length === y.length && crypto.timingSafeEqual(x, y); };
   const cookieToken = req => { for (const part of String(req.headers.cookie || '').split(';')) { const [k, ...v] = part.trim().split('='); if (k === COOKIE) return v.join('='); } return null; };
   const bearer = req => { const m = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/); return m ? m[1] : null; };

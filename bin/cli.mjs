@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // instructional-agents — Instructional Agents Studio as a local app.
 //
-//   instructional-agents [dir] [--port N] [--no-open]   start (dir: a course folder, or where a new one goes)
+//   instructional-agents [dir] [--port N] [--no-open] [--allow-host H]   start (dir: a course folder, or where a new one goes;
+//                                                     --allow-host: also accept https://H, e.g. a private tunnel)
 //   instructional-agents doctor                           check Node, the agent CLIs, LaTeX and the editor
 //   instructional-agents import <project.json> [dir]      turn a project exported from the browser edition into a folder
 //   instructional-agents editor install --url U --sha256 H [--version V]
@@ -12,7 +13,7 @@ import path from 'node:path';
 const argv = process.argv.slice(2);
 const flag = name => argv.includes(name);
 const opt = (name, fallback) => { const i = argv.indexOf(name); return i >= 0 && argv[i + 1] ? argv[i + 1] : fallback; };
-const positional = argv.filter((a, i) => !a.startsWith('--') && !['--port', '--url', '--sha256', '--version'].includes(argv[i - 1]));
+const positional = argv.filter((a, i) => !a.startsWith('--') && !['--port', '--url', '--sha256', '--version', '--allow-host'].includes(argv[i - 1]));
 const [major, minor] = process.versions.node.split('.').map(Number);
 if (major < 20 || (major === 20 && minor < 19)) { console.error(`instructional-agents needs Node.js 20.19 or newer (this is ${process.version}).`); process.exit(1); }
 
@@ -25,7 +26,7 @@ else await start(positional[0]);
 
 async function start(dir) {
   const { startServer } = await import('../server/http.mjs');
-  const app = await startServer({ dir: dir ? path.resolve(dir) : null, port: Number(opt('--port', process.env.IA_PORT || 8790)) });
+  const app = await startServer({ dir: dir ? path.resolve(dir) : null, port: Number(opt('--port', process.env.IA_PORT || 8790)), allowHosts: [opt('--allow-host', ''), ...String(process.env.IA_ALLOW_HOSTS || '').split(',')].filter(Boolean) });
   console.log(`\n  Open ${app.url}\n`);
   if (!flag('--no-open')) openBrowser(app.url);
   const stop = async () => { await app.close(); process.exit(0); };

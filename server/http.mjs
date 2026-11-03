@@ -26,7 +26,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 const LIMIT = { json: 256 * 1024 * 1024, media: 2 * 1024 * 1024 * 1024 };
 
 /** Start the server. `dir`: the folder the app was started in (a project, or where a new one should go). */
-export async function startServer({ dir = null, port = 8790, token = newToken(), editorDir, watch = true, quiet = false } = {}) {
+export async function startServer({ dir = null, port = 8790, token = newToken(), editorDir, watch = true, quiet = false, allowHosts = [] } = {}) {
   const editor = editorDir !== undefined ? (editorDir ? { dir: path.resolve(editorDir), version: 'local' } : null) : findEditor();
   const clients = new Set();
   const broadcast = ev => { const s = JSON.stringify(ev); for (const c of clients) if (c.readyState === 1) c.send(s); };
@@ -41,7 +41,7 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
   const listen = p => new Promise((res, rej) => { server.once('error', rej); server.listen(p, '127.0.0.1', () => { server.off('error', rej); res(server.address().port); }); });
   let bound;
   for (let p = port, tries = 0; ; p++, tries++) { try { bound = await listen(p); break; } catch (e) { if (e.code !== 'EADDRINUSE' || tries > 20 || port === 0) throw e; } }
-  const guard = createGuard({ token, port: bound });
+  const guard = createGuard({ token, port: bound, allowHosts });
   const editorTop = editor ? new Set(fs.readdirSync(editor.dir).filter(n => !STATIC_TOP.has(n))) : new Set();
   const isolate = !!editor; // the editor's wasm threads need a cross-origin isolated page
 
