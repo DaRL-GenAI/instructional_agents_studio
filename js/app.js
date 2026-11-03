@@ -5,6 +5,7 @@ import { account, loadAccount, listProjects, getProject, ProjectStore, MODULES, 
 import { Pipeline } from './pipeline.js';
 import { buildZip, download } from './export.js';
 import { deckBlob, migrateLegacyDeck, commitDeck } from './pptxdeck.js';
+import { docManifest, docBlob, commitDoc } from './docstage.js';
 import { LOCAL, onServerEvent } from './fs/api.js';
 import { backend } from './fs/backend.js';
 import { slug } from './export.js';
@@ -17,6 +18,7 @@ import * as slides from './views/slides.js';
 import * as assessments from './views/assessments.js';
 import * as videos from './views/videos.js';
 import * as audit from './views/audit.js';
+import * as workspace from './views/workspace.js';
 
 const VIEWS = { overview, basics, design, slides, assessments, videos, audit };
 
@@ -41,7 +43,8 @@ const ctx = {
       for (const ch of ctx.store.project.chapters) {
         const [audios, video, scene_audios, anim_video, images, lesson] = await Promise.all(['audios', 'video', 'scene_audios', 'anim_video', 'images', 'lesson_bundle'].map(k => ctx.store.getMedia(ch.id, k)));
         const deck = await deckBlob(ctx.store, ch.id);
-        if (audios || video || scene_audios || anim_video || images || lesson || deck) media[ch.id] = { audios, video, scene_audios, anim_video, images, lesson, deck };
+        let docs = null; for (const [sid, st] of Object.entries(ch.stages)) if (docManifest(st?.output)) (docs ||= {})[sid] = await docBlob(ctx.store, ch.id, sid);
+        if (audios || video || scene_audios || anim_video || images || lesson || deck || docs) media[ch.id] = { audios, video, scene_audios, anim_video, images, lesson, deck, docs };
       }
       media.template = await ctx.store.getMedia('project', 'template');
       const blob = await buildZip(ctx.store.project, media);
@@ -59,6 +62,7 @@ async function openProject(id) {
     if (!ctx.store.dirty && (p.updatedAt || '') > (ctx.store.project.updatedAt || '')) { ctx.store.project = p; ctx.pipe.store = ctx.store; }
     return true;
   }
+  if (!(await workspace.release(id))) return 'stay';
   if (ctx.store) await ctx.store.flush();
   ctx.store = new ProjectStore(p); ctx.pipe = new Pipeline(ctx.store); ctx.ui = {}; ctx.media = {};
   ctx.pipe.onLive = renderLive;
@@ -74,9 +78,14 @@ async function adoptExternalDecks(store) {
   for (const x of backend.externalDecks?.(store.id) || []) {
     const ch = store.chapter(x.chapterId); if (!ch) continue;
     try {
+      if (x.format === 'docx') {
+        const blob = await store.getMedia(x.chapterId, `doc:${x.sha}`); if (!blob) continue;
+        if (await commitDoc(store, x.chapterId, x.stageId, blob, { label: `${ch.title} / ${x.stageId}`, where: ch.title })) toast(`${x.path} changed on disk: saved as a new version`, 'ok');
+        continue;
+      }
       const blob = await store.getMedia(x.chapterId, `deck:${x.sha}`); if (!blob) continue;
       if (await commitDeck(store, x.chapterId, blob, { label: 'Slides', where: ch.title })) toast(`Slides of “${ch.title}” changed on disk: saved as a new version`, 'ok');
-    } catch (e) { console.warn('could not adopt the deck from disk', e); }
+    } catch (e) { console.warn('could not adopt the file from disk', e); }
   }
 }
 async function onDiskChange(ev) {
@@ -106,14 +115,17 @@ function render() {
     const r = ctx.route;
     renderNav(); renderTopbar();
     const panel = $('#main'); panel.innerHTML = '';
+    const wsMode = r.name === 'project' && r.module === 'workspace' && !!ctx.store;
+    document.body.classList.toggle('ws-mode', wsMode); panel.hidden = wsMode; $('#ws-host').hidden = !wsMode;
     try {
+      if (wsMode) workspace.mount(ctx, $('#ws-host')); else
       if (r.name === 'projects') panel.append(home.render(ctx));
       else if (r.name === 'account') panel.append(accountView.render(ctx));
       else if (r.name === 'project' && ctx.store) panel.append((VIEWS[r.module] || overview).render(ctx));
       else panel.append(home.render(ctx));
     } catch (e) {
       console.error('render failed', e);
-      panel.append(errorPanel(e));
+      panel.hidden = false; panel.append(errorPanel(e));
     }
     renderLive();
     document.title = ctx.store && r.name === 'project' ? `${ctx.store.project.name} · ${MODULES.find(m => m.id === r.module)?.name || 'Overview'} · Studio` : r.name === 'account' ? 'Account · Studio' : 'Instructional Agents Studio';
@@ -175,8 +187,9 @@ async function route() {
   try {
     if (ctx.route.name === 'project') {
       const ok = await openProject(ctx.route.id);
+      if (ok === 'stay') { history.back(); return; }
       if (!ok) { toast('Project not found', 'error'); go('projects'); return; }
-      if (!VIEWS[ctx.route.module]) { go('p', ctx.route.id, 'overview'); return; }
+      if (!VIEWS[ctx.route.module] && ctx.route.module !== 'workspace') { go('p', ctx.route.id, 'overview'); return; }
     }
     if (ctx.route.name === 'projects' || ctx.route.name === 'account') await ctx.reloadProjects();
   } catch (e) {
@@ -194,7 +207,7 @@ async function boot() {
   setupLivePanel();
   onRoute(route);
   if (LOCAL) onServerEvent(onDiskChange);
-  window.addEventListener('beforeunload', e => { if (ctx.busy) { e.preventDefault(); e.returnValue = ''; } ctx.store?.flush(); });
+  window.addEventListener('beforeunload', e => { if (ctx.busy || workspace.dirtyCount()) { e.preventDefault(); e.returnValue = ''; } ctx.store?.flush(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) ctx.store?.flush(); });
   if (!location.hash) location.hash = ctx.projects.length ? href('p', ctx.projects[0].id, 'overview') : href('projects');
   await route();

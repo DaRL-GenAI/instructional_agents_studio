@@ -7,6 +7,9 @@ import { openPptxEditor, importPptx } from './pptxeditor.js';
 import { deckManifest } from '../pptxdeck.js';
 import { storyboardEditor } from './storyboard.js';
 import { download, textBlob, slug, scriptMarkdown, quizMarkdown } from '../export.js';
+import { docManifest, docBlob, outputText, convertToWord, convertToMarkdown, CONVERTIBLE } from '../docstage.js';
+import { keyOfStage, fileOfKey } from '../ws/stages.js';
+import { wsHref } from '../router.js';
 
 export function stageStatus(pipe, stage, inputs) {
   if (!stage) return 'idle';
@@ -35,17 +38,22 @@ export function stageDetail(ctx, o) {
 
   const running = stage.status === 'running';
   const pptx = o.kind === 'slides' && !!deckManifest(stage.output);
+  const docx = !!docManifest(stage.output);
+  const wsFile = stage.output ? fileOfKey(store.project, keyOfStage(o)) : null;
+  const convertible = !!o.chapter && CONVERTIBLE.has(keyOfStage(o)?.split('.')[2]) && !!stage.output && !running;
   const actions = el('div', { class: 'stage-actions' },
     pptx ? button({ label: 'Edit slides', icon: 'presentation', variant: 'primary', disabled: !!ctx.busy, onClick: () => openPptxEditor(ctx, o) }) : null,
     button({ label: stage.status === 'done' ? 'Re-run' : 'Generate', icon: stage.status === 'done' ? 'refresh' : 'play', variant: pptx ? '' : 'primary', disabled: !!ctx.busy, onClick: () => o.run({}) }),
     o.kind === 'slides' ? button({ label: 'Import .pptx', icon: 'upload', disabled: !!ctx.busy || running, onClick: () => importPptx(ctx, o) }) : null,
+    wsFile ? el('a', { class: 'btn', href: wsHref(store.id, wsFile), title: wsFile }, icon('code'), 'Open in Workspace') : null,
+    convertible ? button({ label: docx ? 'Convert to Markdown' : 'Convert to Word', icon: 'file-text', disabled: !!ctx.busy, onClick: () => convertStage(ctx, o, docx) }) : null,
     stage.output ? button({ label: 'Re-run with comments', icon: 'message', variant: ui.feedbackOpen ? 'ghost' : '', disabled: !!ctx.busy, onClick: () => { ui.feedbackOpen = !ui.feedbackOpen; ctx.render(); } }) : null,
     o.runAll ? button({ label: o.runAllLabel || 'Generate remaining', icon: 'fast-forward', disabled: !!ctx.busy, onClick: o.runAll }) : null,
     running ? button({ label: 'Cancel', variant: 'danger', onClick: () => pipe.cancel() }) : null,
     stage.output ? button({ label: stage.reviewed ? 'Reviewed' : 'Mark reviewed', icon: 'check', variant: stage.reviewed ? 'ghost' : '', onClick: () => { stage.reviewed = !stage.reviewed; store.log({ type: stage.reviewed ? 'approve' : 'unapprove', stage: o.label, where: o.where, version: stage.version }); store.save(); ctx.render(); } }) : null,
     stage.output && o.kind === 'slides' ? button({ label: 'Download .pptx', icon: 'download', onClick: () => downloadStage(ctx, o, 'pptx') }) : null,
     stage.output && o.kind === 'slides' && !pptx ? button({ label: 'JSON', variant: 'ghost', size: 'sm', onClick: () => downloadStage(ctx, o, 'json') }) : null,
-    stage.output && o.kind !== 'slides' ? button({ label: 'Download', icon: 'download', onClick: () => downloadStage(ctx, o) }) : null,
+    stage.output && o.kind !== 'slides' ? button({ label: docx ? 'Download .docx' : 'Download', icon: 'download', onClick: () => downloadStage(ctx, o) }) : null,
     stage.output && o.kind !== 'json' ? button({ label: 'Program Chair review', icon: 'search', disabled: !!ctx.busy, onClick: () => ctx.guarded('Reviewing', async () => { if (!ctx.requireKey()) return; stage.review = await pipe.review(o.title, stageText(o), o.where); store.save(); ui.tab = 'review'; }) }) : null,
     stage.output && o.next ? button({ label: 'Next', icon: 'arrow-right', variant: 'ghost', onClick: o.next }) : null);
   wrap.append(actions);
@@ -89,8 +97,17 @@ function modeControl(ctx) {
   return segmented([['source', 'Source'], ['split', 'Split'], ['preview', 'Preview']], editorMode(ctx), v => { ctx.ui.editorMode = v; ctx.render(); });
 }
 
+async function convertStage(ctx, o, toMarkdown) {
+  const stageId = keyOfStage(o).split('.')[2];
+  await ctx.guarded(toMarkdown ? 'Converting to Markdown' : 'Converting to Word', async () => {
+    const changed = await (toMarkdown ? convertToMarkdown : convertToWord)(ctx.store, o.chapter, stageId, { label: o.label, where: o.where });
+    toast(changed ? (toMarkdown ? `${stageId}.md` : `${stageId}.docx`) + ' is now the stage’s file' : 'No changes', changed ? 'ok' : undefined);
+  });
+}
+
 export function stageText(o) {
   const st = o.stage;
+  if (docManifest(st.output)) return outputText(st.output);
   if (o.kind === 'script') return scriptMarkdown(o.chapter, safeJson(st.output, []));
   if (o.kind === 'quiz') return quizMarkdown(o.chapter, safeJson(st.output, []));
   return st.output;
@@ -102,6 +119,8 @@ async function downloadStage(ctx, o, forced) {
     if (forced === 'json') { download(textBlob(st.output, 'application/json'), `${slug(o.chapter.title)}_slides.json`); return; }
     await downloadPptx(ctx, o); return;
   }
+  const dm = docManifest(st.output);
+  if (dm) { const blob = await docBlob(ctx.store, o.chapter.id, keyOfStage(o).split('.')[2]); if (!blob) return toast('The Word file is missing', 'error'); const name = `${slug(o.chapter.title)}_${dm.name}`; download(blob, name); ctx.store.log({ type: 'export', stage: o.label, file: name }); return; }
   const name = o.chapter ? `${slug(o.chapter.title)}_${o.file.replace('.json', o.kind === 'quiz' ? '.md' : '.json')}` : o.file;
   download(textBlob(stageText(o), o.kind === 'json' ? 'application/json' : 'text/markdown'), name);
   ctx.store.log({ type: 'export', stage: o.label, file: name });
@@ -113,6 +132,7 @@ function outputEditor(ctx, o) {
     if (st.status === 'running') return el('div', {}, el('p', { class: 'muted', style: 'margin-bottom:12px' }, 'Generating. The live response streams in the panel at the bottom right.'), el('div', { class: 'skeleton' }, el('i', { style: 'width:70%' }), el('i', { style: 'width:90%' }), el('i', { style: 'width:60%' }), el('i', { style: 'width:80%' })));
     return empty({ icon: 'file', title: 'Nothing generated yet', body: 'Review the Prompt tab if you want to adjust what the agents are asked, then press Generate.', actions: [button({ label: 'Generate', icon: 'play', variant: 'primary', disabled: !!ctx.busy, onClick: () => o.run({}) }), o.kind === 'slides' ? button({ label: 'Import .pptx', icon: 'upload', disabled: !!ctx.busy, onClick: () => importPptx(ctx, o) }) : null, button({ label: 'View prompt', variant: 'ghost', onClick: () => { ctx.ui[o.key].tab = 'prompt'; ctx.render(); } })] });
   }
+  if (docManifest(st.output)) return docPreview(ctx, o);
   if (!ctx.ui[o.key]?.forceRaw) {
     if (o.kind === 'slides') return deckEditor(ctx, o) || invalidOutput(ctx, o, 'slide deck');
     if (o.kind === 'storyboard') return storyboardEditor(ctx, o) || invalidOutput(ctx, o, 'storyboard');
@@ -130,6 +150,14 @@ function outputEditor(ctx, o) {
   const bar = el('div', { class: 'editor-bar', style: 'grid-column:1/-1' }, modeControl(ctx), el('span', {}), button({ label: 'Save edits', size: 'sm', variant: 'primary', onClick: save }), button({ label: 'Discard', size: 'sm', variant: 'ghost', onClick: () => { ta.value = st.output; refresh(); } }));
   box.append(bar, el('div', { class: 'editor-col source' }, ta), el('div', { class: 'editor-col preview-col' }, preview));
   return box;
+}
+
+/** A stage that is a Word document: what it says (read back as Markdown); editing happens in the Workspace. */
+function docPreview(ctx, o) {
+  const m = docManifest(o.stage.output); const preview = el('div', { class: 'preview md' });
+  renderMarkdown(m.text || '').then(h => { preview.innerHTML = h; });
+  const file = fileOfKey(ctx.store.project, keyOfStage(o));
+  return el('div', {}, el('div', { class: 'editor-bar' }, el('span', {}, icon('file-text', 'sm'), ` ${m.name} · ${Math.max(1, Math.round(m.bytes / 1024))} KB`), file ? el('a', { class: 'btn sm primary', href: wsHref(ctx.store.id, file) }, 'Edit document') : null), preview);
 }
 
 function outlineEditor(ctx, o) {
