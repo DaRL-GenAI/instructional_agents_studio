@@ -244,7 +244,7 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
         if (typeof b.message !== 'string' || !b.message.trim()) throw new HttpError(400, 'Write a message');
         const context = (Array.isArray(b.context) ? b.context : []).filter(c => c && typeof c.path === 'string').map(c => ({ path: c.path, label: String(c.label || ''), slides: Array.isArray(c.slides) ? c.slides.filter(Number.isInteger) : undefined, paragraphs: Array.isArray(c.paragraphs) ? c.paragraphs.filter(Number.isInteger) : undefined, lines: Array.isArray(c.lines) ? c.lines.slice(0, 2).map(Number) : undefined, text: typeof c.text === 'string' ? c.text : undefined }));
         const scope = (Array.isArray(b.scope) ? b.scope : context.map(c => c.path)).filter(x => typeof x === 'string').slice(0, 50);
-        const emit = ev => broadcast({ type: 'agent', id, ...ev });
+        const emit = ev => broadcast({ type: 'agent', id, ev });
         const r = await jobs.run({ id, root: s.dir, session: sid, message: b.message, context, scope, managed, emit });
         r.done.catch(e => emit({ type: 'done', session: sid, error: e.message, changes: [] }));
         return send(res, 202, { session: sid, agent: r.agent });

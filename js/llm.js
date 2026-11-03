@@ -3,7 +3,7 @@
 import { LOCAL } from './fs/api.js';
 
 export class LLMError extends Error {
-  constructor(message, detail) { super(message); this.detail = detail; }
+  constructor(message, detail, status) { super(message); this.detail = detail; this.status = status; }
 }
 
 function trimSlash(u) { return (u || '').replace(/\/+$/, ''); }
@@ -103,6 +103,25 @@ export class LLMClient {
     if (!usage) usage = { prompt_tokens: estimateTokens(messages.map(m => (Array.isArray(m.content) ? m.content.map(c => c.text || '').join(' ') : m.content)).join('\n')), completion_tokens: estimateTokens(text), estimated: true };
     usage.total_tokens = (usage.prompt_tokens || 0) + (usage.completion_tokens || 0);
     return { text, usage, durationMs: Math.round(performance.now() - started), model: useModel };
+  }
+
+  /**
+   * One non-streamed call with OpenAI tools (function calling). Returns { message, usage, durationMs, model };
+   * message.tool_calls lists the calls. Throws LLMError with .status (4xx: the endpoint may not support tools).
+   */
+  async chatTools(messages, { tools, temperature, signal, model } = {}) {
+    const started = performance.now(); const useModel = model || this.settings.model;
+    const body = { model: useModel, messages, tools, tool_choice: 'auto', stream: false };
+    if (temperature !== undefined && temperature !== null && temperature !== '') body.temperature = Number(temperature);
+    let r;
+    try { r = await apiFetch(`${this.base}/chat/completions`, { method: 'POST', headers: this.headers, body: JSON.stringify(body), signal }); }
+    catch (e) { if (e.name === 'AbortError') throw e; throw new LLMError(`Network error contacting ${this.base}: ${e.message}`); }
+    if (!r.ok) throw new LLMError(`API error ${r.status}`, await r.text(), r.status);
+    const j = await r.json(); const message = j.choices?.[0]?.message;
+    if (!message) throw new LLMError('The model returned no message', JSON.stringify(j).slice(0, 500));
+    const usage = j.usage || { prompt_tokens: estimateTokens(JSON.stringify(messages)), completion_tokens: estimateTokens(message.content || JSON.stringify(message.tool_calls || '')), estimated: true };
+    usage.total_tokens = (usage.prompt_tokens || 0) + (usage.completion_tokens || 0);
+    return { message, usage, durationMs: Math.round(performance.now() - started), model: useModel };
   }
 
   /** Text-to-speech. Returns an ArrayBuffer of MP3 audio. */

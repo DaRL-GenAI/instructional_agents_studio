@@ -51,6 +51,8 @@ export async function readPptx(blob) {
   return slides;
 }
 
+const sig = n => n.nodeType === 3 ? (n.nodeValue.trim() ? JSON.stringify(n.nodeValue) : '') : n.nodeType !== 1 ? '' : `${n.localName}(${[...n.attributes].filter(a => !a.name.startsWith('xmlns') && !/^(rsid|paraId|textId)/.test(a.localName)).map(a => `${a.localName}=${a.value}`).sort().join(',')})[${[...n.childNodes].map(sig).join('')}]`;
+
 /** A content signature per slide (presentation order): element names, attributes and text, so a file that was
  *  re-serialized (python-pptx, another editor) still matches where the slide itself did not change. */
 export async function slideSignatures(blob) {
@@ -59,7 +61,6 @@ export async function slideSignatures(blob) {
   const pres = await read('ppt/presentation.xml'); const rels = await read('ppt/_rels/presentation.xml.rels');
   if (!pres || !rels) throw new Error('Not a PowerPoint file (ppt/presentation.xml is missing).');
   const target = Object.fromEntries([...rels.getElementsByTagName('Relationship')].map(r => [r.getAttribute('Id'), resolvePath('ppt/', r.getAttribute('Target') || '')]));
-  const sig = n => n.nodeType === 3 ? (n.nodeValue.trim() ? JSON.stringify(n.nodeValue) : '') : n.nodeType !== 1 ? '' : `${n.localName}(${[...n.attributes].filter(a => !a.name.startsWith('xmlns')).map(a => `${a.localName}=${a.value}`).sort().join(',')})[${[...n.childNodes].map(sig).join('')}]`;
   const out = [];
   for (const id of [...pres.getElementsByTagNameNS('*', 'sldId')].map(n => n.getAttributeNS(NS_R, 'id'))) { const doc = target[id] && await read(target[id]); out.push(doc ? await sha256(new Blob([sig(doc.documentElement)])) : ''); }
   return out;
@@ -68,6 +69,26 @@ export async function slideSignatures(blob) {
 /** What a revision did to the deck: slides outside `targets` (0-based) that changed, and the slide counts. */
 export async function compareDecks(before, after, targets) {
   const [a, b] = await Promise.all([slideSignatures(before), slideSignatures(after)]);
+  const left = new Map(); for (const h of b) left.set(h, (left.get(h) || 0) + 1);
+  const keep = new Set(targets); const changedOutside = [];
+  a.forEach((h, i) => { if (keep.has(i)) return; if (left.get(h)) left.set(h, left.get(h) - 1); else changedOutside.push(i + 1); });
+  return { before: a.length, after: b.length, changedOutside };
+}
+
+/** A content signature per top-level block of a Word document (paragraphs and tables, in order: the indices the
+ *  editor's Api.GetDocument().GetElement(i) uses). */
+export async function blockSignatures(blob) {
+  const JSZip = await loadJSZip(); const zip = await JSZip.loadAsync(blob);
+  const f = zip.file('word/document.xml'); if (!f) throw new Error('Not a Word file (word/document.xml is missing).');
+  const doc = new DOMParser().parseFromString(await f.async('string'), 'application/xml');
+  const body = doc.getElementsByTagNameNS('*', 'body')[0]; if (!body) return [];
+  const out = []; for (const n of body.children) if (n.localName === 'p' || n.localName === 'tbl') out.push(await sha256(new Blob([sig(n)])));
+  return out;
+}
+
+/** Like compareDecks for Word: blocks outside `targets` (0-based) that changed. */
+export async function compareDocs(before, after, targets) {
+  const [a, b] = await Promise.all([blockSignatures(before), blockSignatures(after)]);
   const left = new Map(); for (const h of b) left.set(h, (left.get(h) || 0) + 1);
   const keep = new Set(targets); const changedOutside = [];
   a.forEach((h, i) => { if (keep.has(i)) return; if (left.get(h)) left.set(h, left.get(h) - 1); else changedOutside.push(i + 1); });

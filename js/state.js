@@ -124,13 +124,13 @@ export class ProjectStore {
     if (this.project.course?.name) this.project.name = this.project.course.name;
     this.dirty = true;
     clearTimeout(this._t);
-    this._t = setTimeout(() => this.flush(), 150);
+    if (!this.held) this._t = setTimeout(() => this.flush(), 150); // held: a batch (agent changes) is written as one commit
     this.emit();
   }
   /** Write (IndexedDB or the project folder) only when something changed, so a stale tab never overwrites newer data. */
   flush() {
     clearTimeout(this._t);
-    if (!this.dirty) return Promise.resolve();
+    if (!this.dirty || this.held) return Promise.resolve();
     this.dirty = false;
     return backend.put(this.project).then(n => { if (n) { this.emit(); this.onAdopted?.(n); } }) // n: units merged in from disk
       .catch(e => { this.dirty = true; console.warn('save failed', e); });

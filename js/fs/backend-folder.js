@@ -45,6 +45,13 @@ export const folderBackend = {
   async duplicate(id) { return took(await api(`${P(id)}/duplicate`, { method: 'POST' })); },
   async import(json, { dir } = {}) { return took(await api('/api/projects/import', { method: 'POST', body: { json, dir } })); },
   async open(dir) { return took(await api('/api/projects/open', { method: 'POST', body: { dir } })); },
+  /** Reviewed agent changes as one commit: the project (stage files) plus plain files { path, data: base64 } and
+   *  removed plain files. */
+  async applyAgent(p, { files = [], removed = [], message, session } = {}) {
+    const sent = JSON.stringify(p);
+    const r = await api(`${P(p.id)}/agent/apply`, { method: 'POST', body: { project: JSON.parse(sent), base: heads.get(p.id) || null, files, removed, message, session } });
+    heads.set(p.id, r.head); bases.set(p.id, sent); return r;
+  },
   externalDecks: id => external.get(id) || [],
   head: id => heads.get(id),
   async getMedia(pid, ch, kind) {

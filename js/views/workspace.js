@@ -17,6 +17,7 @@ import { OfficeFrame, officeFormat, downloadFile } from './officeeditor.js';
 import { commitDeck, deckManifest } from '../pptxdeck.js';
 import { commitDoc, docManifest, convertToWord, convertToMarkdown, CONVERTIBLE } from '../docstage.js';
 import { download } from '../export.js';
+import { AgentPanel } from '../agent/panel.js';
 
 let ws = null; // the Workspace of the open project
 
@@ -56,9 +57,10 @@ class Workspace {
     this.tabs = new Map(); this.active = null; this.entries = []; this.managed = new Set();
     this.expanded = new Set(pref(`open.${this.id}`, null) || []); this.firstList = !pref(`open.${this.id}`, null);
     this.view = pref('view', 'files'); this.panelOpen = pref('panel', false); this.vcs = null; this.saving = 0;
+    this.offs = [];
     this.build();
     this.refresh();
-    this.offs = [];
+    if (this.panelOpen) this.togglePanel(true);
     if (LOCAL) this.offs.push(onServerEvent(ev => this.onServerEvent(ev)));
     this.offs.push(ctx.store.on(() => this.onProjectChange()));
     this._key = e => this.onKey(e); addEventListener('keydown', this._key);
@@ -77,14 +79,19 @@ class Workspace {
     this.tabStrip = el('div', { class: 'ws-tabs', role: 'tablist', 'aria-label': 'Open files' });
     this.panels = el('div', { class: 'ws-panels' });
     this.editor = el('section', { class: 'ws-editor', 'aria-label': 'Editor' }, this.tabStrip, this.panels);
+    this.dock = pref('dock', 'right');
+    this.agentBody = el('div', { class: 'ws-agent-body' });
+    this.dockBtn = button({ icon: 'sliders', size: 'sm', variant: 'ghost', title: 'Move panel', onClick: () => this.setDock(this.dock === 'right' ? 'bottom' : 'right') });
     this.agent = el('aside', { class: 'ws-agent', 'aria-label': 'Agent', hidden: !this.panelOpen },
-      el('div', { class: 'ws-side-head' }, el('b', {}, 'Agent'), el('span', { class: 'spacer' }), button({ icon: 'x', size: 'sm', variant: 'ghost', title: 'Close panel', onClick: () => this.togglePanel(false) })),
-      el('div', { class: 'ws-agent-body' }, empty({ icon: 'message', title: 'Agent', body: 'Coming in the next update.' })));
+      el('div', { class: 'ws-side-head' }, el('b', {}, 'Agent'), el('span', { class: 'spacer' }), this.dockBtn, button({ icon: 'x', size: 'sm', variant: 'ghost', title: 'Close panel', onClick: () => this.togglePanel(false) })),
+      this.agentBody);
     this.status = el('footer', { class: 'ws-status', role: 'status', 'aria-live': 'polite' });
     const splitL = this.splitter('side', 260, 160, 520, this.side, 1);
-    const splitR = this.splitter('agent', 340, 240, 640, this.agent, -1);
-    this.splitR = splitR; splitR.hidden = !this.panelOpen;
-    this.root = el('div', { class: 'ws' }, el('div', { class: 'ws-body' }, this.activity, this.side, splitL, this.editor, splitR, this.agent), this.status);
+    this.splitR = this.splitter('agent', 340, 240, 640, this.agent, -1);
+    this.splitB = this.splitter('agentH', 260, 140, 640, this.agent, -1, true);
+    this.body = el('div', { class: 'ws-body' }, this.activity, this.side, splitL, this.editor, this.splitR, this.agent);
+    this.root = el('div', { class: 'ws' }, this.body, this.status);
+    this.setDock(this.dock, true);
     this.root.style.setProperty('--ws-font', `${pref('font', 13)}px`);
     this.renderSide(); this.renderTabs(); this.renderStatus();
     // drag files from the computer into the tree (local app)
@@ -92,17 +99,19 @@ class Workspace {
     this.side.addEventListener('dragleave', e => { if (!this.side.contains(e.relatedTarget)) this.side.classList.remove('drop'); });
     this.side.addEventListener('drop', e => { this.side.classList.remove('drop'); if (!this.src.writable || !e.dataTransfer?.files?.length) return; e.preventDefault(); const row = e.target.closest?.('[data-path]'); const p = row?.dataset.path || ''; this.upload([...e.dataTransfer.files], row?.dataset.dir === '1' ? p : dirOf(p)); });
   }
-  splitter(name, def, min, max, target, dir) {
-    const w = pref(`w.${name}`, def); target.style.width = `${w}px`;
-    const s = el('div', { class: 'ws-split', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': `Resize ${name === 'side' ? 'explorer' : 'agent panel'}`, tabindex: '0', 'aria-valuemin': min, 'aria-valuemax': max, 'aria-valuenow': w });
-    const set = v => { v = Math.max(min, Math.min(max, Math.round(v))); target.style.width = `${v}px`; s.setAttribute('aria-valuenow', v); setPref(`w.${name}`, v); };
+  splitter(name, def, min, max, target, dir, horizontal = false) {
+    const dim = horizontal ? 'height' : 'width'; const w = pref(`w.${name}`, def);
+    const s = el('div', { class: `ws-split${horizontal ? ' h' : ''}`, role: 'separator', 'aria-orientation': horizontal ? 'horizontal' : 'vertical', 'aria-label': `Resize ${name === 'side' ? 'explorer' : 'agent panel'}`, tabindex: '0', 'aria-valuemin': min, 'aria-valuemax': max, 'aria-valuenow': w });
+    const set = v => { v = Math.max(min, Math.min(max, Math.round(v))); target.style[dim] = `${v}px`; s.setAttribute('aria-valuenow', v); setPref(`w.${name}`, v); };
+    s.apply = () => { target.style.width = target.style.height = ''; target.style[dim] = `${pref(`w.${name}`, def)}px`; };
+    if (!horizontal) target.style.width = `${w}px`;
     s.addEventListener('pointerdown', e => {
-      e.preventDefault(); s.setPointerCapture(e.pointerId); const x0 = e.clientX, w0 = target.getBoundingClientRect().width; this.root.classList.add('resizing');
-      const move = ev => set(w0 + dir * (ev.clientX - x0));
+      e.preventDefault(); s.setPointerCapture(e.pointerId); const x0 = horizontal ? e.clientY : e.clientX, w0 = target.getBoundingClientRect()[dim]; this.root.classList.add('resizing');
+      const move = ev => set(w0 + dir * ((horizontal ? ev.clientY : ev.clientX) - x0));
       const up = () => { s.removeEventListener('pointermove', move); s.removeEventListener('pointerup', up); this.root.classList.remove('resizing'); };
       s.addEventListener('pointermove', move); s.addEventListener('pointerup', up);
     });
-    s.addEventListener('keydown', e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); set(target.getBoundingClientRect().width + (e.key === 'ArrowRight' ? 16 : -16) * dir); } });
+    s.addEventListener('keydown', e => { const k = horizontal ? ['ArrowUp', 'ArrowDown'] : ['ArrowLeft', 'ArrowRight']; if (k.includes(e.key)) { e.preventDefault(); set(target.getBoundingClientRect()[dim] + (e.key === k[1] ? 16 : -16) * dir); } });
     return s;
   }
   setView(v) {
@@ -111,7 +120,20 @@ class Workspace {
     for (const b of this.activity.querySelectorAll('[data-view]')) b.setAttribute('aria-pressed', String(!this.side.hidden && b.dataset.view === this.view));
     this.renderSide();
   }
-  togglePanel(on = !this.panelOpen) { this.panelOpen = on; setPref('panel', on); this.agent.hidden = !on; this.splitR.hidden = !on; this.panelBtn.setAttribute('aria-pressed', String(on)); }
+  togglePanel(on = !this.panelOpen) {
+    this.panelOpen = on; setPref('panel', on); this.agent.hidden = !on; this.splitR.hidden = this.splitB.hidden = !on; this.panelBtn.setAttribute('aria-pressed', String(on));
+    if (on && !this.agentPanel) { this.agentPanel = new AgentPanel(this); this.agentBody.replaceChildren(this.agentPanel.el); }
+    if (on) this.agentPanel.refreshContext();
+  }
+  /** The agent panel at the right of the editor, or below it. */
+  setDock(d, first = false) {
+    this.dock = d; if (!first) setPref('dock', d);
+    const split = d === 'bottom' ? this.splitB : this.splitR; const other = d === 'bottom' ? this.splitR : this.splitB;
+    other.remove(); split.apply();
+    if (d === 'bottom') this.editor.append(split, this.agent); else this.body.append(split, this.agent);
+    this.agent.classList.toggle('bottom', d === 'bottom'); split.hidden = !this.panelOpen;
+    const t = d === 'bottom' ? 'Move panel to the right' : 'Move panel to the bottom'; this.dockBtn.title = t; this.dockBtn.setAttribute('aria-label', t);
+  }
 
   /** Called on every app render (stage status may have changed). */
   update() {
@@ -120,7 +142,7 @@ class Workspace {
     if (this.view === 'files') this.renderTree();
     this.renderStatus();
   }
-  destroy() { for (const t of this.tabs.values()) t.destroy(); this.tabs.clear(); for (const off of this.offs) off(); removeEventListener('keydown', this._key); this.root.remove(); }
+  destroy() { this.agentPanel?.destroy(); for (const t of this.tabs.values()) t.destroy(); this.tabs.clear(); for (const off of this.offs) off(); removeEventListener('keydown', this._key); this.root.remove(); }
 
   // ---------------------------------------------------------------- data
   async refresh() {
@@ -155,7 +177,41 @@ class Workspace {
     if (st.status === 'done') return 'generated';
     return null;
   }
-  readOnly(path) { return isInternal(path) || path === 'course.json' || (!this.src.writable && !this.owners().has(path)); }
+  readOnly(path) { return isInternal(path) || path === 'course.json' || (this.managed.has(path) && !this.owners().has(path)) || (!this.src.writable && !this.owners().has(path)); }
+
+  // ---------------------------------------------------------------- for the agent panel
+  activeTab() { return this.tabs.get(this.active) || null; }
+  reveal(path) { go(...wsParts(this.id, path)); }
+  checkTabs(paths) { setTimeout(() => { for (const t of this.tabs.values()) if (!paths || paths.includes(t.path)) t.check(); }, 200); }
+  /** Files in a running agent's scope are read-only in their tabs. */
+  setLocks(paths) { this.locks = paths ? new Set(paths) : null; for (const t of this.tabs.values()) t.setLocked(!!this.locks?.has(t.path)); }
+  /** Unsaved tabs: offer to save them (the agent reads the files on disk). false: the user cancelled or a save failed. */
+  async saveAllFirst() {
+    const dirty = [...this.tabs.values()].filter(t => t.dirty); if (!dirty.length) return true;
+    if (!(await confirmDialog({ title: `Save ${dirty.length} file${dirty.length > 1 ? 's' : ''} first?`, body: `${dirty.map(t => baseName(t.path)).join(', ')} ${dirty.length > 1 ? 'have' : 'has'} unsaved changes; the agent works on the saved files.`, confirmLabel: 'Save and continue' }))) return false;
+    for (const t of dirty) if (!(await t.save())) { toast(`${baseName(t.path)} was not saved`, 'error'); return false; }
+    return true;
+  }
+  /** The open .pptx/.docx tab the built-in agent may run macros in: one in scope, else none. */
+  officeFor(scope = []) {
+    const t = [...this.tabs.values()].find(x => x.kind === 'office' && x.office?.state.opened && scope.includes(x.path)); if (!t) return null;
+    let original = null;
+    return {
+      path: t.path, format: t.office.format,
+      macro: async code => { original ||= (await this.src.read(t.path))?.blob; return t.office.macro(code, null, false); },
+      save: () => t.office.save(),
+      reopen: async () => { if (original) { await t.office.openBuffer(original); t.setDirty(false); } },
+    };
+  }
+  /** Show an agent's version of a .pptx/.docx in its tab without saving it. */
+  async preview(path, blob) {
+    this.reveal(path); await this.open(path);
+    const t = this.tabs.get(path); if (t.kind !== 'office') throw new Error('No preview for this file');
+    await t.ready(); await t.showPreview(blob);
+    this.agentPanel?.renderReview();
+  }
+  previewing(path) { return !!this.tabs.get(path)?.previewBlob; }
+  async endPreview(path, { reload = true } = {}) { const t = this.tabs.get(path); if (!t?.previewBlob) return; t.previewBlob = null; t.renderTools(); t.banner.replaceChildren(); if (reload) await t.reloadFrom(); this.agentPanel?.renderReview(); }
 
   // ---------------------------------------------------------------- side bar
   renderSide() {
@@ -324,13 +380,15 @@ class Workspace {
     for (const t of this.tabs.values()) t.panel.classList.toggle('active', t.path === path);
     this.expandTo(path); this.renderTabs(); this.renderTree(); this.renderStatus();
     const t = this.tabs.get(path); if (this.pendingLine?.path === path) { t.reveal(this.pendingLine.line); this.pendingLine = null; }
+    if (this.locks) t.setLocked(this.locks.has(path));
+    this.agentPanel?.refreshContext();
   }
   async closeTab(path, { force = false } = {}) {
     const t = this.tabs.get(path); if (!t) return true;
     if (t.dirty && !force && !(await confirmDialog({ title: `Discard changes to ${baseName(path)}?`, body: 'Your edits since the last save are lost.', confirmLabel: 'Discard changes', danger: true }))) return false;
     t.destroy(); this.tabs.delete(path);
     if (this.active === path) { const next = [...this.tabs.keys()].pop() || null; this.active = null; if (next) go(...wsParts(this.id, next)); else { history.replaceState(null, '', wsHref(this.id, null)); this.ctx.route.path = null; } }
-    this.renderTabs(); this.renderTree(); this.renderStatus();
+    this.renderTabs(); this.renderTree(); this.renderStatus(); this.agentPanel?.refreshContext();
     return true;
   }
   renderTabs() {
@@ -356,6 +414,19 @@ class Workspace {
   }
 }
 
+// The selection in an open presentation / document (read-only macros).
+const SEL_PPTX = `const pr = Api.GetPresentation(); const n = pr.GetSlidesCount(); let idx = [];
+try { const sel = Api.GetSelection && Api.GetSelection(); const sl = sel && sel.GetSlides ? sel.GetSlides() : []; for (const s of sl || []) idx.push(s.GetSlideIndex()); } catch (e) { idx = []; }
+if (!idx.length) idx = [pr.GetCurSlideIndex ? pr.GetCurSlideIndex() : 0];
+idx = [...new Set(idx)].filter(i => i >= 0 && i < n).sort((a, b) => a - b);
+const title = i => { const s = pr.GetSlideByIndex(i); for (const sh of s.GetAllShapes()) { const c = sh.GetDocContent && sh.GetDocContent(); if (!c) continue; const t = []; for (let k = 0; k < c.GetElementsCount(); k++) { const e = c.GetElement(k); if (e && e.GetText) t.push(e.GetText().trim()); } const x = t.join(' ').trim(); if (x) return x.slice(0, 120); } return ''; };
+return { slides: idx.map(i => i + 1), titles: idx.map(title), count: n };`;
+const SEL_DOCX = `const d = Api.GetDocument(); const r = d.GetRangeBySelect && d.GetRangeBySelect(); if (!r) return null;
+const text = r.GetText ? r.GetText() : ''; if (!text || !text.trim()) return null;
+const out = []; const ps = r.GetAllParagraphs ? r.GetAllParagraphs() : [];
+for (const p of ps) { let i = -1; try { i = p.GetPosInParent(); } catch (e) { i = -1; } if (i < 0) { const t = p.GetText(); for (let k = 0; k < d.GetElementsCount(); k++) { const e = d.GetElement(k); if (e && e.GetText && e.GetText() === t) { i = k; break; } } } if (i >= 0) out.push(i + 1); }
+return { paragraphs: [...new Set(out)].sort((a, b) => a - b), text };`;
+
 const wsParts = (id, path) => ['p', id, 'workspace', ...path.split('/')];
 
 // ---------------------------------------------------------------- one open file
@@ -368,7 +439,36 @@ class Tab {
     this.tools = el('div', { class: 'ws-tools' });
     this.banner = el('div', { class: 'ws-banner' });
     this.body = el('div', { class: 'ws-tabbody' });
-    this.panel = el('div', { class: 'ws-panel', role: 'tabpanel', 'aria-label': path }, this.tools, this.banner, this.body);
+    this.cover = el('div', { class: 'ws-lockcover', hidden: true, title: 'The agent is working on this file' });
+    this.panel = el('div', { class: 'ws-panel', role: 'tabpanel', 'aria-label': path }, this.tools, this.banner, this.body, this.cover);
+    this.readyP = new Promise(r => { this._readyR = r; });
+  }
+  ready() { return this.readyP; }
+  setLocked(on) { if (this.locked === on) return; this.locked = on; this.cover.hidden = !on; this.renderTools(); }
+  /** What the agent gets as context for this tab: the file, plus the selection (lines, slides, paragraphs). */
+  async context() {
+    const base = { path: this.path, label: baseName(this.path) };
+    if (this.kind === 'code' && this.code?.view) {
+      const st = this.code.view.state; const sel = st.selection.main; if (sel.empty) return base;
+      const a = st.doc.lineAt(sel.from).number, b = st.doc.lineAt(sel.to).number;
+      return { ...base, label: `${base.label}:${a}${b > a ? `-${b}` : ''}`, lines: [a, b], text: st.doc.sliceString(sel.from, sel.to).slice(0, 6000) };
+    }
+    if (this.kind === 'office' && this.office?.state.opened && !this.previewBlob) {
+      if (this.office.format === 'pptx') {
+        const r = await this.office.macro(SEL_PPTX, null, true); if (!r?.slides?.length) return base;
+        return { ...base, label: `${base.label} · slide${r.slides.length > 1 ? 's' : ''} ${r.slides.join(', ')}`, slides: r.slides, text: r.titles.map((t, i) => `Slide ${r.slides[i]}: ${t}`).join('\n') };
+      }
+      const r = await this.office.macro(SEL_DOCX, null, true); if (!r?.paragraphs?.length) return base;
+      const ps = r.paragraphs; const span = ps.length > 1 ? `${ps[0]}–${ps.at(-1)}` : `${ps[0]}`;
+      return { ...base, label: `${base.label} · ¶${span}`, paragraphs: ps, text: String(r.text || '').slice(0, 6000) };
+    }
+    return base;
+  }
+  /** An agent's version of this .pptx/.docx, shown without saving. */
+  async showPreview(blob) {
+    this.previewBlob = blob; this.renderTools();
+    this.banner.replaceChildren(notice('info', el('b', {}, 'Agent preview. '), 'Not saved. ', button({ label: 'Back to current', size: 'sm', onClick: () => this.w.endPreview(this.path) })));
+    await this.office.openBuffer(blob);
   }
   get store() { return this.w.ctx.store; }
   setDirty(d) { if (this.dirty === d) return; this.dirty = d; this.w.renderTabs(); this.w.renderStatus(); this.w.renderTree(); this.renderTools(); }
@@ -378,14 +478,16 @@ class Tab {
     const parts = this.path.split('/');
     this.tools.replaceChildren(); append(this.tools,
       el('span', { class: 'ws-crumbs' }, ...parts.flatMap((p, i) => [i ? el('span', { class: 'sep' }, '/') : null, i === parts.length - 1 ? el('b', {}, p) : el('span', {}, p)])),
-      this.readOnly ? el('span', { class: 'ws-lock', title: isInternal(this.path) || this.path === 'course.json' ? 'Managed by the app' : 'Read-only here' }, 'read-only') : null,
+      this.readOnly ? el('span', { class: 'ws-lock', title: isInternal(this.path) || this.w.managed.has(this.path) ? 'Managed by the app' : 'Read-only here' }, 'read-only') : null,
+      this.locked ? el('span', { class: 'ws-lock agent', title: 'Read-only while the agent works on it' }, icon('message', 'sm'), 'agent') : null,
+      this.previewBlob ? el('span', { class: 'ws-lock preview', title: 'Showing the agent’s version; not saved' }, 'preview') : null,
       el('span', { class: 'spacer' }),
       this.kind === 'code' && this.ext === 'md' ? el('div', { class: 'seg', role: 'group', 'aria-label': 'View' }, ...[['source', 'Source'], ['split', 'Split'], ['preview', 'Preview']].map(([v, l]) => el('button', { type: 'button', 'aria-pressed': String((this.mode || 'source') === v), onClick: () => this.setMode(v) }, l))) : null,
       conv && this.kind === 'code' && this.ext === 'md' ? button({ label: 'Convert to Word', size: 'sm', variant: 'ghost', onClick: () => this.convert(false) }) : null,
       conv && this.ext === 'docx' ? button({ label: 'Convert to Markdown', size: 'sm', variant: 'ghost', onClick: () => this.convert(true) }) : null,
       this.kind === 'office' ? button({ label: 'Export PDF', size: 'sm', variant: 'ghost', disabled: !this.office?.state.opened, onClick: () => this.exportPdf() }) : null,
       button({ icon: 'download', size: 'sm', variant: 'ghost', title: 'Download', onClick: () => this.w.download(this.path) }),
-      (this.kind === 'code' || this.kind === 'office') && !this.readOnly ? button({ label: 'Save', size: 'sm', variant: this.dirty ? 'primary' : '', disabled: !this.dirty || this.busy, onClick: () => this.save() }) : null);
+      (this.kind === 'code' || this.kind === 'office') && !this.readOnly ? button({ label: 'Save', size: 'sm', variant: this.dirty ? 'primary' : '', disabled: !this.dirty || this.busy || this.locked || !!this.previewBlob, onClick: () => this.save() }) : null);
   }
 
   async load() {
@@ -395,6 +497,7 @@ class Tab {
     if (!r) { this.body.replaceChildren(empty({ icon: 'file', title: 'Not found', body: this.path })); return; }
     this.baseSha = r.sha;
     try {
+      if (this.kind !== 'office') this._readyR();
       if (this.kind === 'code') await this.loadCode(r.blob);
       else if (this.kind === 'office') await this.loadOffice(r.blob);
       else if (this.kind === 'pdf') await this.loadPdf(r.blob);
@@ -427,11 +530,11 @@ class Tab {
       fileName: baseName(this.path), title: `Editor · ${this.path}`,
       onDirty: d => this.setDirty(d),
       onStatus: (s, text) => { if (s === 'error') this.showBanner('error', text); },
-      onExported: (file, { regularSave, dirty }) => { if (regularSave) this.persistOffice(file).then(() => { if (!dirty) this.setDirty(false); }).catch(e => toast(e.message, 'error')); else downloadFile(file, `${baseName(this.path).replace(/\.\w+$/, '')}.${(file.name.split('.').pop() || 'bin').toLowerCase()}`); },
+      onExported: (file, { regularSave, dirty }) => { if (regularSave && (this.previewBlob || this.locked)) return toast(this.previewBlob ? 'This is the agent’s preview: keep or discard it in the panel' : 'The agent is working on this file', 'error'); if (regularSave) this.persistOffice(file).then(() => { if (!dirty) this.setDirty(false); }).catch(e => toast(e.message, 'error')); else downloadFile(file, `${baseName(this.path).replace(/\.\w+$/, '')}.${(file.name.split('.').pop() || 'bin').toLowerCase()}`); },
     });
     this.body.replaceChildren(this.office.el);
     await this.office.load(blob);
-    this.panel.dataset.ready = '1';
+    this.panel.dataset.ready = '1'; this._readyR();
   }
   async exportPdf() {
     if (this.busy) return; this.busy = true; this.renderTools();
@@ -484,7 +587,8 @@ class Tab {
     }
   }
   async save() {
-    if (this.readOnly || !this.dirty || this.busy) return false;
+    if (this.readOnly || !this.dirty || this.busy || this.previewBlob) return false;
+    if (this.locked) { toast('The agent is working on this file', 'error'); return false; }
     this.busy = true; this.w.saving++; this.w.renderStatus(); this.renderTools();
     try {
       if (this.kind === 'office') { const { file, dirty } = await this.office.save(); const ok = await this.persistOffice(file); if (ok && !dirty) this.setDirty(false); return ok; }
@@ -512,7 +616,7 @@ class Tab {
 
   // ---- the file changed elsewhere
   async check() {
-    if (this.busy || this.pendingSha) return;
+    if (this.busy || this.pendingSha || this.previewBlob) return;
     let r; try { r = await this.w.src.read(this.path); } catch { return; }
     this.owner = this.w.ownerInfo(this.path); this.info = this.owner;
     if (!r) { this.showBanner('warn', 'This file was deleted or moved.'); return; }
