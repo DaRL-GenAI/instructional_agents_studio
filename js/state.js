@@ -5,6 +5,7 @@ import { sha1Short } from './llm.js';
 import { copyDecks, unpackDecks, packDecks } from './pptxdeck.js';
 import { packDocs, unpackDocs } from './docstage.js';
 import { SCHEMA, emptyStage, newProject, migrate, uid } from './model.js';
+import { stamp } from './linkage.js';
 
 export { SCHEMA, emptyStage, newProject, migrate };
 
@@ -157,6 +158,7 @@ export class ProjectStore {
     if (stage.history.length > 10) stage.history.shift();
     Object.assign(stage, { output: newOutput, version: stage.version + 1, edited: true, status: 'done', error: null, outputHash: sha1Short(newOutput) });
     delete stage.origin; // 'import' | 'convert' when the caller says so, after this
+    stamp(this.project, stage); // what it was edited against: later upstream changes mark it out of date
     this.log({ type: 'edit', stage: label, where, chars: newOutput.length, version: stage.version, hash: stage.outputHash });
     this.save(); return true;
   }
@@ -176,6 +178,7 @@ export class ProjectStore {
     delete stage.origin; // sourcePath stays: where the material first came from
     stage.output = result.output; stage.outputHash = sha1Short(result.output || ''); stage.usage = result.usage; stage.durationMs = result.durationMs;
     stage.transcript = result.transcript || []; stage.prompt = result.prompt || stage.prompt; stage.inputHash = result.inputHash || null; stage.provenance = result.provenance || null;
+    stamp(this.project, stage);
     this.log({ type: 'stage_done', stage: label, where, version: stage.version, hash: stage.outputHash, tokens: result.usage?.total_tokens, ms: result.durationMs, calls: (result.transcript || []).length });
     this.save();
   }
