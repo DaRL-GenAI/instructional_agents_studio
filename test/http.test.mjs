@@ -89,3 +89,18 @@ test('model calls are forwarded for the page (endpoints without CORS), only for 
     for (const t of ['file:///etc/passwd', 'not a url', 'http://user:pw@127.0.0.1/']) assert.equal((await req(app.port, { method: 'POST', path: '/api/llm', headers: { ...auth, 'X-IA-Target': t }, body: {} })).status, 400, t);
   } finally { up.close(); }
 });
+
+test('the editor build: isolation headers, pre-compressed wasm and extension-less fonts', async () => {
+  const ed = tmpdir('ia-ed-'); fs.mkdirSync(path.join(ed, 'sdkjs/common/wasm'), { recursive: true }); fs.mkdirSync(path.join(ed, 'fonts'));
+  fs.writeFileSync(path.join(ed, 'editor.html'), '<!doctype html>'); fs.writeFileSync(path.join(ed, 'sdkjs/common/wasm/x2t.wasm.br'), 'BR'); fs.writeFileSync(path.join(ed, 'fonts/050'), 'TTF');
+  const app2 = await startServer({ port: 0, editorDir: ed, watch: false, quiet: true });
+  try {
+    const page = await req(app2.port, { path: '/editor/editor?embed=1' });
+    assert.equal(page.status, 200); assert.equal(page.headers['cross-origin-embedder-policy'], 'require-corp'); assert.equal(page.headers['cross-origin-opener-policy'], 'same-origin');
+    const w = await req(app2.port, { path: '/editor/sdkjs/common/wasm/x2t.wasm.br' });
+    assert.equal(w.headers['content-encoding'], 'br'); assert.equal(w.headers['content-type'], 'application/wasm');
+    assert.equal((await req(app2.port, { path: '/editor/fonts/050' })).headers['content-type'], 'font/ttf');
+    const index = await req(app2.port, { path: '/', headers: { Cookie: `ia_token=${app2.token}` } });
+    assert.equal(index.headers['cross-origin-embedder-policy'], 'credentialless');
+  } finally { await app2.close(); }
+});

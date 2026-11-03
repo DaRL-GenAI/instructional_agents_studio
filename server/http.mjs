@@ -100,9 +100,12 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
     if (root === APP_ROOT && !STATIC_TOP.has(rel.split('/')[0])) return send(res, 404, 'Not found');
     let st; try { st = fs.statSync(abs); } catch { return send(res, 404, 'Not found'); }
     if (st.isDirectory()) { if (fs.existsSync(path.join(abs, 'index.html'))) { abs = path.join(abs, 'index.html'); st = fs.statSync(abs); } else return send(res, 404, 'Not found'); }
-    const type = MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream';
+    // the editor build ships pre-compressed files (x2t.wasm.br) and extension-less fonts (fonts/NNN)
+    const br = kind === 'editor' && abs.endsWith('.br'); const name = br ? abs.slice(0, -3) : abs;
+    const type = MIME[path.extname(name).toLowerCase()] || (kind === 'editor' && /^fonts\/\w+$/.test(rel) ? 'font/ttf' : 'application/octet-stream');
     const etag = `"${st.size.toString(16)}-${Math.floor(st.mtimeMs).toString(16)}"`;
-    const h = { 'Content-Type': type, 'Content-Length': st.size, ETag: etag, 'Cache-Control': kind === 'editor' && /\/assets\//.test(abs) ? 'public, max-age=31536000, immutable' : 'no-cache', ...headersFor(kind) };
+    const h = { 'Content-Type': type, 'Content-Length': st.size, ETag: etag, 'Cache-Control': kind === 'editor' && /\/(assets|fonts)\/|\.br$/.test(abs) ? 'public, max-age=31536000, immutable' : 'no-cache', ...headersFor(kind) };
+    if (br) h['Content-Encoding'] = 'br';
     if (req.headers['if-none-match'] === etag) { res.writeHead(304, h); return res.end(); }
     res.writeHead(200, h); if (req.method === 'HEAD') return res.end();
     fs.createReadStream(abs).pipe(res);
