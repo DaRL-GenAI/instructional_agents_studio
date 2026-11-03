@@ -11,12 +11,15 @@ import { docxToMd } from '../docconv.js';
 import { runBuiltin } from './builtin.js';
 import { jobChanges, overlayChanges, undoCommit } from './changes.js';
 import { backend } from '../fs/backend.js';
+import { liveEdit } from './live.js';
+import { DERIVE, deriveActions, runDerive } from './derive.js';
 
 export const AGENTS = { builtin: 'Built-in', claude: 'Claude Code', codex: 'Codex' };
 const LS = 'ia-agent.';
 const pref = (k, d) => { try { const v = localStorage.getItem(LS + k); return v == null ? d : JSON.parse(v); } catch { return d; } };
 const setPref = (k, v) => { try { localStorage.setItem(LS + k, JSON.stringify(v)); } catch { /* storage blocked */ } };
 const baseName = p => p.split('/').pop();
+const ckey = c => c.key || c.path;
 const STATUS = { added: ['A', 'Added'], modified: ['M', 'Modified'], deleted: ['D', 'Deleted'] };
 
 // ---------------------------------------------------------------- where chats are kept
@@ -74,7 +77,8 @@ export class AgentPanel {
     this.input.addEventListener('focus', () => this.refreshContext());
     this.sendBtn = button({ icon: 'arrow-up', size: 'sm', variant: 'primary', title: 'Send (Enter)', onClick: () => this.send() });
     this.mention = el('div', { class: 'ag-mention', role: 'listbox', hidden: true, 'aria-label': 'Files' });
-    this.composer = el('div', { class: 'ag-composer' }, this.chipRow, el('div', { class: 'ag-inputrow' }, this.input, this.sendBtn), this.mention);
+    this.actions = el('div', { class: 'ag-actions', role: 'group', 'aria-label': 'Draft from this file', hidden: true });
+    this.composer = el('div', { class: 'ag-composer' }, this.actions, this.chipRow, el('div', { class: 'ag-inputrow' }, this.input, this.sendBtn), this.mention);
     this.el = el('div', { class: 'ag' }, this.head, this.log, this.reviewBox, this.composer);
   }
   destroy() { this.off(); this.ws.setLocks(null); }
@@ -143,7 +147,8 @@ export class AgentPanel {
     return el('div', { class: 'ag-msg bot' },
       m.steps?.length ? el('details', { class: 'ag-steps' }, el('summary', {}, `${m.steps.length} step${m.steps.length > 1 ? 's' : ''}`), el('ol', {}, ...m.steps.map(s => el('li', {}, s)))) : null,
       m.text ? body : null, m.error ? notice(/^Stopped/.test(m.error) ? 'warn' : 'error', m.error) : null,
-      m.changes?.length && !(last && this.review) ? el('p', { class: 'meta' }, `${m.changes.length} file${m.changes.length > 1 ? 's' : ''} changed`) : null);
+      m.changes?.length && !(last && this.review) ? el('p', { class: 'meta' }, `${m.changes.length} file${m.changes.length > 1 ? 's' : ''} changed`) : null,
+      m.live ? el('p', { class: 'meta' }, icon('check', 'sm'), ` Applied in ${baseName(m.live.path)}`) : null);
   }
   renderLive() {
     const r = this.running;
@@ -168,7 +173,27 @@ export class AgentPanel {
     try { this.auto = await t.context(); } catch { this.auto = { path, label: baseName(path) }; }
     this.renderChips();
   }
+  /** Derive actions for the open stage file (slides → outline / script, syllabus → objectives / chapters). */
+  renderActions() {
+    const t = this.ws.activeTab(); const owner = t?.path ? this.ws.ownerInfo(t.path) : null;
+    const ids = this.running ? [] : deriveActions(owner);
+    this.actions.replaceChildren(...ids.map(id => button({ label: DERIVE[id].label, size: 'sm', variant: 'ghost', title: DERIVE[id].title, onClick: () => this.derive(id) })));
+    this.actions.hidden = !ids.length;
+  }
+  /** Open with the input focused and the selection as context (Ask in a tab, Ctrl/⌘+K). */
+  async focusAsk() { this.autoOff = null; this.input.focus(); await this.refreshContext(); this.input.focus(); }
+  /** Start a message: text in the input, extra context chips; the instructor reviews and sends it. */
+  async prefill({ text = '', chips = [], fresh = false } = {}) {
+    if (this.running) { toast('The agent is still working', 'error'); return false; }
+    if (fresh && this.session?.messages?.length) await this.newChat();
+    this.autoOff = null; await this.refreshContext();
+    for (const c of chips) { this.chips = this.chips.filter(x => ckey(x) !== ckey(c)); this.chips.push(c); }
+    if (text) this.input.value = text;
+    this.renderChips(); this.input.focus(); this.input.setSelectionRange(this.input.value.length, this.input.value.length);
+    return true;
+  }
   renderChips() {
+    this.renderActions();
     const chip = (c, onRemove) => el('span', { class: `chip${c.auto ? ' auto' : ''}`, title: c.path }, icon('file', 'sm'), el('span', {}, c.label || baseName(c.path)),
       el('button', { type: 'button', class: 'chip-x', 'aria-label': `Remove ${c.label || c.path}`, onClick: onRemove }, icon('x', 'sm')));
     const all = [];
@@ -176,7 +201,7 @@ export class AgentPanel {
     for (const c of this.chips) all.push(chip(c, () => { this.chips = this.chips.filter(x => x !== c); this.renderChips(); }));
     this.chipRow.replaceChildren(...all); this.chipRow.hidden = !all.length;
   }
-  context() { const out = []; if (this.auto) out.push(this.auto); for (const c of this.chips) if (!out.some(x => x.path === c.path)) out.push(c); return out; }
+  context() { const out = []; if (this.auto) out.push(this.auto); for (const c of this.chips) if (!out.some(x => ckey(x) === ckey(c))) out.push(c); return out; }
 
   onInput() {
     const v = this.input.value.slice(0, this.input.selectionStart); const m = v.match(/(^|\s)@([^\s@]*)$/);
@@ -191,7 +216,7 @@ export class AgentPanel {
   pickMention(path) {
     const pos = this.input.selectionStart; const before = this.input.value.slice(0, pos).replace(/@[^\s@]*$/, ''); this.input.value = before + this.input.value.slice(pos);
     this.input.selectionStart = this.input.selectionEnd = before.length; this.mention.hidden = true;
-    if (!this.chips.some(c => c.path === path) && this.auto?.path !== path) this.chips.push({ path, label: baseName(path) });
+    if (!this.chips.some(c => ckey(c) === path) && this.auto?.path !== path) this.chips.push({ path, label: baseName(path) });
     this.renderChips(); this.input.focus();
   }
   onKey(e) {
@@ -209,14 +234,19 @@ export class AgentPanel {
     const text = this.input.value.trim(); if (!text || this.running) return;
     if (this.agent === 'builtin' && !this.ctx.store.apiKey) return toast('Add an API key under Account → Settings', 'error');
     if (!(await this.dropReview())) return;
-    if (!(await this.ws.saveAllFirst())) return;
     await this.refreshContext();
-    const context = this.context(); const scope = [...new Set(context.map(c => c.path))];
+    let context = this.context();
+    // a light edit happens in the open document itself (unsaved edits included); anything else reads the saved files
+    const liveFirst = this.agent === 'builtin' && (!this.session || this.session.agent === 'builtin') && this.liveTarget(context);
+    if (!liveFirst) { if (!(await this.ws.saveAllFirst())) return; await this.refreshContext(); context = this.context(); }
+    const scope = [...new Set(context.map(c => c.path))];
     try {
       if (!this.session) { this.session = await this.chats.create(this.agent); setPref(`last.${this.pid}`, this.session.id); this.session.messages ||= []; }
     } catch (e) { return toast(e.message, 'error'); }
     this.input.value = ''; this.chips = [];
     this.lastContext = context;
+    const live = this.session.agent === 'builtin' ? this.liveTarget(context) : null;
+    if (live) return this.runLive(text, context, live);
     if (this.session.agent === 'builtin') return this.runBuiltin(text, context, scope);
     this.running = { session: this.session.id, steps: [], text: '', agent: this.session.agent, scope };
     this.session.messages.push({ role: 'user', text, context, at: new Date().toISOString() });
@@ -269,6 +299,65 @@ export class AgentPanel {
     finally {
       msg.at = new Date().toISOString(); s.messages.push(msg);
       this.running = null; this.builtinAbort = null; this.ws.setLocks(null); this.sendBtn.disabled = false;
+      await this.saveSession(); this.list = await this.chats.list().catch(() => this.list); this.renderAll();
+    }
+  }
+  /** A light edit of the selection in the open .pptx/.docx (built-in agent): the open tab, and its selection chip. */
+  liveTarget(context) {
+    const t = this.ws.activeTab();
+    if (t?.kind !== 'office' || !t.office?.state.opened || t.previewBlob || t.readOnly || t.locked) return null;
+    const chip = context.find(c => c.path === t.path && (c.slides?.length || c.paragraphs?.length));
+    return chip && context.every(c => c.path === t.path) ? { tab: t, chip } : null;
+  }
+  async runLive(text, context, { tab, chip }) {
+    const s = this.session; const store = this.ctx.store;
+    s.messages.push({ role: 'user', text, context, at: new Date().toISOString() });
+    this.running = { session: s.id, steps: [], text: '', agent: 'builtin', scope: [] };
+    this.renderAll(); this.renderRunning();
+    const ac = this.builtinAbort = new AbortController();
+    const msg = { role: 'assistant', agent: 'builtin', text: '', steps: [], at: null };
+    try {
+      const wasDirty = tab.dirty; const owner = this.ws.ownerInfo(tab.path);
+      const r = await liveEdit({ office: tab.office, chip, instruction: text, course: store.project.course?.name || store.project.name, where: owner?.where || baseName(tab.path),
+        llm: new LLMClient({ ...store.settings, apiKey: store.apiKey }), model: store.settings.model, signal: ac.signal,
+        onStep: st => { this.running.steps.push(st); this.renderRunning(); },
+        log: res => store.log({ type: 'llm_call', where: 'workspace', stage: 'Agent (live)', agent: 'builtin', model: res.model, status: 'done', tokens: res.usage?.total_tokens, ms: res.durationMs }) });
+      Object.assign(msg, { text: `${r.summary || 'Done.'}\n\n${r.lines.map(l => `- ${l}`).join('\n')}`, steps: this.running.steps.slice(), live: { path: tab.path } });
+      tab.showLive({ summary: r.summary, snapshot: r.snapshot, wasDirty });
+    } catch (e) { Object.assign(msg, { steps: this.running.steps.slice(), error: e.name === 'AbortError' ? 'Stopped.' : e.message }); }
+    finally {
+      msg.at = new Date().toISOString(); s.messages.push(msg);
+      this.running = null; this.builtinAbort = null; this.sendBtn.disabled = false;
+      await this.saveSession(); this.list = await this.chats.list().catch(() => this.list); this.renderAll();
+    }
+  }
+  /** Draft an upstream stage from the open file (one model call), then review it like any change. */
+  async derive(id) {
+    const t = this.ws.activeTab(); const owner = t?.path ? this.ws.ownerInfo(t.path) : null; if (!owner) return;
+    const store = this.ctx.store;
+    if (!store.apiKey) return toast('Add an API key under Account → Settings', 'error');
+    if (this.running) return;
+    if (!(await this.dropReview())) return;
+    if (!(await this.ws.saveAllFirst())) return;
+    try {
+      if (!this.session || this.session.agent !== 'builtin') { this.session = await this.chats.create('builtin'); this.agent = 'builtin'; setPref(`last.${this.pid}`, this.session.id); this.session.messages ||= []; }
+    } catch (e) { return toast(e.message, 'error'); }
+    const s = this.session; const context = [{ path: t.path, label: baseName(t.path) }]; this.lastContext = context;
+    s.messages.push({ role: 'user', text: DERIVE[id].title, context, at: new Date().toISOString() });
+    this.running = { session: s.id, steps: [], text: '', agent: 'builtin', scope: [] };
+    this.renderAll(); this.renderRunning();
+    const ac = this.builtinAbort = new AbortController();
+    const msg = { role: 'assistant', agent: 'builtin', text: '', steps: [], at: null };
+    try {
+      const r = await runDerive(id, { owner: { ...owner, path: t.path }, store, llm: new LLMClient({ ...store.settings, apiKey: store.apiKey }), model: store.settings.model, signal: ac.signal,
+        onStep: st => { this.running.steps.push(st); this.renderRunning(); },
+        log: res => store.log({ type: 'llm_call', where: 'workspace', stage: `Agent (${DERIVE[id].label.toLowerCase()})`, agent: 'builtin', model: res.model, status: 'done', tokens: res.usage?.total_tokens, ms: res.durationMs }) });
+      Object.assign(msg, { text: r.summary, steps: this.running.steps.slice(), changes: [...r.overlay.keys()].map(p => ({ path: p })) });
+      await this.loadReview(await overlayChanges({ overlay: r.overlay, src: this.ws.src, owners: this.ws.owners(), keys: r.keys, beforeCommit: r.beforeCommit }));
+    } catch (e) { Object.assign(msg, { steps: this.running.steps.slice(), error: e.name === 'AbortError' ? 'Stopped.' : e.message }); }
+    finally {
+      msg.at = new Date().toISOString(); s.messages.push(msg);
+      this.running = null; this.builtinAbort = null; this.sendBtn.disabled = false;
       await this.saveSession(); this.list = await this.chats.list().catch(() => this.list); this.renderAll();
     }
   }

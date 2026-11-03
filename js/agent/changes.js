@@ -19,12 +19,13 @@ const STAGE_TEXT_ONLY = 'Stage files can be changed, not deleted';
  * After load(): each item has { before, after, hunks, accepted (Set of hunk ids | boolean), check } ready for the panel.
  */
 export class ChangeSet {
-  constructor({ items, after, session = null, src, owners }) {
-    this.session = session; this.src = src; this.owners = owners; this._after = after;
-    this.items = items.map(c => ({ ...c, text: c.text ?? TEXT.test(c.path), key: owners.get(c.path) || null }));
+  constructor({ items, after, session = null, src, owners, keys = null, beforeCommit = null }) {
+    this.session = session; this.src = src; this.owners = owners; this._after = after; this.beforeCommit = beforeCommit;
+    // keys: path → stage key for files that become a stage's file (a drafted stage that has no file yet)
+    this.items = items.map(c => ({ ...c, text: c.text ?? TEXT.test(c.path), key: owners.get(c.path) || keys?.get(c.path) || null, target: !!keys?.has(c.path) }));
     for (const it of this.items) {
       if (!it.rejected && it.key && it.status === 'deleted') it.rejected = STAGE_TEXT_ONLY;
-      if (!it.rejected && it.key && it.status === 'added') it.rejected = 'belongs to a stage';
+      if (!it.rejected && it.key && it.status === 'added' && !it.target) it.rejected = 'belongs to a stage';
       if (!it.rejected && !LOCAL && !it.key) it.rejected = 'the browser edition only changes the course’s own files';
     }
   }
@@ -92,6 +93,7 @@ export class ChangeSet {
         else files.push({ path: it.path, data: await toBase64(typeof data === 'string' ? new Blob([data]) : data) });
         paths.push(it.path);
       }
+      this.beforeCommit?.(store);
       store.log({ type: 'agent_keep', note: `kept ${paths.length} file${paths.length > 1 ? 's' : ''}`, files: paths, agent: this.agent || null });
       const message = `agent: ${paths.slice(0, 4).join(', ')}${paths.length > 4 ? ` (+${paths.length - 4})` : ''}`;
       if (LOCAL) {
@@ -117,12 +119,12 @@ export function jobChanges({ projectId, session, items, src, owners }) {
   return new ChangeSet({ items, session, src, owners, after: async path => { try { return await (await api(`${P}/file/${enc(path)}`, { raw: true })).blob(); } catch (e) { if (e.status === 404) return null; throw e; } } });
 }
 /** The built-in agent's overlay. */
-export async function overlayChanges({ overlay, src, owners }) {
+export async function overlayChanges({ overlay, src, owners, keys = null, beforeCommit = null }) {
   const items = [];
   for (const [path, content] of overlay) {
     const cur = await src.read(path).catch(() => null);
     items.push({ path, status: content === null ? 'deleted' : cur ? 'modified' : 'added', text: typeof content === 'string', conflict: false });
   }
-  return new ChangeSet({ items, src, owners, after: async path => overlay.get(path) ?? null });
+  return new ChangeSet({ items, src, owners, keys, beforeCommit, after: async path => overlay.get(path) ?? null });
 }
 export const undoCommit = (projectId, oid) => api(`/api/projects/${encodeURIComponent(projectId)}/agent/undo`, { method: 'POST', body: { oid } });
