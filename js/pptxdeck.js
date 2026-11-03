@@ -94,7 +94,7 @@ export async function commitDeck(store, chapterId, blob, { name, label = 'Slides
   const output = await storeDeck(store, chapterId, blob, { name: name || prev?.name, theme: reason === 'edit' ? prev?.theme : undefined });
   if (deckManifest(output).sha === prev?.sha) return false;
   const changed = store.userEdit(st, label, output, where);
-  if (changed && reason === 'import') store.log({ type: 'import', stage: label, where, file: name, bytes: blob.size });
+  if (changed && reason === 'import') { st.origin = 'import'; store.log({ type: 'import', stage: label, where, file: name, bytes: blob.size }); }
   await pruneDecks(store, chapterId);
   return changed;
 }
@@ -152,5 +152,5 @@ export async function unpackDecks(projectId, packed = {}) {
 }
 /** Copy every stored deck version from one project to another (duplicate). */
 export async function copyDecks(fromId, toId) {
-  for (const k of await backend.mediaKeys(fromId)) { const m = k.match(/^[^:]+:([^:]+):(deck:[0-9a-f]+)$/); if (m) await backend.putMedia(toId, m[1], m[2], await backend.getMedia(fromId, m[1], m[2])); }
+  for (const k of await backend.mediaKeys(fromId)) { const m = k.match(/^[^:]+:([^:]+):((?:deck|doc):[0-9a-f]+)$/); if (m) await backend.putMedia(toId, m[1], m[2], await backend.getMedia(fromId, m[1], m[2])); }
 }

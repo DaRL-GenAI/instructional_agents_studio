@@ -6,6 +6,7 @@ import { normalizeStoryboard, storyboardGaps, storyboardOf, drawScene, collectGu
 import { reviewScene, samplePoints, applyOps, blankFrameFindings, frameDataUrl } from './review.js';
 import { auditPracticeDom } from './practice.js';
 import { storeDeck, draftToPptx } from './pptxdeck.js';
+import { docManifest, outputText, asDocOutput } from './docstage.js';
 
 export class Pipeline {
   constructor(store) {
@@ -26,7 +27,9 @@ export class Pipeline {
     const entry = this.store.log({ type: 'llm_call', where, stage, agent, model: s.model, status: 'running', promptHash: sha1Short(promptText), promptChars: promptText.length });
     this.store.emit();
     try {
-      const res = await this.client.chat(messages, { json, temperature: s.temperature, seed: s.seed, signal: controller.signal, onToken });
+      let res = await this.client.chat(messages, { json, temperature: s.temperature, seed: s.seed, signal: controller.signal, onToken });
+      // Some models answer a JSON-mode request with nothing at all: ask once more before giving up.
+      if (json && !String(res.text || '').trim()) { entry.retried = true; const first = res.usage; res = await this.client.chat(messages, { json, temperature: s.temperature, seed: s.seed, signal: controller.signal, onToken }); for (const k of ['prompt_tokens', 'completion_tokens', 'total_tokens']) res.usage[k] = (res.usage[k] || 0) + (first?.[k] || 0); }
       Object.assign(entry, { status: 'ok', tokens: res.usage.total_tokens, promptTokens: res.usage.prompt_tokens, completionTokens: res.usage.completion_tokens, estimated: !!res.usage.estimated, ms: res.durationMs, responseHash: sha1Short(res.text), responseChars: res.text.length });
       this.store.save(); return res;
     } catch (e) {
@@ -122,7 +125,7 @@ export class Pipeline {
     if (!feedback || !feedback.trim()) return base;
     this.store.log({ type: 'feedback', stage: label, where, chars: feedback.length, version: stage.version });
     stage.feedbackLog = [...(stage.feedbackLog || []), { at: new Date().toISOString(), feedback, version: stage.version }];
-    return { ...base, user: base.user + revisionBlock(feedback.trim(), stage.output, kind), feedback: feedback.trim() };
+    return { ...base, user: base.user + revisionBlock(feedback.trim(), outputText(stage.output), kind), feedback: feedback.trim() };
   }
 
   // ---------- runners ----------------------------------------------------
@@ -199,6 +202,7 @@ export class Pipeline {
           if (gaps > Math.max(1, Math.floor(sb.scenes.length / 3))) throw new Error(`${gaps} of ${sb.scenes.length} scenes have an empty "visual" object`);
           return JSON.stringify(sb, null, 2);
         }
+        if (docManifest(stage.output)) return asDocOutput(this.store, ch, stageId, t.trim()); // the stage is a Word document now
         return t.trim();
       };
       let output;

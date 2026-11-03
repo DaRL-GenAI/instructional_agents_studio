@@ -3,6 +3,7 @@ import { db } from './db.js';
 import { backend } from './fs/backend.js';
 import { sha1Short } from './llm.js';
 import { copyDecks, unpackDecks, packDecks } from './pptxdeck.js';
+import { packDocs, unpackDocs } from './docstage.js';
 import { SCHEMA, emptyStage, newProject, migrate, uid } from './model.js';
 
 export { SCHEMA, emptyStage, newProject, migrate };
@@ -36,6 +37,7 @@ export const DEFAULT_SETTINGS = {
 
 export const MODULES = [
   { id: 'overview', name: 'Overview', icon: 'home' },
+  { id: 'workspace', name: 'Workspace', icon: 'code' },
   { id: 'basics', name: 'Course basics', icon: 'info' },
   { id: 'design', name: 'Course design', icon: 'compass' },
   { id: 'slides', name: 'Slides', icon: 'presentation' },
@@ -98,7 +100,8 @@ export async function importProject(json) {
   if (backend.import) return migrate(await backend.import(json)); // the server unpacks it into a new folder
   const p = migrate(JSON.parse(json)); if (!p.course) throw new Error('Not a Studio project file');
   p.id = 'prj_' + uid(); p.updatedAt = new Date().toISOString();
-  const decks = p.decks; delete p.decks; await unpackDecks(p.id, decks);
+  const decks = p.decks, docs = p.docs; delete p.decks; delete p.docs; await unpackDecks(p.id, decks);
+  await unpackDocs(p.id, docs, (...a) => backend.putMedia(...a));
   await db.put('projects', p.id, p); return p;
 }
 export async function renameProject(id, name) {
@@ -106,7 +109,7 @@ export async function renameProject(id, name) {
   p.name = name; p.course.name = name; p.updatedAt = new Date().toISOString(); await backend.put(p);
 }
 /** The project file exported from Projects (JSON with the current deck of every chapter inside). */
-export async function exportProject(id) { const p = await getProject(id); return JSON.stringify({ ...p, decks: await packDecks(p) }, null, 2); }
+export async function exportProject(id) { const p = await getProject(id); return JSON.stringify({ ...p, decks: await packDecks(p), docs: await packDocs(p, (...a) => backend.getMedia(...a)) }, null, 2); }
 
 // ---------------------------------------------------------------- per-project store
 export class ProjectStore {
@@ -153,6 +156,7 @@ export class ProjectStore {
     stage.history.push({ version: stage.version, output: stage.output, at: stage.ranAt, reason: stage.edited ? 'user edit' : 'model output' });
     if (stage.history.length > 10) stage.history.shift();
     Object.assign(stage, { output: newOutput, version: stage.version + 1, edited: true, status: 'done', error: null, outputHash: sha1Short(newOutput) });
+    delete stage.origin; // 'import' | 'convert' when the caller says so, after this
     this.log({ type: 'edit', stage: label, where, chars: newOutput.length, version: stage.version, hash: stage.outputHash });
     this.save(); return true;
   }

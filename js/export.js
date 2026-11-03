@@ -5,6 +5,7 @@ import { safeJson } from './pipeline.js';
 import { buildVtt } from './video.js';
 import { storyboardOf } from './scenes.js';
 import { playerHtml } from './player.js';
+import { docManifest } from './docstage.js';
 
 export function download(blob, name) {
   const url = URL.createObjectURL(blob);
@@ -44,7 +45,8 @@ export async function buildZip(project, media = {}) {
     const script = safeJson(ch.stages.script?.output, []);
     for (const s of CHAPTER_STAGES) {
       const st = ch.stages[s.id]; if (!st?.output) continue;
-      if (s.kind === 'md' || s.kind === 'json') dir.file(s.file, st.output);
+      if (docManifest(st.output)) { const blob = media[ch.id]?.docs?.[s.id]; if (blob) dir.file(`${s.id}.docx`, blob); else dir.file(s.file, docManifest(st.output).text || ''); }
+      else if (s.kind === 'md' || s.kind === 'json') dir.file(s.file, st.output);
       if (s.kind === 'quiz') { dir.file('quiz.json', st.output); dir.file('quiz.md', quizMarkdown(ch, safeJson(st.output, []))); }
       if (s.kind === 'slides' && !media[ch.id]?.deck) dir.file('slides.json', st.output);
       if (s.kind === 'script') { dir.file('script.json', st.output); dir.file('script.md', scriptMarkdown(ch, script)); }
