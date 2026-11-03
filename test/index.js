@@ -6,3 +6,4 @@ import './agents.test.mjs';
 import './cli.test.mjs';
 import './editor.test.mjs';
 import './workspace.test.mjs';
+import './pipeline.test.mjs';
