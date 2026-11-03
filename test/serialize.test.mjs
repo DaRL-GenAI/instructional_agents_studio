@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { serialize, deserialize, slugify, fnv } from '../js/fs/serialize.js';
+import { serialize, deserialize, slugify, fnv, fileOwner, binaryOf } from '../js/fs/serialize.js';
 import { sampleProject } from './helpers.mjs';
 import { newProject } from '../js/model.js';
 import { merge3, adoptInPlace } from '../js/fs/merge.js';
@@ -29,7 +29,7 @@ test('a fresh project and a JSON round trip of the files map stay equal', () => 
 
 test('the deck is a pptx file in the chapter folder, its manifest stays in the sidecar', () => {
   const { files, decks } = serialize(sampleProject());
-  assert.deepEqual(decks['chapters/01-what-is-an-agent/slides.pptx'], { chapterId: 'chaaa1111', sha: 'a'.repeat(64) });
+  assert.deepEqual(decks['chapters/01-what-is-an-agent/slides.pptx'], { chapterId: 'chaaa1111', sha: 'a'.repeat(64), format: 'pptx' });
   assert.ok(!Object.keys(files).some(f => f.startsWith('chapters/') && f.includes('slides.')));
 });
 
@@ -58,4 +58,26 @@ test('three-way merge keeps both sides\' units', () => {
   adoptInPlace(live, m);
   assert.equal(live.foundation.objectives.output, 'disk edit');
   assert.equal(live.chapters[0].stages.script, ref, 'stage objects keep their identity');
+});
+
+test('a stage converted to Word is a .docx in the chapter folder; its text index stays in the sidecar', () => {
+  const p = sampleProject(); const st = p.chapters[0].stages;
+  st.homework = { ...st.script, output: JSON.stringify({ format: 'docx', sha: 'b'.repeat(64), name: 'homework.docx', bytes: 9, text: '# HW\n\n1. one\n' }, null, 2), history: [{ version: 0, output: '# HW md', at: null, reason: 'user edit' }] };
+  const { files, decks, meta } = serialize(p);
+  assert.deepEqual(decks['chapters/01-what-is-an-agent/homework.docx'], { chapterId: 'chaaa1111', sha: 'b'.repeat(64), format: 'docx' });
+  assert.ok(!('chapters/01-what-is-an-agent/homework.md' in files) && !('chapters/01-what-is-an-agent/homework.json' in files));
+  assert.ok(meta.files.includes('chapters/01-what-is-an-agent/homework.docx'));
+  assert.deepEqual(fileOwner(meta, 'chapters/01-what-is-an-agent/homework.docx'), { key: 'chapters.chaaa1111.homework', kind: 'doc', chapterId: 'chaaa1111', stageId: 'homework' });
+  assert.deepEqual(roundTrip(p).back, norm(p));
+  assert.equal(deserialize(f => files[f] ?? null, { light: true }).chapters[0].stages.homework.output, '');
+  // back to Markdown: the .docx leaves the layout, homework.md comes back
+  st.homework.output = '# HW\n';
+  const again = serialize(p);
+  assert.equal(again.files['chapters/01-what-is-an-agent/homework.md'], '# HW\n');
+  assert.ok(!Object.keys(again.decks).some(f => f.endsWith('.docx')));
+});
+
+test('binaryOf only accepts deck and Word manifests', () => {
+  assert.deepEqual(binaryOf(JSON.stringify({ format: 'docx', sha: 'x' })), { format: 'docx', sha: 'x' });
+  for (const o of ['', '# md', '{"format":"pdf","sha":"x"}', '{"format":"docx"}', '[1]', null]) assert.equal(binaryOf(o), null, String(o));
 });

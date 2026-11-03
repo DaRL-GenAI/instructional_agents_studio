@@ -8,18 +8,19 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createGuard, newToken } from './security.mjs';
 import { Projects, HttpError, checkDir, isProjectDir, allowedRoots } from './projects.mjs';
-import { resolveInside, sha256 } from './workspace.mjs';
+import { resolveInside, sha256, writeFile } from './workspace.mjs';
 import { findEditor } from './editor-pkg.mjs';
 import * as media from './media.mjs';
 import * as config from './config.mjs';
 import * as vcs from './vcs.mjs';
 import * as agents from './agents/runner.mjs';
 import { forward } from './llmproxy.mjs';
+import * as files from './files.mjs';
 
 export const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PKG = JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8'));
 const STATIC_TOP = new Set(['index.html', 'js', 'css', 'assets']);
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.otf': 'font/otf', '.wasm': 'application/wasm', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml', '.map': 'application/json', '.bin': 'application/octet-stream', '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.md': 'text/markdown; charset=utf-8' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.otf': 'font/otf', '.wasm': 'application/wasm', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml', '.map': 'application/json', '.bin': 'application/octet-stream', '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.md': 'text/markdown; charset=utf-8', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.csv': 'text/csv; charset=utf-8', '.yaml': 'text/yaml; charset=utf-8', '.yml': 'text/yaml; charset=utf-8', '.tex': 'text/x-tex; charset=utf-8', '.jsonl': 'application/jsonl' };
 const LIMIT = { json: 256 * 1024 * 1024, media: 2 * 1024 * 1024 * 1024 };
 
 /** Start the server. `dir`: the folder the app was started in (a project, or where a new one should go). */
@@ -139,10 +140,14 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
     if ((g = p.match(/^\/api\/projects\/([\w-]+)\/media\/([^/]+)$/))) {
       const s = projects.state(g[1]); const key = g[2];
       if (m === 'GET') {
-        const fallback = (ch, sha) => { // a fresh clone has no .studio/decks: the chapter's slides.pptx may be that version
-          const f = JSON.parse(fs.readFileSync(path.join(s.dir, '.studio/meta.json'), 'utf8')).stages?.[`chapters.${ch}.slides`]?.$deck; if (!f) return null;
-          let b; try { b = fs.readFileSync(resolveInside(s.dir, f)); } catch { return null; }
-          return sha256(b) === sha ? b : null;
+        const fallback = (ch, sha, ext) => { // a fresh clone has no .studio/decks: the chapter's slides.pptx (homework.docx…) may be that version
+          const stages = JSON.parse(fs.readFileSync(path.join(s.dir, '.studio/meta.json'), 'utf8')).stages || {};
+          for (const [k, m] of Object.entries(stages)) {
+            if (!k.startsWith(`chapters.${ch}.`) || !m.$deck?.endsWith(`.${ext}`)) continue;
+            let b; try { b = fs.readFileSync(resolveInside(s.dir, m.$deck)); } catch { continue; }
+            if (sha256(b) === sha) return b;
+          }
+          return null;
         };
         const out = media.get(s.dir, key, fallback); if (!out) return send(res, 404, { error: 'No such media' });
         res.writeHead(200, { 'Content-Type': 'application/x-ia-bundle', 'Content-Length': out.length, 'Cache-Control': 'no-store' }); return res.end(out);
@@ -150,10 +155,36 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
       if (m === 'PUT') { media.put(s.dir, key, await raw(req, LIMIT.media)); return send(res, 204); }
       if (m === 'DELETE') { media.del(s.dir, key); return send(res, 204); }
     }
-    if ((g = p.match(/^\/api\/projects\/([\w-]+)\/files\/(.+)$/)) && m === 'GET') { // read one file of the project (raw)
-      const s = projects.state(g[1]); const abs = resolveInside(s.dir, g[2]);
-      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return send(res, 404, { error: 'No such file' });
-      const buf = fs.readFileSync(abs); res.writeHead(200, { 'Content-Type': MIME[path.extname(abs)] || 'application/octet-stream', 'Content-Length': buf.length, 'Cache-Control': 'no-store' }); return res.end(buf);
+    if ((g = p.match(/^\/api\/projects\/([\w-]+)\/files\/(.+)$/))) {
+      const id = g[1], rel = g[2];
+      if (m === 'GET') { // read one file of the project (raw); its sha-256 is the version a later write is based on
+        const s = projects.state(id); const abs = resolveInside(s.dir, rel);
+        if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return send(res, 404, { error: 'No such file' });
+        const buf = fs.readFileSync(abs); res.writeHead(200, { 'Content-Type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream', 'Content-Length': buf.length, 'Cache-Control': 'no-store', ETag: `"${sha256(buf)}"` }); return res.end(buf);
+      }
+      if (m === 'PUT') { // write a plain file: ?base=<sha-256 read before> refuses when it changed since; ?base=new refuses when it exists
+        const data = await raw(req, LIMIT.media); const base = url.searchParams.get('base');
+        return send(res, 200, await projects.fileOp(id, s => {
+          files.checkWritable(s.dir, rel);
+          const abs = resolveInside(s.dir, rel); const exists = fs.existsSync(abs);
+          if (exists && fs.statSync(abs).isDirectory()) throw new HttpError(409, 'A folder has that name');
+          if (base === 'new' && exists) throw new HttpError(409, `${rel} already exists`, { exists: true });
+          if (base && base !== 'new' && exists) { const cur = sha256(fs.readFileSync(abs)); if (cur !== base) throw new HttpError(409, 'The file changed on disk', { sha: cur }); }
+          writeFile(s.dir, rel, data);
+          return { added: [rel], message: `${url.searchParams.get('kind') === 'import' ? 'import' : 'edit'}: ${rel}`, result: { sha: sha256(data) } };
+        }));
+      }
+    }
+    if ((g = p.match(/^\/api\/projects\/([\w-]+)\/tree$/)) && m === 'GET') { const s = projects.state(g[1]); return send(res, 200, { entries: files.tree(s.dir), managed: [...files.managed(s.dir)] }); }
+    if ((g = p.match(/^\/api\/projects\/([\w-]+)\/search$/)) && m === 'GET') return send(res, 200, { matches: files.search(projects.state(g[1]).dir, url.searchParams.get('q')) });
+    if ((g = p.match(/^\/api\/projects\/([\w-]+)\/vcs$/)) && m === 'GET') return send(res, 200, await vcs.summary(projects.state(g[1]).dir));
+    if ((g = p.match(/^\/api\/projects\/([\w-]+)\/fs\/(mkdir|rename|delete)$/)) && m === 'POST') {
+      const b = await body(req); const op = g[2];
+      return send(res, 200, await projects.fileOp(g[1], s => {
+        if (op === 'mkdir') { files.mkdir(s.dir, b.path); return { result: { path: b.path } }; }
+        if (op === 'rename') { const moved = files.rename(s.dir, b.from, b.to); return { removed: moved.map(x => x[0]), added: moved.map(x => x[1]), message: `edit: rename ${b.from} → ${b.to}`, result: { path: b.to } }; }
+        const t = files.trash(s.dir, b.path); return { removed: t.files, message: `edit: delete ${b.path}`, result: { trashed: t.trashed } };
+      }));
     }
     return send(res, 404, { error: 'Not found' });
   }

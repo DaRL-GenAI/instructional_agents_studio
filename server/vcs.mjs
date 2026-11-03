@@ -52,3 +52,10 @@ export const log = (dir, depth = 50) => git.log({ fs, dir, depth }).then(l => l.
 export async function readAt(dir, oid, filepath) {
   try { const { blob } = await git.readBlob({ fs, dir, oid, filepath }); return Buffer.from(blob); } catch { return null; }
 }
+
+/** Branch, head and the last commit (the Workspace status bar). */
+export async function summary(dir) {
+  const branch = await git.currentBranch({ fs, dir, fullname: false }).catch(() => null);
+  const last = (await log(dir, 1).catch(() => []))[0] || null;
+  return { branch, head: last?.oid || null, last };
+}

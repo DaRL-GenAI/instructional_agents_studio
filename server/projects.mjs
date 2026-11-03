@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import chokidar from 'chokidar';
-import { serialize, deserialize, fileOwner, stageAt, fnv, slugify, META } from '../js/fs/serialize.js';
+import { serialize, deserialize, fileOwner, stageAt, fnv, slugify, binaryOf, META } from '../js/fs/serialize.js';
 import { migrate, uid } from '../js/model.js';
 import { readText, readBuf, writeFile, removeFile, sha256 } from './workspace.mjs';
 import * as vcs from './vcs.mjs';
@@ -43,7 +43,8 @@ export class Projects {
     const meta = JSON.parse(readText(dir, META) || 'null'); if (!meta?.project?.id) throw new HttpError(400, `${dir} is not an Instructional Agents project`);
     const s = { id: meta.project.id, dir, head: null, written: new Map(), removed: new Set(), uncommitted: new Set(), lock: Promise.resolve(), auditLen: 0, pending: new Set(), timer: null, watcher: null };
     // what the app last wrote = what is on disk now; decks: the sha the manifest names
-    for (const [key, m] of Object.entries(meta.stages || {})) if (m.$deck) { const st = stageAt(this.read(dir), key); const sha = deckShaOf(st?.output); if (sha) s.written.set(m.$deck, sha); }
+    const project = Object.values(meta.stages || {}).some(m => m.$deck) ? this.read(dir) : null;
+    for (const [key, m] of Object.entries(meta.stages || {})) if (m.$deck) { const sha = binaryOf(stageAt(project, key)?.output)?.sha; if (sha) s.written.set(m.$deck, sha); }
     s.auditLen = (readText(dir, '.studio/audit.jsonl') || '').split('\n').filter(Boolean).length;
     this.byId.set(s.id, s);
     config.remember({ id: s.id, dir, name: meta.project.name });
@@ -65,16 +66,17 @@ export class Projects {
     return { project, head: s.head, dir: s.dir, external: light ? [] : this.externalDecks(s, project) };
   }
 
-  /** Decks replaced on disk that the app has not committed as a version yet: [{ chapterId, sha, path }]. */
+  /** Decks (and Word documents of stages) replaced on disk that the app has not committed as a version yet:
+   *  [{ chapterId, stageId, format, sha, path }]. */
   externalDecks(s, project) {
     const out = [], meta = JSON.parse(readText(s.dir, META));
     for (const [key, m] of Object.entries(meta.stages || {})) {
       if (!m.$deck) continue;
-      const chapterId = key.split('.')[1]; const want = deckShaOf(stageAt(project, key)?.output); const buf = readBuf(s.dir, m.$deck);
+      const [, chapterId, stageId] = key.split('.'); const want = binaryOf(stageAt(project, key)?.output); const buf = readBuf(s.dir, m.$deck);
       if (!buf || !want) continue;
-      const sha = sha256(buf); if (sha === want) continue;
-      if (!media.deckFile(s.dir, chapterId, sha)) media.storeDeckFile(s.dir, chapterId, buf);
-      out.push({ chapterId, sha, path: m.$deck });
+      const sha = sha256(buf); if (sha === want.sha) continue;
+      if (!media.deckFile(s.dir, chapterId, sha, want.format)) media.storeDeckFile(s.dir, chapterId, buf, want.format);
+      out.push({ chapterId, stageId, format: want.format, sha, path: m.$deck });
     }
     return out;
   }
@@ -107,11 +109,11 @@ export class Projects {
       if (readText(s.dir, f) !== text) { writeFile(s.dir, f, text); changed.push(f); }
       s.written.set(f, h);
     }
-    for (const [f, { chapterId, sha }] of Object.entries(decks)) {
+    for (const [f, { chapterId, sha, format }] of Object.entries(decks)) {
       const disk = readBuf(s.dir, f); const dsha = disk && sha256(disk);
       if (dsha === sha) { s.written.set(f, sha); continue; }
       if (disk && dsha !== s.written.get(f)) continue; // replaced on disk and not adopted yet: keep the user's file
-      const src = media.deckFile(s.dir, chapterId, sha); if (!src) continue;
+      const src = media.deckFile(s.dir, chapterId, sha, format); if (!src) continue;
       writeFile(s.dir, f, src); s.written.set(f, sha); changed.push(f);
     }
     const now = new Set([...Object.keys(files), ...Object.keys(decks)]);
@@ -127,6 +129,24 @@ export class Projects {
     s.head = await vcs.commit(s.dir, changed, msg); s.auditLen = (project.audit || []).length;
     this.onChange({ type: 'changed', id: s.id, head: s.head, paths: changed, source: 'app' });
     return { head: s.head };
+  }
+
+  /** A Workspace file operation: fn(s) changes files on disk and returns { added: [paths], removed: [paths], message }.
+   *  Runs under the project's lock, tells the watcher these changes are ours, and commits them as one commit. */
+  fileOp(id, fn) {
+    const s = this.state(id);
+    return this.locked(s, async () => {
+      s.head ??= await vcs.head(s.dir);
+      const { added = [], removed = [], message, result } = await fn(s);
+      for (const f of added) { const b = readBuf(s.dir, f); if (b) s.written.set(f, sha256(b)); }
+      for (const f of removed) { s.removed.add(f); s.written.delete(f); }
+      const paths = [...added, ...removed];
+      if (paths.length) {
+        const before = s.head; s.head = await vcs.commit(s.dir, paths, message);
+        this.onChange({ type: 'changed', id: s.id, head: s.head, paths, source: 'app', committed: s.head !== before });
+      }
+      return { head: s.head, ...result };
+    });
   }
 
   // ---------------------------------------------------------------- new folders
@@ -154,6 +174,8 @@ export class Projects {
     fs.mkdirSync(target, { recursive: true });
     writeFile(target, `.studio/backup/${path.basename(source).replace(/[^\w.-]+/g, '_')}`, json);
     for (const [chId, d] of Object.entries(decks)) if (d?.data && /^[A-Za-z0-9_-]+$/.test(chId)) media.storeDeckFile(target, chId, Buffer.from(d.data, 'base64'));
+    for (const [chId, list] of Object.entries(p.docs || {})) if (Array.isArray(list) && /^[A-Za-z0-9_-]+$/.test(chId)) for (const d of list) if (d?.data) media.storeDeckFile(target, chId, Buffer.from(d.data, 'base64'), 'docx');
+    delete p.docs;
     return this.create(p, target, { message: `import: ${path.basename(source)}` });
   }
 
@@ -211,5 +233,4 @@ export class Projects {
   }
 }
 
-function deckShaOf(output) { try { const m = JSON.parse(output); return m?.format === 'pptx' ? m.sha : null; } catch { return null; } }
 function uniqueDir(base) { let d = base, i = 2; while (fs.existsSync(d) && fs.readdirSync(d).length) d = `${base}-${i++}`; return d; }

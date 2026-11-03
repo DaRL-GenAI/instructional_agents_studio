@@ -21,7 +21,9 @@ export function slugify(s, max = 40) { return String(s || '').toLowerCase().norm
 export const chapterDir = (ch, i) => `chapters/${String(i + 1).padStart(2, '0')}-${slugify(ch.title) || ch.id}`;
 const isJsonText = t => { const s = t.trim(); if (!/^[[{]/.test(s)) return false; try { JSON.parse(s); return true; } catch { return false; } };
 const json = v => JSON.stringify(v, null, 2) + '\n';
-const deckSha = output => { try { const m = JSON.parse(output); return m && m.format === 'pptx' && m.sha ? m.sha : null; } catch { return null; } };
+/** A stage output that is the manifest of a binary file (the chapter deck, a Word document): { format, sha } or null. */
+export const BINARY = { pptx: 'deck', docx: 'doc' }; // format → media kind prefix (deck:<sha>, doc:<sha>)
+export function binaryOf(output) { if (typeof output !== 'string' || !output.startsWith('{')) return null; try { const m = JSON.parse(output); return m && BINARY[m.format] && typeof m.sha === 'string' && m.sha ? { format: m.format, sha: m.sha } : null; } catch { return null; } }
 
 /** The stages of a project with their key, output file base and where they live. */
 function* stagesOf(p) {
@@ -31,7 +33,8 @@ function* stagesOf(p) {
   for (const [i, ch] of (p.chapters || []).entries()) for (const [id, st] of Object.entries(ch.stages || {})) yield { key: `chapters.${ch.id}.${id}`, st, base: `${chapterDir(ch, i)}/${id}`, inline: INLINE.has(id), chapter: ch, stageId: id };
 }
 
-/** project → { files: {path: text}, decks: {path: {chapterId, sha}} } — the managed files of the folder. */
+/** project → { files: {path: text}, decks: {path: {chapterId, sha, format}} } — the managed files of the folder.
+ *  `decks` holds every binary stage file: the slides (.pptx) and stages converted to Word (.docx). */
 export function serialize(project) {
   const p = JSON.parse(JSON.stringify(project));
   const files = {}, decks = {}, stages = {};
@@ -40,13 +43,14 @@ export function serialize(project) {
     const m = {}, side = {};
     for (const [k, v] of Object.entries(st)) if (k !== 'output' && !SIDE.includes(k)) m[k] = v;
     for (const k of SIDE) if (k in st) side[k] = st[k];
+    const bin = chapter ? binaryOf(st.output) : null;
     if ('output' in st) {
       const out = st.output;
-      if (typeof out !== 'string' || inline) side.output = out;
+      if (typeof out !== 'string' || inline || bin) side.output = out;
       else if (out === '') m.$empty = true;
       else { const f = base + (isJsonText(out) ? '.json' : '.md'); files[f] = out; m.$file = f; m.$hash = fnv(out); }
     }
-    if (stageId === 'slides') { const sha = deckSha(st.output); if (sha) { const f = `${base}.pptx`; decks[f] = { chapterId: chapter.id, sha }; m.$deck = f; } }
+    if (bin && (stageId === 'slides') === (bin.format === 'pptx')) { const f = `${base}.${bin.format}`; decks[f] = { chapterId: chapter.id, sha: bin.sha, format: bin.format }; m.$deck = f; }
     if (Object.keys(side).length) { const f = `.studio/stages/${key}.json`; files[f] = json(side); m.$side = f; }
     stages[key] = m;
   }
@@ -86,7 +90,7 @@ export function deserialize(read, { light = false } = {}) {
     if ('output' in side) st.output = side.output;
     else if (m.$empty) st.output = '';
     else if (m.$file) st.output = read(m.$file) ?? '';
-    else if (light && m.$side && INLINE.has(key.split('.').pop())) st.output = '';
+    else if (light && m.$side && (INLINE.has(key.split('.').pop()) || m.$deck)) st.output = '';
     return st;
   };
   if (has.has('foundation')) { p.foundation = {}; for (const id of meta.foundation || []) p.foundation[id] = stage(`foundation.${id}`); }
@@ -103,14 +107,17 @@ export function deserialize(read, { light = false } = {}) {
   return out;
 }
 
-/** Which stage a managed output file belongs to: { key, chapterId?, stageId, kind: 'text'|'deck' } or null. */
+/** Which stage a managed output file belongs to: { key, kind: 'text'|'deck'|'doc', chapterId?, stageId? } or null. */
 export function fileOwner(meta, path) {
   for (const [key, m] of Object.entries(meta.stages || {})) {
     if (m.$file === path) return { key, kind: 'text' };
-    if (m.$deck === path) return { key, kind: 'deck', chapterId: key.split('.')[1] };
+    if (m.$deck === path) { const [, chapterId, stageId] = key.split('.'); return { key, kind: path.endsWith('.docx') ? 'doc' : 'deck', chapterId, stageId }; }
   }
   return null;
 }
+
+/** The serialize key of a stage → its managed file, given a meta (from serialize()). */
+export const stageFile = (meta, key) => meta.stages?.[key]?.$file || meta.stages?.[key]?.$deck || null;
 
 /** A stage by its serialize key. */
 export function stageAt(p, key) {
