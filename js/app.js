@@ -4,7 +4,9 @@ import { parse, href, go, onRoute } from './router.js';
 import { account, loadAccount, listProjects, getProject, ProjectStore, MODULES, moduleProgress, projectTotals } from './state.js';
 import { Pipeline } from './pipeline.js';
 import { buildZip, download } from './export.js';
-import { deckBlob, migrateLegacyDeck } from './pptxdeck.js';
+import { deckBlob, migrateLegacyDeck, commitDeck } from './pptxdeck.js';
+import { LOCAL, onServerEvent } from './fs/api.js';
+import { backend } from './fs/backend.js';
 import { slug } from './export.js';
 import * as home from './views/home.js';
 import * as accountView from './views/account.js';
@@ -60,8 +62,33 @@ async function openProject(id) {
   if (ctx.store) await ctx.store.flush();
   ctx.store = new ProjectStore(p); ctx.pipe = new Pipeline(ctx.store); ctx.ui = {}; ctx.media = {};
   ctx.pipe.onLive = renderLive;
+  ctx.store.onAdopted = () => render();
   convertLegacyDecks(ctx.store);
+  adoptExternalDecks(ctx.store);
   return true;
+}
+
+// ------------------------------------------------------------------ local app: the folder changed on disk
+/** A deck replaced on disk (PowerPoint, another editor, an agent) becomes a new version of the chapter's slides. */
+async function adoptExternalDecks(store) {
+  for (const x of backend.externalDecks?.(store.id) || []) {
+    const ch = store.chapter(x.chapterId); if (!ch) continue;
+    try {
+      const blob = await store.getMedia(x.chapterId, `deck:${x.sha}`); if (!blob) continue;
+      if (await commitDeck(store, x.chapterId, blob, { label: 'Slides', where: ch.title })) toast(`Slides of “${ch.title}” changed on disk: saved as a new version`, 'ok');
+    } catch (e) { console.warn('could not adopt the deck from disk', e); }
+  }
+}
+async function onDiskChange(ev) {
+  if (ev.type !== 'changed') return;
+  const store = ctx.store;
+  if (store?.id === ev.id && ev.head !== backend.head(ev.id)) {
+    await store.flush();
+    const n = await backend.sync(store.project).catch(e => { console.warn('sync failed', e); return 0; });
+    if (ctx.store !== store) return;
+    await adoptExternalDecks(store);
+    if (n) { store.emit(); render(); }
+  } else if (ctx.route.name === 'projects' || ctx.route.name === 'account') { await ctx.reloadProjects(); render(); }
 }
 
 /** Chapters saved before decks became .pptx files are converted once, in the background. */
@@ -109,7 +136,7 @@ function renderNav() {
   }
   nav.append(el('div', { class: 'nav-group' }, 'You'));
   nav.append(el('a', { class: 'nav-item', href: href('account', 'settings'), 'aria-current': r.name === 'account' ? 'page' : null }, icon('user'), 'Account', !account.apiKey ? el('span', { class: 'count', title: 'No API key' }, dot('stale')) : null));
-  nav.append(el('div', { class: 'nav-foot' }, 'Browser edition of ', el('a', { href: 'https://github.com/DaRL-GenAI/instructional_agents' }, 'instructional_agents'), '. Data stays in this browser.'));
+  nav.append(el('div', { class: 'nav-foot' }, LOCAL ? 'Local app of ' : 'Browser edition of ', el('a', { href: 'https://github.com/DaRL-GenAI/instructional_agents' }, 'instructional_agents'), LOCAL ? '. Each course is a folder on this computer.' : '. Data stays in this browser.'));
 }
 
 function renderTopbar() {
@@ -166,6 +193,7 @@ async function boot() {
   $('#live-close').onclick = () => { $('#live').hidden = true; };
   setupLivePanel();
   onRoute(route);
+  if (LOCAL) onServerEvent(onDiskChange);
   window.addEventListener('beforeunload', e => { if (ctx.busy) { e.preventDefault(); e.returnValue = ''; } ctx.store?.flush(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) ctx.store?.flush(); });
   if (!location.hash) location.hash = ctx.projects.length ? href('p', ctx.projects[0].id, 'overview') : href('projects');

@@ -1,13 +1,14 @@
 // views/account.js — personal center: settings, API key & privacy, projects, data & storage, about.
 import { el, button, field, input, select, textarea, toggle, notice, icon, fmtBytes, fmtRel, toast, confirmDialog, empty } from '../ui.js';
-import { account, saveAccount, setApiKey, DEFAULT_SETTINGS, deleteProject, duplicateProject, moduleProgress } from '../state.js';
+import { account, saveAccount, setApiKey, DEFAULT_SETTINGS, deleteProject, duplicateProject, moduleProgress, renameProject, exportProject } from '../state.js';
 import { LLMClient } from '../llm.js';
 import { db } from '../db.js';
 import { href, go } from '../router.js';
 import { download, textBlob, slug } from '../export.js';
-import { packDecks } from '../pptxdeck.js';
 import { bridgeHealth, AGENT_NAMES } from '../slideagent.js';
 import { importButton } from './home.js';
+import { LOCAL } from '../fs/api.js';
+import { dirs } from '../fs/backend-folder.js';
 
 const TABS = [['settings', 'Generation defaults', 'sliders'], ['privacy', 'API key & privacy', 'key'], ['projects', 'Projects', 'folder'], ['storage', 'Data & storage', 'database'], ['about', 'About', 'info']];
 
@@ -42,18 +43,16 @@ function settingsTab(ctx, body) {
   const rrounds = input({ type: 'number', min: 0, max: 4, value: s.reviewRounds ?? 2 });
   const vres = select([['1080p', '1080p (1920 × 1080)'], ['720p', '720p (1280 × 720, faster)']], s.videoRes || '1080p');
   const editorUrl = input({ value: s.editorUrl || '', placeholder: DEFAULT_SETTINGS.editorUrl, type: 'url' });
-  const bridgeUrl = input({ value: s.bridgeUrl || '', placeholder: DEFAULT_SETTINGS.bridgeUrl, type: 'url' });
-  const bridgeToken = input({ type: 'password', value: s.bridgeToken || '', autocomplete: 'off', spellcheck: 'false' });
-  const bridgeStatus = el('span', { class: 'meta' });
-  const testBridge = async () => { bridgeStatus.textContent = 'Connecting…'; try { const h = await bridgeHealth({ bridgeUrl: bridgeUrl.value.trim() || DEFAULT_SETTINGS.bridgeUrl, bridgeToken: bridgeToken.value.trim() }); bridgeStatus.textContent = `Connected: ${['claude', 'codex'].filter(a => h.agents[a]).map(a => AGENT_NAMES[a]).join(', ') || 'no agents found'}`; } catch (e) { bridgeStatus.textContent = `Failed: ${e.message}`; } };
-  const save = async () => { Object.assign(s, { model: model.value.trim() || DEFAULT_SETTINGS.model, baseUrl: baseUrl.value.trim() || DEFAULT_SETTINGS.baseUrl, deliberation: delib.value, slidesPerChapter: Number(per.value) || 10, quizQuestions: Number(quizN.value) || 8, temperature: temp.value, seed: seed.value, ttsModel: tts.value, voice: voice.value, theme: theme.value, characters: chars.value === 'on', illustrations: illus.value === 'on', imageQuality: iq.value, practice: practice.value === 'on', reviewModel: rmodel.value.trim(), reviewRounds: Math.max(0, Math.min(4, Number(rrounds.value) || 0)), videoRes: vres.value, editorUrl: editorUrl.value.trim().replace(/\/+$/, '') || DEFAULT_SETTINGS.editorUrl, bridgeUrl: bridgeUrl.value.trim().replace(/\/+$/, '') || DEFAULT_SETTINGS.bridgeUrl, bridgeToken: bridgeToken.value.trim() }); await saveAccount(); toast('Defaults saved', 'ok'); ctx.render(); };
+  const agentStatus = el('span', { class: 'meta' }, LOCAL ? 'Checking…' : 'Claude Code and Codex run in the local app (npx instructional-agents).');
+  if (LOCAL) bridgeHealth().then(h => { agentStatus.textContent = `Found on this machine: ${['claude', 'codex'].filter(a => h.agents[a]).map(a => AGENT_NAMES[a]).join(', ') || 'none'}`; }).catch(e => { agentStatus.textContent = e.message; });
+  const save = async () => { Object.assign(s, { model: model.value.trim() || DEFAULT_SETTINGS.model, baseUrl: baseUrl.value.trim() || DEFAULT_SETTINGS.baseUrl, deliberation: delib.value, slidesPerChapter: Number(per.value) || 10, quizQuestions: Number(quizN.value) || 8, temperature: temp.value, seed: seed.value, ttsModel: tts.value, voice: voice.value, theme: theme.value, characters: chars.value === 'on', illustrations: illus.value === 'on', imageQuality: iq.value, practice: practice.value === 'on', reviewModel: rmodel.value.trim(), reviewRounds: Math.max(0, Math.min(4, Number(rrounds.value) || 0)), videoRes: vres.value, editorUrl: editorUrl.value.trim().replace(/\/+$/, '') || DEFAULT_SETTINGS.editorUrl }); await saveAccount(); toast('Defaults saved', 'ok'); ctx.render(); };
   body.append(section('Model', 'Used by every project unless a project overrides it under Course basics.', el('div', { class: 'form-grid' }, field('Text model', model, { hint: 'Any chat model your endpoint serves.' }), field('API base URL', baseUrl, { hint: 'OpenAI, Azure, OpenRouter, vLLM or Ollama-compatible.' }), field('Temperature', temp, { hint: 'Empty = model default.' }), field('Seed', seed, { hint: 'For reproducible runs when supported.' }))),
     section('Generation', 'How much the agents deliberate and how large each deliverable is.', el('div', { class: 'form-grid' }, el('div', { class: 'span-2' }, field('Deliberation mode', delib)), field('Slides per chapter', per), field('Quiz questions per chapter', quizN))),
     section('Narration', 'Text-to-speech for lecture videos.', el('div', { class: 'form-grid' }, field('TTS model', tts), field('Voice', voice))),
     section('Animated lessons', 'Option 2 of Lecture videos (EduCast-style scenes).', el('div', { class: 'form-grid' }, field('Character accents', chars), field('Illustration scenes', illus), field('Illustration quality', iq), field('Practice scenes', practice, { hint: 'Interactive checks (multiple choice, fill in the blank, drag to sort, number line, lever) that pause the lesson player.' }))),
     section('Visual review', 'An independent vision model audits rendered frames of every scene (EduCast reviewer): key elements visible, no clipped or overlapping text. Failed scenes are patched or re-planned, then re-reviewed.', el('div', { class: 'form-grid' }, field('Reviewer model', rmodel, { hint: 'Must accept images (gpt-4o-mini, gpt-4.1-mini, gpt-5-mini…).' }), field('Review → repair rounds', rrounds, { hint: '0 = review once, never repair automatically.' }))),
     section('Video export', 'Videos are encoded frame by frame in your browser (WebCodecs → MP4 H.264/AAC; WebM fallback).', el('div', { class: 'form-grid' }, field('Resolution', vres))),
-    section('Slides editor', null, el('div', { class: 'form-grid' }, field('Editor address', editorUrl), el('span'), field('Agent bridge', bridgeUrl), field('Bridge token', bridgeToken), el('div', { class: 'btn-row span-2' }, button({ label: 'Test bridge', onClick: testBridge }), bridgeStatus))),
+    section('Slides editor', null, el('div', { class: 'form-grid' }, field('Editor address', editorUrl, { hint: LOCAL?.editor ? 'The local app uses its own editor unless you change this.' : null }), el('span'), el('div', { class: 'span-2' }, field('Coding agents', agentStatus)))),
     section('Appearance', null, el('div', { class: 'form-grid' }, field('Theme', theme))),
     el('div', { class: 'btn-row', style: 'margin-top:24px' }, button({ label: 'Save defaults', variant: 'primary', onClick: save }), button({ label: 'Reset to factory defaults', variant: 'ghost', onClick: async () => { if (await confirmDialog({ title: 'Reset all defaults?', body: 'Your API key and projects are not affected.', confirmLabel: 'Reset' })) { Object.assign(account.settings, DEFAULT_SETTINGS, { rememberKey: account.settings.rememberKey }); await saveAccount(); ctx.render(); } } })),
     el('datalist', { id: 'model-list' }, ...['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1', 'gpt-5-mini', 'gpt-5', 'o4-mini'].map(m => el('option', { value: m }))));
@@ -71,8 +70,8 @@ function privacyTab(ctx, body) {
       el('li', {}, 'Nothing is sent to the host of this page. There is no analytics or telemetry.'),
       el('li', {}, 'Third-party libraries load on demand from public CDNs: JSZip, pdf.js and marked from cdnjs.cloudflare.com, PptxGenJS from cdn.jsdelivr.net (fallback unpkg.com).'),
       el('li', {}, `Slides open in the editor page from ${account.settings.editorUrl || DEFAULT_SETTINGS.editorUrl}; the file is handed to it inside your browser and is not uploaded.`),
-      el('li', {}, `Revising slides with Claude Code or Codex sends the chapter deck and your instruction to the agent bridge at ${account.settings.bridgeUrl || DEFAULT_SETTINGS.bridgeUrl}, which runs the agent on that machine.`),
-      el('li', {}, 'Projects, media and the audit trail live in this browser’s IndexedDB; use Export to move them.'))));
+      el('li', {}, 'Revising slides with Claude Code or Codex (local app only) runs that agent on this machine, in the project folder.'),
+      el('li', {}, LOCAL ? 'Each project is a folder on this computer (a git repository); the local server only listens on 127.0.0.1.' : 'Projects, media and the audit trail live in this browser’s IndexedDB; use Export to move them.'))));
 }
 
 function projectsTab(ctx, body) {
@@ -81,16 +80,17 @@ function projectsTab(ctx, body) {
   if (!projects.length) panel.append(el('div', { style: 'padding:8px' }, empty({ icon: 'folder', title: 'No projects', body: 'Create one from the Projects page.' })));
   for (const p of projects) {
     const prog = moduleProgress(p); const pct = Object.values(prog).reduce((a, x) => a + x.done, 0) / Math.max(1, Object.values(prog).reduce((a, x) => a + x.total, 0));
-    panel.append(el('div', { class: 'list-row' }, el('div', {}, el('a', { class: 'title', href: href('p', p.id, 'overview'), style: 'text-decoration:none' }, p.name), el('div', { class: 'sub' }, `${p.chapters.length} chapters · ${Math.round(pct * 100)}% complete · ${(p.audit || []).length} audit events · updated ${fmtRel(p.updatedAt)}`)),
-      el('div', { class: 'aside' }, button({ label: 'Rename', size: 'sm', variant: 'ghost', onClick: async () => { const n = await confirmDialog({ title: 'Rename project', confirmLabel: 'Rename', input: { label: 'Name', value: p.name } }); if (n && n.trim()) { p.name = n.trim(); p.course.name = n.trim(); await db.put('projects', p.id, p); await ctx.reloadProjects(); ctx.render(); } } }),
+    panel.append(el('div', { class: 'list-row' }, el('div', {}, el('a', { class: 'title', href: href('p', p.id, 'overview'), style: 'text-decoration:none' }, p.name), el('div', { class: 'sub' }, `${p.chapters.length} chapters · ${Math.round(pct * 100)}% complete · ${(p.audit || []).length} audit events · updated ${fmtRel(p.updatedAt)}${dirs.get(p.id) ? ` · ${dirs.get(p.id)}` : ''}`)),
+      el('div', { class: 'aside' }, button({ label: 'Rename', size: 'sm', variant: 'ghost', onClick: async () => { const n = await confirmDialog({ title: 'Rename project', confirmLabel: 'Rename', input: { label: 'Name', value: p.name } }); if (n && n.trim()) { if (ctx.store?.id === p.id) { ctx.store.project.course.name = n.trim(); ctx.store.save(); await ctx.store.flush(); } else await renameProject(p.id, n.trim()); await ctx.reloadProjects(); ctx.render(); } } }),
         button({ label: 'Duplicate', size: 'sm', variant: 'ghost', onClick: async () => { await duplicateProject(p.id); await ctx.reloadProjects(); ctx.render(); } }),
-        button({ label: 'Export', size: 'sm', variant: 'ghost', onClick: async () => download(textBlob(JSON.stringify({ ...p, decks: await packDecks(p) }, null, 2), 'application/json'), `${slug(p.name)}_project.json`) }),
-        button({ label: 'Delete', size: 'sm', variant: 'danger', onClick: async () => { if (await confirmDialog({ title: `Delete “${p.name}”?`, body: 'Removes the project, its media and audit trail from this browser.', confirmLabel: 'Delete', danger: true })) { await deleteProject(p.id); await ctx.reloadProjects(); ctx.render(); } } }))));
+        button({ label: 'Export', size: 'sm', variant: 'ghost', onClick: async () => { await ctx.store?.flush(); download(textBlob(await exportProject(p.id), 'application/json'), `${slug(p.name)}_project.json`); } }),
+        button({ label: 'Delete', size: 'sm', variant: 'danger', onClick: async () => { if (await confirmDialog({ title: `Delete “${p.name}”?`, body: LOCAL ? 'Removes it from the recent list. The folder stays on disk.' : 'Removes the project, its media and audit trail from this browser.', confirmLabel: 'Delete', danger: true })) { await deleteProject(p.id); await ctx.reloadProjects(); ctx.render(); } } }))));
   }
   body.append(panel);
 }
 
 function storageTab(ctx, body) {
+  if (LOCAL) { body.append(section('Storage', 'Each project is a folder on this computer and a git repository: every save is a commit. Generated audio and video go to build/ inside the folder (not committed).', el('dl', { class: 'kv' }, el('dt', {}, 'Engine'), el('dd', {}, 'Project folders (local app)'), el('dt', {}, 'Server'), el('dd', {}, location.origin), el('dt', {}, 'New projects'), el('dd', {}, LOCAL.projectsRoot || '')))); return; }
   const info = el('dl', { class: 'kv' }, el('dt', {}, 'Engine'), el('dd', {}, db.usingMemory ? 'In-memory fallback (IndexedDB unavailable: data is lost when the tab closes)' : 'IndexedDB'), el('dt', {}, 'Used'), el('dd', { id: 'st-used' }, '…'), el('dt', {}, 'Quota'), el('dd', { id: 'st-quota' }, '…'), el('dt', {}, 'Persistent storage'), el('dd', { id: 'st-persist' }, '…'));
   const persistBtn = button({ label: 'Request persistent storage', onClick: async () => { const ok = await db.persist(); toast(ok ? 'Persistent storage granted' : 'The browser declined; data is still saved but may be evicted under storage pressure', ok ? 'ok' : ''); ctx.render(); } });
   body.append(section('Storage', 'Projects, narration audio and recorded videos are saved in this browser. Persistent storage asks the browser not to evict them automatically.', el('div', { style: 'display:flex;flex-direction:column;gap:16px' }, info, el('div', { class: 'btn-row' }, persistBtn))),

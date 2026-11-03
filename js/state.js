@@ -1,9 +1,12 @@
 // state.js — account settings, project registry and the per-project store (with audit trail).
-import { db, mediaKey } from './db.js';
+import { db } from './db.js';
+import { backend } from './fs/backend.js';
 import { sha1Short } from './llm.js';
-import { copyDecks, unpackDecks } from './pptxdeck.js';
+import { copyDecks, unpackDecks, packDecks } from './pptxdeck.js';
+import { SCHEMA, emptyStage, newProject, migrate, uid } from './model.js';
 
-export const SCHEMA = 2;
+export { SCHEMA, emptyStage, newProject, migrate };
+
 const KEY_LOCAL = 'ia-studio.apiKey';
 const KEY_SESSION = 'ia-studio.apiKey.session';
 const LEGACY_KEY = 'ia-studio.project.v1';
@@ -26,8 +29,6 @@ export const DEFAULT_SETTINGS = {
   reviewRounds: 2,         // review → repair rounds for the storyboard
   videoRes: '1080p',       // exported video resolution
   editorUrl: 'https://edit.chaxus.com', // presentation editor (ONLYOFFICE document-editor build, runs in the browser)
-  bridgeUrl: 'http://127.0.0.1:8794', // studio-bridge on this machine: slide revision with Claude Code / Codex
-  bridgeToken: '',
   theme: 'system',
   rememberKey: false,
   language: 'en',
@@ -43,45 +44,11 @@ export const MODULES = [
   { id: 'audit', name: 'Audit trail', icon: 'shield' },
 ];
 
-export function emptyStage() {
-  return { status: 'idle', output: '', prompt: null, transcript: [], usage: null, durationMs: 0, ranAt: null, inputHash: null, version: 0, history: [], edited: false, error: null, reviewed: false };
-}
-const uid = () => Math.random().toString(36).slice(2, 10);
-
-export function newProject(fields = {}) {
-  const now = new Date().toISOString();
-  return {
-    schema: SCHEMA, id: 'prj_' + uid(), name: fields.name || fields.course?.name || 'Untitled course', createdAt: now, updatedAt: now,
-    course: { name: '', subject: '', level: 'Undergraduate', audience: '', weeks: 14, language: 'English', notes: '', ...(fields.course || {}) },
-    textbook: { name: '', chars: 0, chunks: [] },
-    overrides: {},                // per-project overrides of account settings (model, deliberation, slidesPerChapter)
-    deck: { template: 'auto' },  // 'auto' | 'builtin:<palette>' | 'custom' (+ palette, fonts, background from an uploaded .pptx)
-    foundation: {}, chaptersStage: emptyStage(), chapters: [],
-    exams: { midterm: emptyStage(), final: emptyStage() },
-    audit: [],
-  };
-}
-
-export function migrate(p) {
-  if (!p) return p;
-  if (!p.schema || p.schema < 2) {
-    p.schema = SCHEMA; p.id ||= 'prj_' + uid(); p.name ||= p.course?.name || 'Imported course';
-    p.createdAt ||= new Date().toISOString(); p.updatedAt ||= p.createdAt;
-    p.exams ||= { midterm: emptyStage(), final: emptyStage() }; p.overrides ||= {};
-    for (const ch of p.chapters || []) ch.stages ||= {};
-    delete p.settings;
-  }
-  p.exams.midterm ||= emptyStage(); p.exams.final ||= emptyStage();
-  p.deck ||= { template: 'auto' };
-  if (p.overrides) delete p.overrides.slideFormat;
-  return p;
-}
-
 // ---------------------------------------------------------------- account
 export const account = { settings: { ...DEFAULT_SETTINGS }, apiKey: '' , loaded: false };
 
 export async function loadAccount() {
-  const saved = await db.get('settings', 'account');
+  const saved = await backend.getSettings();
   if (saved) account.settings = { ...DEFAULT_SETTINGS, ...saved };
   else { // migrate legacy single-project settings
     try { const legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || 'null'); if (legacy?.settings) account.settings = { ...DEFAULT_SETTINGS, ...legacy.settings }; } catch { /* ignore */ }
@@ -91,7 +58,7 @@ export async function loadAccount() {
   applyTheme();
   return account;
 }
-export async function saveAccount() { await db.put('settings', 'account', account.settings); applyTheme(); }
+export async function saveAccount() { await backend.putSettings(account.settings); applyTheme(); }
 export function setApiKey(key, remember) {
   account.apiKey = key || '';
   try {
@@ -107,8 +74,8 @@ export function applyTheme() {
 
 // ---------------------------------------------------------------- registry
 export async function listProjects() {
-  const all = (await db.all('projects')).map(migrate);
-  if (!all.length) { // one-time import of the legacy single project
+  const all = (await backend.list()).map(migrate);
+  if (!all.length && backend.kind === 'idb') { // one-time import of the legacy single project
     try {
       const legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || 'null');
       if (legacy?.course) { const p = migrate(legacy); await db.put('projects', p.id, p); if (!db.usingMemory) localStorage.removeItem(LEGACY_KEY); all.push(p); }
@@ -116,21 +83,30 @@ export async function listProjects() {
   }
   return all.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
 }
-export async function createProject(fields) { const p = newProject(fields); await db.put('projects', p.id, p); return p; }
-export async function getProject(id) { const p = await db.get('projects', id); return p ? migrate(p) : null; }
-export async function deleteProject(id) { await db.del('projects', id); await db.clearPrefix('media', `${id}:`); }
+/** `dir`: the project folder (local app only; the server picks one under its projects root when omitted). */
+export async function createProject(fields, { dir } = {}) { return backend.create(newProject(fields), { dir }); }
+export async function getProject(id) { const p = await backend.get(id); return p ? migrate(p) : null; }
+export async function deleteProject(id) { await backend.remove(id); }
 export async function duplicateProject(id) {
+  if (backend.duplicate) return migrate(await backend.duplicate(id)); // the server copies the folder
   const src = await getProject(id); if (!src) return null;
   const copy = JSON.parse(JSON.stringify(src)); copy.id = 'prj_' + uid(); copy.name = `${src.name} (copy)`; copy.createdAt = copy.updatedAt = new Date().toISOString();
   copy.audit = [{ id: 1, ts: copy.createdAt, type: 'project', note: `duplicated from ${src.name}` }];
   await copyDecks(src.id, copy.id); await db.put('projects', copy.id, copy); return copy;
 }
 export async function importProject(json) {
+  if (backend.import) return migrate(await backend.import(json)); // the server unpacks it into a new folder
   const p = migrate(JSON.parse(json)); if (!p.course) throw new Error('Not a Studio project file');
   p.id = 'prj_' + uid(); p.updatedAt = new Date().toISOString();
   const decks = p.decks; delete p.decks; await unpackDecks(p.id, decks);
   await db.put('projects', p.id, p); return p;
 }
+export async function renameProject(id, name) {
+  const p = await getProject(id); if (!p) return;
+  p.name = name; p.course.name = name; p.updatedAt = new Date().toISOString(); await backend.put(p);
+}
+/** The project file exported from Projects (JSON with the current deck of every chapter inside). */
+export async function exportProject(id) { const p = await getProject(id); return JSON.stringify({ ...p, decks: await packDecks(p) }, null, 2); }
 
 // ---------------------------------------------------------------- per-project store
 export class ProjectStore {
@@ -148,12 +124,13 @@ export class ProjectStore {
     this._t = setTimeout(() => this.flush(), 150);
     this.emit();
   }
-  /** Write to IndexedDB only when something changed, so a stale tab never overwrites newer data. */
+  /** Write (IndexedDB or the project folder) only when something changed, so a stale tab never overwrites newer data. */
   flush() {
     clearTimeout(this._t);
     if (!this.dirty) return Promise.resolve();
     this.dirty = false;
-    return db.put('projects', this.project.id, this.project).catch(e => { this.dirty = true; console.warn('save failed', e); });
+    return backend.put(this.project).then(n => { if (n) { this.emit(); this.onAdopted?.(n); } }) // n: units merged in from disk
+      .catch(e => { this.dirty = true; console.warn('save failed', e); });
   }
   on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   emit() { for (const fn of this.listeners) fn(this.project); }
@@ -199,10 +176,10 @@ export class ProjectStore {
   }
 
   // media (narration buffers, recorded video) live in the media store, keyed by project+chapter
-  async putMedia(chapterId, kind, value) { await db.put('media', mediaKey(this.id, chapterId, kind), value); }
-  async getMedia(chapterId, kind) { return db.get('media', mediaKey(this.id, chapterId, kind)); }
-  async delMedia(chapterId, kind) { await db.del('media', mediaKey(this.id, chapterId, kind)); }
-  async mediaKeys(prefix) { return (await db.keys('media')).filter(k => String(k).startsWith(prefix)); }
+  async putMedia(chapterId, kind, value) { await backend.putMedia(this.id, chapterId, kind, value); }
+  async getMedia(chapterId, kind) { return backend.getMedia(this.id, chapterId, kind); }
+  async delMedia(chapterId, kind) { await backend.delMedia(this.id, chapterId, kind); }
+  async mediaKeys(prefix) { return (await backend.mediaKeys(this.id)).filter(k => k.startsWith(prefix)); }
 }
 
 export const sum = (arr, f) => arr.reduce((a, x) => a + (f(x) || 0), 0);

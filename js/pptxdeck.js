@@ -5,7 +5,7 @@
 import { loadJSZip } from './export.js';
 import { parseTemplate, resolvePath } from './template.js';
 import { normalizeDeck, deckToPptx, resolveTheme } from './deck.js';
-import { db, mediaKey } from './db.js';
+import { backend } from './fs/backend.js';
 
 const NS_R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 const TITLE_PH = new Set(['title', 'ctrTitle']);
@@ -136,7 +136,7 @@ export async function packDecks(project) {
   const out = {};
   for (const ch of project.chapters || []) {
     const m = deckManifest(ch.stages?.slides?.output); if (!m) continue;
-    const blob = await db.get('media', mediaKey(project.id, ch.id, `deck:${m.sha}`)); if (!blob) continue;
+    const blob = await backend.getMedia(project.id, ch.id, `deck:${m.sha}`); if (!blob) continue;
     const bytes = new Uint8Array(await blob.arrayBuffer()); let bin = '';
     for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
     out[ch.id] = { sha: m.sha, data: btoa(bin) };
@@ -147,10 +147,10 @@ export async function packDecks(project) {
 export async function unpackDecks(projectId, packed = {}) {
   for (const [chId, { sha, data }] of Object.entries(packed || {})) {
     const bin = atob(data); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    await db.put('media', mediaKey(projectId, chId, `deck:${sha}`), new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }));
+    await backend.putMedia(projectId, chId, `deck:${sha}`, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }));
   }
 }
 /** Copy every stored deck version from one project to another (duplicate). */
 export async function copyDecks(fromId, toId) {
-  for (const k of await db.keys('media')) { const m = String(k).match(/^[^:]+:([^:]+):(deck:[0-9a-f]+)$/); if (m && String(k).startsWith(`${fromId}:`)) await db.put('media', mediaKey(toId, m[1], m[2]), await db.get('media', k)); }
+  for (const k of await backend.mediaKeys(fromId)) { const m = k.match(/^[^:]+:([^:]+):(deck:[0-9a-f]+)$/); if (m) await backend.putMedia(toId, m[1], m[2], await backend.getMedia(fromId, m[1], m[2])); }
 }

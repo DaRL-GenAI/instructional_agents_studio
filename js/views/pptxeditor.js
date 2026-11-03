@@ -4,12 +4,17 @@
 // save is committed as a new version of the slides stage.
 import { el, button, toast, confirmDialog, icon, field, input, textarea, select, notice } from '../ui.js';
 import { account, DEFAULT_SETTINGS } from '../state.js';
+import { LOCAL } from '../fs/api.js';
 import { deckBlob, commitDeck, deckManifest, compareDecks } from '../pptxdeck.js';
 import { READ_MACRO, APPLY_MACRO, parseSlideRange, revisionMessages, parseRevision, describeOps, AGENT_NAMES, bridgeHealth, bridgeRevise, bridgeCancel } from '../slideagent.js';
 
 let open = null; // the one editor layer, while it is open
 
-export function editorBase() { return String(account.settings.editorUrl || DEFAULT_SETTINGS.editorUrl).replace(/\/+$/, ''); }
+/** The local app serves its own editor build at /editor unless the address was changed under Account. */
+export function editorBase() {
+  const set = String(account.settings.editorUrl || DEFAULT_SETTINGS.editorUrl).replace(/\/+$/, '');
+  return LOCAL?.editor && set === DEFAULT_SETTINGS.editorUrl ? `${location.origin}/editor` : set;
+}
 
 export async function openPptxEditor(ctx, o) {
   if (open) { open.layer.querySelector('iframe')?.focus(); return; }
@@ -97,8 +102,8 @@ export async function openPptxEditor(ctx, o) {
     if (!rv.built) buildRevise();
     try { const d = await macro(READ_MACRO, null, true); rv.count = d.count; if (!rv.touched) rv.slides.value = String(d.current + 1); } catch (err) { rv.out.replaceChildren(notice('error', err.message)); }
     rv.text.focus();
-    let agents = {}; if (account.settings.bridgeToken) try { agents = (await bridgeHealth(account.settings)).agents || {}; } catch { agents = {}; }
-    for (const opt of rv.agent.options) if (opt.value !== 'builtin') { opt.disabled = !agents[opt.value]; opt.textContent = AGENT_NAMES[opt.value] + (agents[opt.value] ? '' : ' · not connected'); }
+    let agents = {}; if (LOCAL) try { agents = (await bridgeHealth()).agents || {}; } catch { agents = {}; }
+    for (const opt of rv.agent.options) if (opt.value !== 'builtin') { opt.disabled = !agents[opt.value]; opt.textContent = AGENT_NAMES[opt.value] + (agents[opt.value] ? '' : LOCAL ? ' · not installed' : ' · local app only'); }
     if (rv.agent.selectedOptions[0]?.disabled) rv.agent.value = 'builtin';
   }
   function buildRevise() {
@@ -113,7 +118,7 @@ export async function openPptxEditor(ctx, o) {
   }
   function stopRevision() {
     rv.stopped = true;
-    if (rv.abort) { rv.abort.abort(); bridgeCancel(account.settings); } else ctx.pipe?.cancel();
+    if (rv.abort) { rv.abort.abort(); bridgeCancel(); } else ctx.pipe?.cancel();
   }
   async function runRevision() {
     const agent = rv.agent.value;
@@ -146,7 +151,7 @@ export async function openPptxEditor(ctx, o) {
     const base = await deckBlob(store, ch.id);
     const steps = el('ol', { class: 'pptx-steps' }); rv.out.replaceChildren(steps);
     rv.abort = new AbortController();
-    const { summary, file } = await bridgeRevise(account.settings, { agent, slides: targets.map(i => i + 1), instruction, chapter: ch.title, blob: base }, {
+    const { summary, file } = await bridgeRevise({ project: store.id, agent, slides: targets.map(i => i + 1), instruction, chapter: ch.title, blob: base }, {
       signal: rv.abort.signal, onProgress: t => { steps.append(el('li', {}, t)); while (steps.children.length > 6) steps.firstChild.remove(); },
     });
     const check = await compareDecks(base, file, targets);

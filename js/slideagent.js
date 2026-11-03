@@ -1,7 +1,8 @@
 // slideagent.js — targeted slide revision with the built-in harness. The model never writes code: it reads the
 // chosen slides as a shape list and answers with a fixed set of edit operations, which one fixed Document Builder
-// macro applies inside the editor (one undo step). Claude Code / Codex go through the local bridge instead.
+// macro applies inside the editor (one undo step). Claude Code / Codex run in the local app instead.
 import { extractJson } from './llm.js';
+import { LOCAL } from './fs/api.js';
 
 /** "2, 5-7" → [1, 4, 5, 6] (0-based, unique, within the deck). */
 export function parseSlideRange(text, count) {
@@ -129,23 +130,23 @@ export function describeOps(ops) {
   return ops.map(o => d[o.op](o));
 }
 
-// ---------------------------------------------------------------- Claude Code / Codex via studio-bridge
+// ---------------------------------------------------------------- Claude Code / Codex via the local app
 export const AGENT_NAMES = { builtin: 'Built-in', claude: 'Claude Code', codex: 'Codex' };
 const PPTX_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
 
-async function bridgeFetch(s, route, init = {}) {
-  const base = String(s.bridgeUrl || '').replace(/\/+$/, '');
-  if (!s.bridgeToken) throw new Error('Add the bridge token under Account → Slides editor');
+// The local server runs the agent in the project folder (server/agents/); same origin, the session cookie authenticates.
+async function bridgeFetch(route, init = {}) {
+  if (!LOCAL) throw new Error('Claude Code and Codex run in the local app (npx instructional-agents)');
   let r;
-  try { r = await fetch(`${base}${route}`, { ...init, headers: { Authorization: `Bearer ${s.bridgeToken}`, 'Content-Type': 'application/json', ...(init.headers || {}) } }); }
-  catch (e) { if (e.name === 'AbortError') throw e; throw new Error(`The agent bridge at ${base} is not reachable`); }
-  if (!r.ok) throw new Error((await r.json().catch(() => null))?.error || `Bridge error ${r.status}`);
+  try { r = await fetch(`/api/agents${route}`, { ...init, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', ...(init.headers || {}) } }); }
+  catch (e) { if (e.name === 'AbortError') throw e; throw new Error('The local app is not reachable'); }
+  if (!r.ok) throw new Error((await r.json().catch(() => null))?.error || `Agent error ${r.status}`);
   return r;
 }
 
 /** { ok, busy, agents: { claude, codex } } */
-export async function bridgeHealth(s) { return (await bridgeFetch(s, '/health', { signal: AbortSignal.timeout(5000) })).json(); }
-export async function bridgeCancel(s) { try { await bridgeFetch(s, '/cancel', { method: 'POST' }); } catch { /* already gone */ } }
+export async function bridgeHealth() { return (await bridgeFetch('/health', { signal: AbortSignal.timeout(5000) })).json(); }
+export async function bridgeCancel() { try { await bridgeFetch('/cancel', { method: 'POST' }); } catch { /* already gone */ } }
 
 async function toBase64(blob) {
   const bytes = new Uint8Array(await blob.arrayBuffer()); let bin = '';
@@ -153,9 +154,9 @@ async function toBase64(blob) {
   return btoa(bin);
 }
 
-/** Run one revision on the bridge; onProgress(text) gets the agent's steps. Resolves to { summary, file }. */
-export async function bridgeRevise(s, { agent, slides, instruction, chapter, blob }, { onProgress, signal } = {}) {
-  const r = await bridgeFetch(s, '/revise', { method: 'POST', signal, body: JSON.stringify({ agent, slides, instruction, chapter, pptx: await toBase64(blob) }) });
+/** Run one revision in the local app; onProgress(text) gets the agent's steps. Resolves to { summary, file }. */
+export async function bridgeRevise({ project, agent, slides, instruction, chapter, blob }, { onProgress, signal } = {}) {
+  const r = await bridgeFetch('/revise', { method: 'POST', signal, body: JSON.stringify({ project, agent, slides, instruction, chapter, pptx: await toBase64(blob) }) });
   const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
   for (;;) {
     const { value, done } = await reader.read(); if (done) break;
@@ -167,5 +168,5 @@ export async function bridgeRevise(s, { agent, slides, instruction, chapter, blo
       if (ev.type === 'done') { const bin = atob(ev.pptx); const bytes = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k); return { summary: ev.summary, file: new File([bytes], 'slides.pptx', { type: PPTX_TYPE }) }; }
     }
   }
-  throw new Error('The bridge closed the connection before the agent finished');
+  throw new Error('The local app closed the connection before the agent finished');
 }
