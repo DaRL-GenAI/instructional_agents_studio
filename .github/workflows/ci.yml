@@ -34,8 +34,14 @@ jobs:
       - name: Install
         run: npm ci
 
+      # on failure, the failing tests go into a (public) annotation so they can be read without the job log
       - name: Unit tests
-        run: node --test test/
+        shell: bash
+        run: |
+          node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=tap --test-reporter-destination=tap.txt test/ && exit 0
+          msg=$(grep -E -A30 '^\s*not ok' tap.txt | head -120 | sed -e 's/%/%25/g' -e 's/\r//g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=Unit tests failed::${msg}"
+          exit 1
         env:
           IA_GIT_NAME: CI
           IA_GIT_EMAIL: ci@localhost
