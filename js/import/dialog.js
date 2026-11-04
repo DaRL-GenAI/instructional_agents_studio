@@ -54,11 +54,13 @@ export function pickMaterials({ title = 'Import materials' } = {}) {
 }
 
 // ---------------------------------------------------------------- the import
-/** Import materials into the open project. `picked`: [{ file, path }] (from a drop); asks for them otherwise. */
-export async function openImport(ctx, picked = null) {
+/** Import materials into the open project. `picked`: [{ file, path }] (from a drop); asks for them otherwise.
+ *  inPlace (local app, a folder opened as a course): picked is [{ path, size }], files of the project folder itself;
+ *  they are read from there, stay where they are, and the ones used are recorded in project.sources. */
+export async function openImport(ctx, picked = null, { inPlace = false } = {}) {
   picked ||= await pickMaterials(); if (!picked) return false;
   const store = ctx.store; const src = makeSource(store);
-  const list = picked.filter(x => x.file && !SKIP.test(x.path)).sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true })).slice(0, MAX_FILES);
+  const list = picked.filter(x => (x.file || inPlace) && !SKIP.test(x.path)).sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true })).slice(0, MAX_FILES);
   if (!list.length) { toast('No files to import', 'error'); return false; }
   const dlg = el('dialog', { class: 'dlg imp-dlg wide', 'aria-label': 'Import materials' });
   const body = el('div', { class: 'dlg-body' });
@@ -74,11 +76,12 @@ export async function openImport(ctx, picked = null) {
     const rows = [];
     for (const [i, x] of list.entries()) {
       progress('Reading files', `${i + 1} / ${list.length} · ${x.path}`);
-      const ext = extOf(x.path); const big = x.file.size > MAX_BYTES;
-      const ex = !big && READABLE.has(ext) ? await extractText(x.path, x.file) : { text: '', title: '' };
-      const sourcePath = `sources/${x.path}`;
-      rows.push({ i, file: x.file, path: x.path, name: baseName(x.path), ext, size: x.file.size, sourcePath, text: ex.text, title: ex.title, error: ex.error, digest: digest(ex.text), big,
-        version: big ? null : versionOf({ sourcePath, text: ex.text }, candidates), exists: existing.has(sourcePath) });
+      const ext = extOf(x.path); const bytes = x.file ? x.file.size : x.size || 0; const big = bytes > MAX_BYTES;
+      const file = x.file || (!big && READABLE.has(ext) ? (await src.read(x.path).catch(() => null))?.blob || null : null);
+      const ex = !big && file && READABLE.has(ext) ? await extractText(x.path, file) : { text: '', title: '' };
+      const sourcePath = inPlace ? x.path : `sources/${x.path}`;
+      rows.push({ i, file, path: x.path, name: baseName(x.path), ext, size: bytes, sourcePath, text: ex.text, title: ex.title, error: ex.error, digest: digest(ex.text), big,
+        version: big ? null : versionOf({ sourcePath, text: ex.text }, candidates), exists: !inPlace && existing.has(sourcePath) });
     }
     for (const r of rows) { r.rule = r.big ? { kind: 'ignore', confidence: 0.9, reason: `Larger than ${fmtBytes(MAX_BYTES)}` } : ruleClassify(r.path, r.text); if (r.version) r.oldText = candidates.find(c => c.key === r.version.key)?.text || ''; }
     // 2. sort: one model call for everything that is not a new version
@@ -100,33 +103,35 @@ export async function openImport(ctx, picked = null) {
     fresh.forEach((r, k) => Object.assign(r, decisions[k], { action: 'new', selected: decisions[k].kind !== 'ignore' }));
     for (const r of rows.filter(x => x.version)) Object.assign(r, { kind: 'version', chapter: '', confidence: r.version.score, reason: r.version.why === 'path' ? `Same file as ${r.version.label}` : `${Math.round(r.version.score * 100)}% similar to ${r.version.label}`, action: 'version', selected: true, by: 'match' });
     // 3. confirm
-    const plan = await confirmTable(dlg, body, { rows, chapters, newChapters, modelNote, existing });
+    const plan = await confirmTable(dlg, body, { rows, chapters, newChapters, modelNote, existing, inPlace });
     if (!plan) return false;
     // 4. apply
-    progress('Importing', 'Copying files into sources/…');
-    result = await applyPlan(ctx, src, plan, existing);
+    progress('Importing', inPlace ? 'Placing files into stages…' : 'Copying files into sources/…');
+    result = await applyPlan(ctx, src, plan, existing, { inPlace });
   } catch (e) { console.error(e); toast(`Import failed: ${e.message}`, 'error'); }
   finally { if (dlg.open) dlg.close(); dlg.remove(); }
   return result;
 }
 
-async function applyPlan(ctx, src, { rows, newChapters }, existing) {
+async function applyPlan(ctx, src, { rows, newChapters }, existing, { inPlace = false } = {}) {
   const store = ctx.store;
   const chosen = rows.filter(r => r.selected && r.kind !== 'ignore');
   if (!chosen.length) return false;
   // a file that replaces nothing keeps its own name: "hw1.docx" next to an existing one becomes "hw1-2.docx"
   const taken = new Set(existing);
-  for (const r of chosen) {
+  for (const r of inPlace ? [] : chosen) {
     if (r.action === 'version' || !taken.has(r.sourcePath) || !r.versionDeclined) { taken.add(r.sourcePath); continue; }
     const m = r.sourcePath.match(/^(.*?)(\.[^./]+)?$/); let n = 2; while (taken.has(`${m[1]}-${n}${m[2] || ''}`)) n++;
     r.sourcePath = `${m[1]}-${n}${m[2] || ''}`; taken.add(r.sourcePath);
   }
   await store.flush();
-  await src.importSources(chosen.map(r => ({ path: r.sourcePath.slice('sources/'.length), blob: r.file })));
+  if (!inPlace) await src.importSources(chosen.map(r => ({ path: r.sourcePath.slice('sources/'.length), blob: r.file })));
   let out;
   store.held = true;
   try {
     out = await applyImport(store, chosen.map(r => ({ path: r.sourcePath, name: r.name, ext: r.ext, kind: r.kind, chapter: r.chapter, action: r.action, version: r.version, text: r.text, blob: r.file })), { newChapters });
+    // files used in place are the course's sources from now on (read-only for agents, compared on later imports)
+    if (inPlace) store.project.sources = [...new Set([...(store.project.sources || []), ...chosen.map(r => r.sourcePath)])].sort();
   } finally { store.held = false; }
   store.dirty = true;
   await store.flush({ message: importMessage(store.project, out.stages, chosen.length) });
@@ -140,9 +145,10 @@ async function applyPlan(ctx, src, { rows, newChapters }, existing) {
 // ---------------------------------------------------------------- the confirmation table
 const size = b => b < 1024 ? `${b} B` : fmtBytes(b);
 const level = c => c >= 0.8 ? ['high', 'High'] : c >= 0.5 ? ['med', 'Medium'] : ['low', 'Low'];
+const INPLACE_TIP = 'Files stay where they are. Checked files become stages and read-only sources; unchecked files are left alone.';
 const COURSE_KINDS = new Set(['syllabus', 'objectives', 'exam_midterm', 'exam_final']);
 
-function confirmTable(dlg, body, { rows, chapters, newChapters, modelNote }) {
+function confirmTable(dlg, body, { rows, chapters, newChapters, modelNote, inPlace = false }) {
   return new Promise(resolve => {
     const proposed = [...newChapters];
     const chapterOptions = r => [['', '—'], ...chapters.map((c, i) => [c.id, `${i + 1}. ${c.title}`]), ...proposed.map(ref => [ref, `New: ${ref.slice(4)}`]), ['__add', 'New chapter…']].map(([v, l]) => el('option', { value: v, selected: v === r.chapter }, l));
@@ -199,7 +205,7 @@ function confirmTable(dlg, body, { rows, chapters, newChapters, modelNote }) {
     const onCancel = e => { e.preventDefault(); done(null); };
     dlg.addEventListener('cancel', onCancel);
     body.replaceChildren(...[
-      el('div', { class: 'imp-head' }, el('h3', {}, 'Import materials'), count),
+      el('div', { class: 'imp-head' }, el('h3', {}, inPlace ? 'Use files in this folder' : 'Import materials'), count, inPlace ? el('button', { type: 'button', class: 'info-tip', 'aria-label': INPLACE_TIP, 'data-tip': INPLACE_TIP }, icon('info', 'sm')) : null),
       modelNote ? notice('warn', modelNote) : null,
       el('div', { class: 'imp-table-wrap' }, el('table', { class: 'table imp-table' },
         el('thead', {}, el('tr', {}, el('th', {}, all), el('th', {}, 'File'), el('th', {}, 'Kind'), el('th', {}, 'Chapter'), el('th', {}, 'Confidence'))), tbody)),

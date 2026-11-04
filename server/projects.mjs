@@ -88,7 +88,7 @@ export class Projects {
   list() {
     const out = [];
     for (const r of config.recent()) {
-      if (!isProjectDir(r.dir)) { if (fs.existsSync(r.dir)) out.push({ plain: true, dir: r.dir, name: r.name || path.basename(r.dir) }); continue; } // the course files are gone: offer to open it again
+      if (!isProjectDir(r.dir)) { if (fs.existsSync(r.dir)) out.push({ plain: true, id: r.id, dir: r.dir, name: r.name || path.basename(r.dir) }); continue; } // the course files are gone: offer to open it again
       try { const s = this.open(r.dir); out.push({ project: this.read(s.dir, { light: true }), dir: s.dir }); } catch (e) { console.warn(`skipping ${r.dir}: ${e.message}`); }
     }
     return out;
@@ -215,7 +215,7 @@ export class Projects {
   async create(project, dir, { message } = {}) {
     dir = dir ? checkDir(dir) : uniqueDir(path.join(checkDir(config.projectsRoot()), slugify(project.name) || 'course'));
     if (isProjectDir(dir)) throw new HttpError(409, `${dir} already holds a course`);
-    fs.mkdirSync(dir, { recursive: true });
+    this.drop(dir); fs.mkdirSync(dir, { recursive: true });
     await vcs.init(dir);
     writeFile(dir, META, JSON.stringify({ format: 'instructional-agents', version: 1, project: { id: project.id, name: project.name } })); // placeholder so open() works
     const s = this.open(dir, { watch: false });
@@ -231,7 +231,7 @@ export class Projects {
   async adopt(project, dir) {
     if (!project?.id || !project.course) throw new HttpError(400, 'Bad project');
     const info = folders.inspect(dir, { withFiles: true }); dir = info.dir;
-    fs.mkdirSync(dir, { recursive: true });
+    this.drop(dir); fs.mkdirSync(dir, { recursive: true });
     const repo = await vcs.initInPlace(dir);
     if (repo === 'existing') project.repo = 'existing';
     writeFile(dir, META, JSON.stringify({ format: 'instructional-agents', version: 1, project: { id: project.id, name: project.name } }));
@@ -278,6 +278,8 @@ export class Projects {
     return this.create(copy, dir, { message: `init: duplicate of ${src.name}` });
   }
 
+  /** Forget the cached state of a folder that no longer holds that course (deleted, about to hold a new one). */
+  drop(dir) { let real = dir; try { real = fs.realpathSync(dir); } catch { /* gone */ } for (const [id, s] of this.byId) if (s.dir === real || s.dir === dir) { s.watcher?.close(); this.byId.delete(id); } }
   forget(id) { const s = this.byId.get(id); s?.watcher?.close(); this.byId.delete(id); config.forget(id); }
   async close() { for (const s of this.byId.values()) await s.watcher?.close(); }
 

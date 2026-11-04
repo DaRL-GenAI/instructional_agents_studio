@@ -39,6 +39,9 @@ test('an empty folder becomes a course (a new repository with one commit)', asyn
   const fresh = path.join(tmpdir(), 'not-yet');
   assert.equal(folders.inspect(fresh).exists, false);
   assert.equal((await projects.adopt(course('Fresh'), fresh)).repo, 'new');
+  // the folder deleted and made again: the new course is not confused with the cached old one
+  fs.rmSync(fresh, { recursive: true }); fs.mkdirSync(fresh);
+  const again = await projects.adopt(course('Fresh again'), fresh); assert.equal(again.project.name, 'Fresh again');
 });
 
 test('a folder with files: course in place, nothing copied, first commit holds the files as they are', async () => {
@@ -172,4 +175,19 @@ test('HTTP: opening a plain folder describes it, adopt makes it a course, the fo
     assert.equal(ap.status, 403); assert.match(ap.body.error, /source material is read-only/);
     assert.equal(fs.readFileSync(path.join(dir, 'week1.pptx'), 'utf8'), 'y');
   } finally { await app.close(); }
+});
+
+test('in-place sources: kept at the top of meta.json, compared on later imports, refused to the built-in agent', async () => {
+  const { serialize, deserialize } = await import('../js/fs/serialize.js');
+  const { versionOf, samePath } = await import('../js/import/classify.js');
+  const { writeRefusal } = await import('../js/agent/builtin.js');
+  const p = course('Round trip'); p.sources = ['lectures/w1.pptx']; p.repo = 'existing';
+  const { files, meta } = serialize(p);
+  assert.deepEqual(meta.sources, ['lectures/w1.pptx']); assert.equal(meta.repo, 'existing'); assert.equal(meta.project.sources, undefined);
+  assert.deepEqual(deserialize(f => files[f] ?? null), JSON.parse(JSON.stringify(p)));
+  assert.ok(samePath('lectures/w1.pptx', 'sources/lectures/w1.pptx')); assert.ok(samePath('sources/course/lectures/w1.pptx', 'lectures/w1.pptx'));
+  assert.ok(!samePath('sources/a/w1.pptx', 'sources/b/w1.pptx')); assert.ok(!samePath('lectures/w1.pptx', 'lectures/w2.pptx'));
+  assert.equal(versionOf({ sourcePath: 'sources/lectures/w1.pptx', text: '' }, [{ key: 'chapters.c1.slides', label: 'W1 / Slides', sourcePath: 'lectures/w1.pptx', text: 'x' }])?.why, 'path');
+  assert.equal(writeRefusal('lectures/notes.md', ['lectures/notes.md']), 'source material is read-only');
+  assert.equal(writeRefusal('lectures/other.md', ['lectures/notes.md']), null);
 });

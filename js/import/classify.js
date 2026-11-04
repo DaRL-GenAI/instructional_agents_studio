@@ -166,12 +166,21 @@ export function jaccard(a, b) {
 }
 export const SIMILAR = 0.6;
 
+/** The same file: equal paths, or one copied into sources/ (possibly inside the folder it was picked with) and the
+ *  other kept in place: "sources/lectures/w1.pptx" ~ "lectures/w1.pptx" ~ "sources/course/lectures/w1.pptx". */
+export function samePath(a, b) {
+  if (a === b) return true;
+  const x = String(a).replace(/^sources\//, ''), y = String(b).replace(/^sources\//, '');
+  if (x === y) return true;
+  const inPlace = p => !String(p).startsWith('sources/');
+  return (inPlace(a) && y.endsWith(`/${x}`)) || (inPlace(b) && x.endsWith(`/${y}`));
+}
 /**
  * Is a new file a new version of something already imported? candidates: [{ key, label, sourcePath, text }].
  * Same relative path wins; otherwise the most similar text at or above SIMILAR. → { key, label, why, score } | null.
  */
 export function versionOf({ sourcePath, text }, candidates) {
-  const same = candidates.find(c => c.sourcePath && c.sourcePath === sourcePath); if (same) return { key: same.key, label: same.label, why: 'path', score: 1 };
+  const same = candidates.find(c => c.sourcePath && samePath(c.sourcePath, sourcePath)); if (same) return { key: same.key, label: same.label, why: 'path', score: 1 };
   const sh = shingles(text); if (sh.size < 3) return null;
   let best = null;
   for (const c of candidates) { const s = jaccard(sh, c.shingles || (c.shingles = shingles(c.text))); if (s >= SIMILAR && (!best || s > best.score)) best = { key: c.key, label: c.label, why: 'similar', score: Math.round(s * 100) / 100 }; }

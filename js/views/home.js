@@ -4,8 +4,9 @@ import { createProject, deleteProject, duplicateProject, importProject, modulePr
 import { href, go } from '../router.js';
 import { download, textBlob, slug } from '../export.js';
 import { LOCAL } from '../fs/api.js';
-import { dirs, folderBackend } from '../fs/backend-folder.js';
+import { dirs, plainRecent } from '../fs/backend-folder.js';
 import { pickFolder } from './folderpicker.js';
+import { openFolder } from './openfolder.js';
 import { startFromMaterials } from '../import/dialog.js';
 
 export function render(ctx) {
@@ -31,6 +32,13 @@ export function render(ctx) {
           button({ icon: 'download', size: 'sm', variant: 'ghost', title: 'Export JSON', onClick: async () => { await ctx.store?.flush(); download(textBlob(await exportProject(p.id), 'application/json'), `${slug(p.name)}_project.json`); } }),
           button({ icon: 'trash', size: 'sm', variant: 'ghost', title: 'Delete', onClick: async () => { if (await confirmDialog({ title: `Delete “${p.name}”?`, body: LOCAL ? 'Removes it from the recent list. The folder and its files stay on disk.' : 'All generated material, media and the audit trail of this project are removed from this browser. Export it first if you want a copy.', confirmLabel: LOCAL ? 'Remove' : 'Delete project', danger: true })) { await deleteProject(p.id); await ctx.reloadProjects(); ctx.render(); toast('Project deleted'); } } }))));
     }
+  }
+  if (LOCAL) for (const f of plainRecent) { // recent folders whose course files are gone
+    listPanel.append(el('div', { class: 'project-card plain' },
+      el('div', {}, el('h3', {}, f.name), el('div', { class: 'meta' }, f.dir)),
+      el('div', { class: 'btn-row' },
+        button({ label: 'Open', size: 'sm', attrs: { 'aria-label': `Open ${f.name}` }, onClick: () => openFolder(ctx, f.dir) }),
+        f.id ? button({ icon: 'x', size: 'sm', variant: 'ghost', title: `Remove ${f.name} from the list`, onClick: async () => { await deleteProject(f.id); await ctx.reloadProjects(); ctx.render(); } }) : null)));
   }
   grid.append(listPanel, createPanel(ctx));
   page.append(grid);
@@ -78,7 +86,6 @@ export function importButton(ctx) {
 
 function openFolderButton(ctx) {
   return button({ label: 'Open folder', icon: 'folder', size: 'sm', onClick: async () => {
-    const d = await pickFolder({ title: 'Open a course folder', projectsOnly: true }); if (!d) return;
-    try { const p = await folderBackend.open(d); await ctx.reloadProjects(); go('p', p.id, 'overview'); } catch (e) { toast(e.message, 'error'); }
+    const d = await pickFolder({ title: 'Open a folder', action: 'Open', rowAction: true }); if (d) await openFolder(ctx, d);
   } });
 }

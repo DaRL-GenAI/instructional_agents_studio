@@ -8,10 +8,11 @@ export const MAX_STEPS = 14;
 const TEXT_WRITABLE = /\.(md|markdown|txt|json|jsonl|ya?ml|tex|bib|csv|tsv)$/i;
 const MAX_READ = 40000;
 
-/** Why the agent may not write `path` (or null). */
-export function writeRefusal(path) {
+/** Why the agent may not write `path` (or null). sources: files kept in place as source material (project.sources). */
+export function writeRefusal(path, sources = []) {
   if (typeof path !== 'string' || !path || path.startsWith('/') || path.split('/').includes('..')) return 'paths are relative to the project and stay inside it';
   if (/^sources(\/|$)/.test(path)) return 'sources/ is read-only';
+  if (sources.includes?.(path) || sources.has?.(path)) return 'source material is read-only';
   if (/^(\.studio|\.git)(\/|$)/.test(path) || ['course.json', 'AGENTS.md', 'CLAUDE.md'].includes(path)) return 'managed by the app';
   if (!TEXT_WRITABLE.test(path)) return 'write_file writes text files (.md, .json, .yaml, .tex, .txt, .csv); use the macro tool for the open slides or document';
   return null;
@@ -78,7 +79,7 @@ export async function runBuiltin({ env, history = [], message, context = [], onS
       return hits.filter(h => h.line).slice(0, 60).map(h => `${h.path}:${h.line}: ${h.text.trim()}`).join('\n') || 'No matches';
     }
     if (name === 'write_file') {
-      const p = String(args.path || ''); const why = writeRefusal(p); if (why) return `Refused: ${why}`;
+      const p = String(args.path || ''); const why = writeRefusal(p, env.sources); if (why) return `Refused: ${why}`;
       const content = String(args.content ?? '');
       if (/\.json$/i.test(p)) { try { JSON.parse(content); } catch (e) { return `Refused: not valid JSON (${e.message})`; } }
       overlay.set(p, content);

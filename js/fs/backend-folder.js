@@ -9,13 +9,18 @@ const heads = new Map();   // project id → git head the browser copy is based 
 const bases = new Map();   // project id → that commit's project (JSON), the base of a three-way merge
 const external = new Map(); // project id → decks changed on disk, waiting to be committed by the app
 export const dirs = new Map(); // project id → folder
+export const plainRecent = []; // recent folders that no longer hold a course: [{ id, dir, name }]
 const P = id => `/api/projects/${encodeURIComponent(id)}`;
 const M = (pid, ch, kind) => `${P(pid)}/media/${encodeURIComponent(`${ch}:${kind}`)}`;
 const took = r => { heads.set(r.project.id, r.head); bases.set(r.project.id, JSON.stringify(r.project)); if (r.dir) dirs.set(r.project.id, r.dir); external.set(r.project.id, r.external || []); return r.project; };
 
 export const folderBackend = {
   kind: 'folder',
-  async list() { const r = await api('/api/projects'); for (const x of r.projects) dirs.set(x.project.id, x.dir); return r.projects.map(x => x.project); },
+  async list() {
+    const r = await api('/api/projects'); const courses = r.projects.filter(x => x.project);
+    plainRecent.splice(0, plainRecent.length, ...r.projects.filter(x => x.plain));
+    for (const x of courses) dirs.set(x.project.id, x.dir); return courses.map(x => x.project);
+  },
   async get(id) { try { return took(await api(P(id))); } catch (e) { if (e.status === 404) return null; throw e; } },
   /** Save; when the folder moved on (409) merge the disk version in, adopt it in place and save again.
    *  Resolves to the number of units taken from disk (the caller re-renders when > 0). */
@@ -44,7 +49,10 @@ export const folderBackend = {
   async remove(id) { await api(P(id), { method: 'DELETE' }); heads.delete(id); },
   async duplicate(id) { return took(await api(`${P(id)}/duplicate`, { method: 'POST' })); },
   async import(json, { dir } = {}) { return took(await api('/api/projects/import', { method: 'POST', body: { json, dir } })); },
-  async open(dir) { return took(await api('/api/projects/open', { method: 'POST', body: { dir } })); },
+  /** A course folder → its project; any other folder → { folder } (a summary, to be opened with adopt). */
+  async open(dir) { const r = await api('/api/projects/open', { method: 'POST', body: { dir } }); return r.folder ? { folder: r.folder } : took(r); },
+  /** A plain folder becomes the course `p`, in place → { project, files: [{ path, size }] (the folder's files) }. */
+  async adopt(dir, p) { const r = await api('/api/projects/adopt', { method: 'POST', body: { dir, project: p } }); return { project: took(r), files: r.files || [], repo: r.repo }; },
   /** Reviewed agent changes as one commit: the project (stage files) plus plain files { path, data: base64 } and
    *  removed plain files. */
   async applyAgent(p, { files = [], removed = [], message, session } = {}) {

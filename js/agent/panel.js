@@ -286,7 +286,7 @@ export class AgentPanel {
     const office = this.ws.officeFor(scope);
     let guide = null; try { const g = await this.ws.src.read('AGENTS.md'); guide = g ? await g.blob.text() : null; } catch { /* none */ }
     const env = {
-      llm: new LLMClient({ ...store.settings, apiKey: store.apiKey }), model: store.settings.model, src: this.ws.src, office, guide,
+      llm: new LLMClient({ ...store.settings, apiKey: store.apiKey }), model: store.settings.model, src: this.ws.src, office, guide, sources: store.project.sources || [],
       readText: async (p, blob) => /\.pptx$/i.test(p) ? (await readPptx(blob)).map(x => `Slide ${x.slide_id}: ${x.title}\n${x.bullets.map(b => `- ${b}`).join('\n')}${x.notes ? `\nNotes: ${x.notes}` : ''}`).join('\n\n') : docxToMd(blob),
     };
     const msg = { role: 'assistant', agent: 'builtin', text: '', steps: [], at: null };

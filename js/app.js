@@ -19,6 +19,7 @@ import * as assessments from './views/assessments.js';
 import * as videos from './views/videos.js';
 import * as audit from './views/audit.js';
 import * as workspace from './views/workspace.js';
+import { openFolder } from './views/openfolder.js';
 
 const VIEWS = { overview, basics, design, slides, assessments, videos, audit };
 
@@ -209,9 +210,13 @@ async function boot() {
   if (LOCAL) onServerEvent(onDiskChange);
   window.addEventListener('beforeunload', e => { if (ctx.busy || workspace.dirtyCount()) { e.preventDefault(); e.returnValue = ''; } ctx.store?.flush(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) ctx.store?.flush(); });
-  if (!location.hash) location.hash = ctx.projects.length ? href('p', ctx.projects[0].id, 'overview') : href('projects');
+  // started in a folder that is not a course yet (instructional-agents <dir>): offer to open it as one, once per tab
+  const pending = LOCAL?.pendingDir && !LOCAL.openId && !sessionFlag(`ia-asked:${LOCAL.pendingDir}`);
+  if (!location.hash) location.hash = pending ? href('projects') : ctx.projects.length ? href('p', ctx.projects[0].id, 'overview') : href('projects');
   await route();
+  if (pending) openFolder(ctx, LOCAL.pendingDir);
 }
+function sessionFlag(k) { try { if (sessionStorage.getItem(k)) return true; sessionStorage.setItem(k, '1'); } catch { /* storage blocked */ } return false; }
 boot();
 
 

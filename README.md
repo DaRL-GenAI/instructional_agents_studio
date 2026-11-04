@@ -104,8 +104,21 @@ npx instructional-agents import old_project.json [folder] [--force]
 ```
 
 or `npm install -g instructional-agents` and run `instructional-agents …`. Without a folder it opens the project
-list (recent courses, new course, open an existing folder). To use Claude Code or Codex from the app, install and
+list (recent courses, new course, open a folder). To use Claude Code or Codex from the app, install and
 sign in to them as usual (`claude`, `codex login`); `doctor` shows what it found.
+
+**Opening any folder.** *Open folder* (or `instructional-agents <folder>`) opens any folder, not only course folders.
+An empty folder becomes a course after you name it. A folder that already holds files (slides, Word files, PDFs,
+notes) is offered as a course: *Open as course* creates the course there and sorts the folder's own files in the
+import table. Your files are not copied, moved or changed: the ones you keep become stages in the usual layout
+(`chapters/…`, `design/…`) and stay where they are as read-only sources, listed in `.studio/meta.json` (`sources`),
+badged **S** in the file tree, refused to agents, and compared against when you import a newer version later. Files
+you leave unchecked are left alone. A folder without git becomes a repository whose first commit holds your files as
+they are (dependency folders such as `node_modules/` and `.venv/` excluded); a folder that is already a git repository
+is used as it is, on its current branch: the app commits only its own files (`.studio/`, `course.json`, `AGENTS.md`,
+`CLAUDE.md`, stage files) and never your other files or what you have staged. The home folder itself, folders
+outside it, and folders with more than 2000 files or 500 MB are refused (choose a subfolder). The picker hides
+hidden folders; type any path in its field to go there.
 
 **Workspace.** *Workspace* shows the course as files: a tree with stage badges, tabs (slides and Word files in the
 embedded editor, text in a code editor, PDFs, media), search and history, and the agent panel (right or bottom).
@@ -115,8 +128,8 @@ The current file and selection (lines, slides, paragraphs) are attached automati
 Each turn runs on a copy of the course under `.studio/jobs/`, so nothing changes until you review it: text files
 show their changes hunk by hunk (keep any of them), slides and Word files open as a preview in their tab with a
 check for changes outside your selection. **Keep** saves the accepted changes as one commit (`agent: …`) with a new
-version of each stage; **Undo** reverts that commit. `sources/` and the app's own files cannot be changed by an
-agent. Chats are kept in `.studio/sessions/`; a follow-up message resumes the same Claude Code or Codex session.
+version of each stage; **Undo** reverts that commit. `sources/`, sources kept in place and the app's own files
+cannot be changed by an agent. Chats are kept in `.studio/sessions/`; a follow-up message resumes the same Claude Code or Codex session.
 The app writes `AGENTS.md` and `CLAUDE.md` at the course root (layout, which file backs which stage, editing
 rules), so an agent you start yourself in the folder knows the course too.
 

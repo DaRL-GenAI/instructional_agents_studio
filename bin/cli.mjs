@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // instructional-agents — Instructional Agents Studio as a local app.
 //
-//   instructional-agents [dir] [--port N] [--no-open] [--allow-host H]   start (dir: a course folder, or where a new one goes;
+//   instructional-agents [dir] [--port N] [--no-open] [--allow-host H]   start (dir: a course folder, or any folder to open as one;
 //                                                     --allow-host: also accept https://H, e.g. a private tunnel)
 //   instructional-agents doctor                           check Node, the agent CLIs, LaTeX and the editor
 //   instructional-agents import <project.json> [dir]      turn a project exported from the browser edition into a folder

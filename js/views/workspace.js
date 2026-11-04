@@ -36,7 +36,7 @@ const MEDIA = { png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: '
 const isInternal = p => p === '.studio' || p.startsWith('.studio/') || p === '.git' || p.startsWith('.git/');
 const ICON = { pptx: 'presentation', docx: 'file-text', md: 'file-text', pdf: 'book', image: 'image', video: 'video', audio: 'mic' };
 const fileIcon = p => { const e = extOf(p); return ICON[e] || ICON[MEDIA[e]] || 'file'; };
-const BADGE = { generated: ['G', 'Generated'], edited: ['E', 'Edited'], imported: ['I', 'Imported'], stale: ['!', 'Out of date: something it was made from changed'], running: ['…', 'Running'], error: ['×', 'Last run failed'] };
+const BADGE = { generated: ['G', 'Generated'], edited: ['E', 'Edited'], imported: ['I', 'Imported'], source: ['S', 'Source material: read-only for agents'], stale: ['!', 'Out of date: something it was made from changed'], running: ['…', 'Running'], error: ['×', 'Last run failed'] };
 
 /** The Workspace element for the open project (built on first use). */
 export function mount(ctx, host) {
@@ -250,7 +250,7 @@ class Workspace {
   renderTree() {
     if (!this.tree || this.view !== 'files') return;
     if (!this.entries.length) { this.tree.replaceChildren(this.listError ? notice('error', this.listError) : el('p', { class: 'meta', style: 'padding:8px 12px' }, 'Loading…')); return; }
-    const owners = this.owners(); const kids = new Map();
+    const owners = this.owners(); const kids = new Map(); const srcs = new Set(this.ctx.store.project.sources || []);
     const ood = new Set(this.renderOod().map(x => x.path));
     for (const e of this.entries) { const d = dirOf(e.path); if (!kids.has(d)) kids.set(d, []); kids.get(d).push(e); }
     const order = (a, b) => (b.dir - a.dir) || (a.path.startsWith('.') - b.path.startsWith('.')) || a.path.localeCompare(b.path);
@@ -259,7 +259,7 @@ class Workspace {
       for (const e of (kids.get(dir) || []).sort(order)) {
         const open = e.dir && this.expanded.has(e.path) && !(isInternal(e.path) && !this.expanded.has(e.path));
         const key = owners.get(e.path); const info = key ? stageInfo(this.ctx, key) : null; const b0 = info ? this.badgeOf(info) : null;
-        const b = ood.has(e.path) && b0 !== 'running' && b0 !== 'error' ? 'stale' : b0;
+        const b = (ood.has(e.path) && b0 !== 'running' && b0 !== 'error' ? 'stale' : b0) || (!e.dir && (srcs.has(e.path) || e.path.startsWith('sources/')) ? 'source' : null);
         const dirty = this.tabs.get(e.path)?.dirty;
         rows.push(el('div', { class: `ws-row${this.active === e.path ? ' active' : ''}${isInternal(e.path) || e.path === 'build' ? ' dim' : ''}`, role: 'treeitem', tabindex: this.active === e.path ? '0' : '-1', 'aria-level': depth + 1, 'aria-expanded': e.dir ? String(open) : null, 'aria-selected': String(this.active === e.path), dataset: { path: e.path, dir: e.dir ? '1' : '0' }, style: `padding-left:${8 + depth * 14}px`, title: e.path,
           onClick: () => e.dir ? this.toggleDir(e.path) : go(...wsParts(this.id, e.path)),
