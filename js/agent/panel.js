@@ -178,7 +178,7 @@ export class AgentPanel {
   }
   renderLive() {
     const r = this.running;
-    return el('div', { class: 'ag-msg bot live', 'aria-busy': 'true' },
+    return el('div', { class: 'ag-msg bot ag-running', 'aria-busy': 'true' },
       el('ol', { class: 'ag-steps-live' }, ...r.steps.slice(-8).map(s => el('li', {}, s))),
       r.text ? el('div', { class: 'ag-text' }, r.text.slice(-600)) : null,
       el('p', { class: 'meta ag-working' }, el('i', { class: 'ag-pulse' }), `${AGENTS[r.agent] || 'Agent'} is working…`));
