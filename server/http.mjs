@@ -10,6 +10,7 @@ import { createGuard, newToken } from './security.mjs';
 import { Projects, HttpError, checkDir, isProjectDir, allowedRoots } from './projects.mjs';
 import { resolveInside, sha256, writeFile, sourcesOf } from './workspace.mjs';
 import * as folders from './folders.mjs';
+import * as localstate from './localstate.mjs';
 import { findEditor } from './editor-pkg.mjs';
 import * as media from './media.mjs';
 import * as config from './config.mjs';
@@ -236,7 +237,7 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
     let dirPath = start; while (!fs.existsSync(dirPath)) dirPath = path.dirname(dirPath);
     const dirs = fs.readdirSync(dirPath, { withFileTypes: true }).filter(d => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules').map(d => ({ name: d.name, isProject: isProjectDir(path.join(dirPath, d.name)) })).sort((a, b) => a.name.localeCompare(b.name));
     const up = path.dirname(dirPath);
-    return { path: dirPath, isProject: isProjectDir(dirPath), parent: up !== dirPath && roots.some(r => up === r || up.startsWith(r + path.sep)) ? up : null, dirs };
+    return { path: dirPath, isProject: isProjectDir(dirPath), parent: up !== dirPath && roots.some(r => up === r || up.startsWith(r + path.sep)) ? up : null, dirs, places: localstate.places(), cloud: localstate.cloudOf(dirPath) };
   }
 
   async function revise(req, res) {

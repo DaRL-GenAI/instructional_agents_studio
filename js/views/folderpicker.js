@@ -10,6 +10,7 @@ export function pickFolder({ title = 'Choose a folder', start = '', action = 'Ch
     const dlg = el('dialog', { class: 'dlg folder-dlg', 'aria-label': title });
     const path = input({ value: start, spellcheck: 'false', 'aria-label': 'Folder path', placeholder: '~/path/to/folder' });
     const list = el('ul', { class: 'folder-list', 'aria-label': 'Folders' });
+    const places = el('div', { class: 'folder-places', role: 'group', 'aria-label': 'Synced folders' });
     const msg = el('div', {});
     let cur = null, seq = 0;
     const ok = button({ label: action, variant: 'primary', onClick: () => finish(path.value.trim() || cur?.path) });
@@ -19,6 +20,7 @@ export function pickFolder({ title = 'Choose a folder', start = '', action = 'Ch
       try { got = await folderBackend.browse(p); } catch (e) { if (n === seq) msg.replaceChildren(notice('error', e.message)); return; }
       if (n !== seq) return; cur = got; // a later request (typed path) wins
       path.value = cur.path;
+      places.replaceChildren(...(cur.places || []).map(pl => el('button', { type: 'button', class: 'folder-place', 'aria-pressed': String(cur.path === pl.path || cur.path.startsWith(pl.path + '/')), onClick: () => show(pl.path) }, icon('cloud', 'sm'), pl.label)));
       const row = d => {
         const full = `${cur.path}/${d.name}`;
         return el('li', { class: 'folder-row' },
@@ -29,7 +31,7 @@ export function pickFolder({ title = 'Choose a folder', start = '', action = 'Ch
       if (!cur.dirs.length) list.append(el('li', { class: 'meta' }, 'No subfolders'));
     }
     path.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); show(path.value.trim()); } });
-    dlg.append(el('div', { class: 'dlg-body' }, el('h3', {}, title), path, list, msg,
+    dlg.append(el('div', { class: 'dlg-body' }, el('h3', {}, title), places, path, list, msg,
       el('div', { class: 'dlg-actions' }, button({ label: 'Cancel', onClick: () => finish(null) }), ok)));
     dlg.addEventListener('close', () => { dlg.remove(); resolve(null); });
     document.body.append(dlg); dlg.showModal(); show(start);

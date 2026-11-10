@@ -33,14 +33,15 @@ export function askAdopt(f) {
     const name = input({ value: f.name, required: true, autocomplete: 'off', spellcheck: 'false' });
     const finish = v => { if (dlg.open) dlg.close(); resolve(v); };
     const ok = button({ label: f.empty ? 'Create course' : 'Open as course', variant: 'primary', type: 'submit' });
-    const tip = f.empty ? 'The course files are created in this folder.' : `Your files stay where they are and are not changed. Next you choose which ones the course uses.${f.git ? ' This folder is a git repository: only the app’s own files are committed, on the current branch.' : ' The folder becomes a git repository holding them as they are.'}`;
+    const cloud = f.cloud ? (f.git ? ` This folder is in ${f.cloud} and holds a git repository: syncing a repository can damage it, so keep the course outside ${f.cloud} if you can.` : ` This folder is in ${f.cloud}: the course files sync, while the version history and agent chats are kept on this computer.`) : '';
+    const tip = (f.empty ? 'The course files are created in this folder.' : `Your files stay where they are and are not changed. Next you choose which ones the course uses.${f.git ? ' This folder is a git repository: only the app’s own files are committed, on the current branch.' : f.cloud ? '' : ' The folder becomes a git repository holding them as they are.'}`) + cloud;
     const summary = f.empty ? null : el('div', { class: 'adopt-summary' },
       el('p', {}, el('b', {}, `${f.count} file${f.count === 1 ? '' : 's'}`), el('span', { class: 'meta' }, ` · ${fmtBytes(f.bytes)}`), tipBtn(tip)),
       el('ul', { class: 'adopt-kinds', 'aria-label': 'Kinds of files' }, ...f.kinds.map(([k, n]) => el('li', {}, `${k} `, el('span', { class: 'meta' }, String(n))))),
       el('ul', { class: 'adopt-top', 'aria-label': 'Top-level items' }, ...f.top.map(t => el('li', {}, t)), f.more ? el('li', { class: 'meta' }, `+${f.more} more`) : null));
     const form = el('form', { class: 'dlg-body', method: 'dialog', onSubmit: e => { e.preventDefault(); const v = name.value.trim(); if (!v) { name.setAttribute('aria-invalid', 'true'); name.focus(); return; } finish(v); } },
       el('h3', { id: 'adopt-title' }, f.empty ? `New course in ${f.name}` : `Open ${f.name} as a course?`),
-      el('p', { class: 'meta adopt-path' }, f.dir, f.empty ? tipBtn(tip) : null),
+      el('p', { class: 'meta adopt-path' }, f.cloud ? el('span', { class: 'adopt-cloud' }, icon('cloud', 'sm'), f.cloud) : null, f.dir, f.empty ? tipBtn(tip) : null),
       summary, field('Course name', name),
       el('div', { class: 'dlg-actions' }, button({ label: 'Cancel', variant: 'ghost', onClick: () => finish(null) }), ok));
     dlg.append(form);

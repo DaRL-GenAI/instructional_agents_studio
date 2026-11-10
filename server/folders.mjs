@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { HttpError, checkDir, allowedRoots, isProjectDir } from './projects.mjs';
+import { cloudOf } from './localstate.mjs';
 
 export const LIMITS = { files: 2000, bytes: 500 * 1024 * 1024 };
 /** Folders not looked into: dependencies, environments, caches, version control. */
@@ -46,7 +47,7 @@ export function scan(dir, { limits = LIMITS } = {}) {
   return { files: files.sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true })), count, bytes, over };
 }
 
-/** A folder about to become a course: { dir, name, exists, git, empty, count, bytes, kinds: [[label, n]], top: [names] }
+/** A folder about to become a course: { dir, name, exists, git, cloud (its sync service, or null), empty, count, bytes, kinds: [[label, n]], top: [names] }
  *  (+ files: [{ path, size }]). Refuses folders over the limits. */
 export function inspect(dir, { limits = LIMITS, withFiles = false } = {}) {
   const abs = checkOpenable(dir);
@@ -58,7 +59,7 @@ export function inspect(dir, { limits = LIMITS, withFiles = false } = {}) {
   const kinds = new Map(); for (const f of s.files) { const k = kindOf(f.path); kinds.set(k, (kinds.get(k) || 0) + 1); }
   const top = [...new Set(s.files.map(f => f.path.split('/')[0]))];
   return {
-    dir: abs, name: path.basename(abs), exists: fs.existsSync(abs), git: fs.existsSync(path.join(abs, '.git')),
+    dir: abs, name: path.basename(abs), exists: fs.existsSync(abs), git: fs.existsSync(path.join(abs, '.git')), cloud: cloudOf(abs),
     empty: !s.files.length, count: s.files.length, bytes: s.files.reduce((a, f) => a + f.size, 0),
     kinds: [...kinds].sort((a, b) => b[1] - a[1]), top: top.slice(0, 12), more: Math.max(0, top.length - 12),
     ...(withFiles ? { files: s.files } : {}),

@@ -416,6 +416,12 @@ dialog.dlg.folder-dlg { width: min(600px, calc(100vw - 32px)); }
 .folder-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; background: none; color: inherit; font: inherit; text-align: left; border-radius: 6px; cursor: pointer; }
 .folder-item:hover, .folder-item:focus-visible { background: var(--surface-2, var(--line-soft)); }
 .folder-item .up { transform: rotate(180deg); }
+.folder-places { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.folder-places:empty { display: none; }
+.folder-place { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line-soft); border-radius: 999px; background: none; color: inherit; font: inherit; font-size: .9em; cursor: pointer; }
+.folder-place:hover, .folder-place:focus-visible { background: var(--surface-2, var(--line-soft)); }
+.folder-place[aria-pressed="true"] { border-color: var(--accent, currentColor); }
+.adopt-cloud { display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; font-weight: 600; }
 .folder-row { display: flex; align-items: center; gap: 4px; }
 .folder-row .folder-item { flex: 1; min-width: 0; }
 .folder-row > .btn { opacity: .6; }

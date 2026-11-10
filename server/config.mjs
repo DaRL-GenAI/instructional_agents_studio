@@ -6,6 +6,8 @@ import path from 'node:path';
 
 export const configDir = () => process.env.IA_CONFIG_DIR || path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'instructional-agents');
 export const cacheDir = () => process.env.IA_CACHE_DIR || path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'instructional-agents');
+/** State kept on this computer only (history and scratch of courses in a synced folder): never a cache, it holds history. */
+export const dataDir = () => process.env.IA_DATA_DIR || path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'instructional-agents');
 export const projectsRoot = () => process.env.IA_PROJECTS_ROOT || readJson('config.json', {}).projectsRoot || path.join(os.homedir(), 'InstructionalAgents');
 
 function readJson(name, fallback) { try { return JSON.parse(fs.readFileSync(path.join(configDir(), name), 'utf8')); } catch { return fallback; } }
@@ -23,6 +25,10 @@ export function remember(entry) {
 }
 export function forget(id) { writeJson('projects.json', recent().filter(r => r.id !== id)); }
 export const dirOf = id => recent().find(r => r.id === id)?.dir || null;
+
+// ---------------------------------------------------------------- local state of courses in synced folders: [{ dir, id, name }]
+export const localStates = () => readJson('local-state.json', []);
+export const saveLocalStates = list => writeJson('local-state.json', list);
 
 // ---------------------------------------------------------------- account settings (what IndexedDB holds in the browser edition)
 export const settings = () => readJson('settings.json', null);

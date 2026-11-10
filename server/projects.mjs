@@ -13,12 +13,15 @@ import * as media from './media.mjs';
 import * as config from './config.mjs';
 import { guideFiles, isManagedGuide, GUIDE_FILES } from './agents/guide.mjs';
 import * as folders from './folders.mjs';
+import { cloudOf, localDir } from './localstate.mjs';
 
 export class HttpError extends Error { constructor(status, message, body) { super(message); this.status = status; this.body = body; } }
 
-/** Folders the app may create or open projects in: the home directory and the temp directory (IA_ALLOW_ROOTS adds more). */
+/** Folders the app may create or open projects in: the home directory, the temp directory and Google Drive's old
+ *  /Volumes mount (IA_ALLOW_ROOTS adds more). */
 export function allowedRoots() {
   const extra = (process.env.IA_ALLOW_ROOTS || '').split(path.delimiter).filter(Boolean);
+  if (process.platform === 'darwin' && fs.existsSync('/Volumes/GoogleDrive')) extra.push('/Volumes/GoogleDrive');
   return [os.homedir(), os.tmpdir(), ...extra].map(p => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } });
 }
 export function checkDir(dir) {
@@ -50,6 +53,7 @@ export class Projects {
     s.auditLen = (readText(dir, '.studio/audit.jsonl') || '').split('\n').filter(Boolean).length;
     this.byId.set(s.id, s);
     vcs.ensureIgnores(dir);
+    if (cloudOf(dir)) localDir(dir); // records the course id with this computer's history (found again after a move)
     if (meta.stages) this.ensureGuide(s, project || this.read(dir));
     config.remember({ id: s.id, dir, name: meta.project.name });
     if (watch) this.startWatch(s);

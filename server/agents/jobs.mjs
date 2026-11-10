@@ -3,6 +3,7 @@
 // agent runs there (the same folder every turn, so Claude Code's --resume finds its conversation), and afterwards
 // the copy is compared with the snapshot taken at the start: that is the change list the instructor reviews.
 // Nothing reaches the project until the browser applies the accepted changes (http.mjs → /agent/apply).
+import { scratchDir } from '../localstate.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,8 +20,8 @@ export const READ_ONLY = /^(sources|\.studio)(\/|$)/;
 const TEXT_EXT = /\.(md|markdown|txt|json|jsonl|ya?ml|tex|bib|sty|cls|csv|tsv|html?|css|m?js|py|sh|toml|xml|svg|gitignore)$/i;
 export const isText = (p, buf) => (TEXT_EXT.test(p) || !/\.[^/]+$/.test(p)) && !(buf && buf.subarray(0, 8000).includes(0));
 
-export const jobDir = (root, session) => path.join(root, '.studio', 'jobs', `s-${session}`);
-const metaFile = (root, session) => path.join(root, '.studio', 'jobs', `s-${session}.json`);
+export const jobDir = (root, session) => path.join(scratchDir(root, 'jobs'), `s-${session}`);
+const metaFile = (root, session) => path.join(scratchDir(root, 'jobs'), `s-${session}.json`);
 
 /** Every file under dir (relative paths, no symlinks, SKIP applied): Map path → abs. Symlinks are listed in `links`. */
 export function walk(dir, { links = [] } = {}) {

@@ -1,15 +1,16 @@
-// agents/sessions.mjs — agent chats of one project, one JSON file each in .studio/sessions/ (not in git):
+// agents/sessions.mjs — agent chats of one project, one JSON file each in .studio/sessions/ (not in git; on this
+// computer for a course in a synced folder, localstate.mjs):
 // { id, agent, title, createdAt, updatedAt, cli: { claude?: id, codex?: id }, messages: [{ role, text, at, ... }] }.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { HttpError } from '../projects.mjs';
+import { scratchDir } from '../localstate.mjs';
 
 export const AGENTS = ['builtin', 'claude', 'codex'];
-const DIR = '.studio/sessions';
 const MAX_MESSAGES = 400;
 const idOk = id => typeof id === 'string' && /^[a-z0-9]{6,32}$/.test(id);
-const file = (root, id) => { if (!idOk(id)) throw new HttpError(400, 'Bad session id'); return path.join(root, DIR, `${id}.json`); };
+const file = (root, id) => { if (!idOk(id)) throw new HttpError(400, 'Bad session id'); return path.join(scratchDir(root, 'sessions'), `${id}.json`); };
 
 function writeJson(f, v) { fs.mkdirSync(path.dirname(f), { recursive: true }); const tmp = `${f}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(v, null, 1)); fs.renameSync(tmp, f); }
 
@@ -29,9 +30,9 @@ export function get(root, id) {
 }
 /** Newest first, without the messages. */
 export function list(root) {
-  let names; try { names = fs.readdirSync(path.join(root, DIR)).filter(n => n.endsWith('.json')); } catch { return []; }
+  const dir = scratchDir(root, 'sessions'); let names; try { names = fs.readdirSync(dir).filter(n => n.endsWith('.json')); } catch { return []; }
   const out = [];
-  for (const n of names) { try { const s = JSON.parse(fs.readFileSync(path.join(root, DIR, n), 'utf8')); out.push({ id: s.id, agent: s.agent, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt, count: s.messages.length }); } catch { /* skip a broken file */ } }
+  for (const n of names) { try { const s = JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')); out.push({ id: s.id, agent: s.agent, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt, count: s.messages.length }); } catch { /* skip a broken file */ } }
   return out.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }
 /** Change a session: fn(session) mutates it. */

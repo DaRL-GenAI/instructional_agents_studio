@@ -123,6 +123,14 @@ is used as it is, on its current branch: the app commits only its own files (`.s
 outside it, and folders with more than 2000 files or 500 MB are refused (choose a subfolder). The picker hides
 hidden folders; type any path in its field to go there.
 
+**Google Drive and other synced folders.** With Google Drive for desktop, a course can live in Google Drive like any
+other folder: the picker lists *Google Drive* (and *Shared drives*, iCloud Drive, Dropbox, OneDrive) at the top. In
+a synced folder only the course files sync. The git history, the agents' working copies and the agent chats stay on
+this computer, in `~/.local/share/instructional-agents/projects/` (`IA_DATA_DIR` overrides it), because a sync client
+can damage a git repository. Another computer that opens the same Drive folder starts its own history from the files
+as they are. A synced folder that already holds a `.git` keeps using it; the app warns about it. On Linux, set
+`IA_CLOUD_DIRS` to the folders a sync client (rclone, Insync) keeps.
+
 **Workspace.** *Workspace* shows the course as files: a tree with stage badges, tabs (slides and Word files in the
 embedded editor, text in a code editor, PDFs, media), search and history, and the agent panel (right or bottom).
 

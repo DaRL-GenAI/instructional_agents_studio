@@ -2,6 +2,7 @@
 // ~/.local/bin) or latexmk as a fallback. A compile copies the file's folder into .studio/jobs/tex-<id>/ and runs
 // there (cwd = that copy, no shell escape, 60 s limit), so a broken run never touches the project; the PDF and the
 // log land in build/ (git-ignored). Errors come from the log (file:line: message).
+import { scratchDir } from './localstate.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -87,7 +88,7 @@ export async function compile(root, rel, { tex = findTex(), timeout = 60000 } = 
   const job = (async () => {
     const t0 = Date.now();
     const id = crypto.createHash('sha1').update(rel).digest('hex').slice(0, 12);
-    const jobDir = path.join(root, '.studio', 'jobs', `tex-${id}`); const src = path.join(jobDir, 'src');
+    const jobDir = path.join(scratchDir(root, 'jobs'), `tex-${id}`); const src = path.join(jobDir, 'src');
     fs.rmSync(jobDir, { recursive: true, force: true });
     copyDir(path.dirname(abs), src);
     const name = path.basename(rel, path.extname(rel)); const outDir = path.join(jobDir, 'out'); fs.mkdirSync(outDir, { recursive: true });
