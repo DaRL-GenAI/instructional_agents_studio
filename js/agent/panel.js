@@ -13,6 +13,7 @@ import { jobChanges, overlayChanges, undoCommit } from './changes.js';
 import { backend } from '../fs/backend.js';
 import { liveEdit } from './live.js';
 import { DERIVE, deriveActions, runDerive } from './derive.js';
+import { needsSignIn, SIGN_IN_COMMAND, REMOTE_SIGN_IN_COMMAND } from './signin.js';
 
 export const AGENTS = { builtin: 'Built-in', claude: 'Claude Code', codex: 'Codex' };
 const LS = 'ia-agent.';
@@ -20,6 +21,7 @@ const pref = (k, d) => { try { const v = localStorage.getItem(LS + k); return v 
 const setPref = (k, v) => { try { localStorage.setItem(LS + k, JSON.stringify(v)); } catch { /* storage blocked */ } };
 const baseName = p => p.split('/').pop();
 const ckey = c => c.key || c.path;
+const ON_THIS_COMPUTER = ['127.0.0.1', 'localhost'].includes(globalThis.location?.hostname);
 const STATUS = { added: ['A', 'Added'], modified: ['M', 'Modified'], deleted: ['D', 'Deleted'] };
 
 // ---------------------------------------------------------------- where chats are kept
@@ -55,7 +57,7 @@ export class AgentPanel {
   constructor(ws) {
     this.ws = ws; this.pid = ws.id; this.chats = LOCAL ? localChats(this.pid) : browserChats(this.pid);
     this.agent = pref('agent', 'builtin'); this.available = { builtin: true, claude: false, codex: false };
-    this.session = null; this.list = []; this.running = null; this.review = null; this.chips = []; this.auto = null; this.autoOff = null;
+    this.session = null; this.list = []; this.running = null; this.review = null; this.chips = []; this.auto = null; this.autoOff = null; this.login = null; this.signedIn = {};
     this.build();
     this.off = LOCAL ? onServerEvent(ev => this.onEvent(ev)) : () => {};
     this.init();
@@ -84,7 +86,7 @@ export class AgentPanel {
   destroy() { this.off(); this.ws.setLocks(null); }
 
   async init() {
-    try { const info = await this.chats.info(); this.available = { builtin: true, claude: !!info.agents?.claude, codex: !!info.agents?.codex }; if (info.running) this.running = { session: info.running.session, steps: [], text: '', agent: info.running.agent, scope: info.running.scope }; }
+    try { const info = await this.chats.info(); this.login = info.login || null; this.available = { builtin: true, claude: !!info.agents?.claude, codex: !!info.agents?.codex }; if (info.running) this.running = { session: info.running.session, steps: [], text: '', agent: info.running.agent, scope: info.running.scope }; }
     catch (e) { this.log.replaceChildren(notice('error', e.message)); }
     if (!this.available[this.agent]) this.agent = 'builtin';
     this.renderPicker();
@@ -147,8 +149,32 @@ export class AgentPanel {
     return el('div', { class: 'ag-msg bot' },
       m.steps?.length ? el('details', { class: 'ag-steps' }, el('summary', {}, `${m.steps.length} step${m.steps.length > 1 ? 's' : ''}`), el('ol', {}, ...m.steps.map(s => el('li', {}, s)))) : null,
       m.text ? body : null, m.error ? notice(/^Stopped/.test(m.error) ? 'warn' : 'error', m.error) : null,
+      last ? this.renderSignIn(m) : null,
       m.changes?.length && !(last && this.review) ? el('p', { class: 'meta' }, `${m.changes.length} file${m.changes.length > 1 ? 's' : ''} changed`) : null,
       m.live ? el('p', { class: 'meta' }, icon('check', 'sm'), ` Applied in ${baseName(m.live.path)}`) : null);
+  }
+  renderSignIn(m) {
+    if (!LOCAL || !needsSignIn(m.agent, m.error) || this.signedIn[m.agent]) return null;
+    if (!ON_THIS_COMPUTER) return notice('warn', `Run ${REMOTE_SIGN_IN_COMMAND[m.agent]} in a terminal on the computer running the app, then send again.`);
+    const waiting = this.login?.agent === m.agent;
+    return el('div', { class: 'btn-row' }, waiting
+      ? button({ label: 'Waiting for sign-in in your browser…', size: 'sm', disabled: true })
+      : button({ label: `Sign in to ${AGENTS[m.agent]}`, size: 'sm', variant: 'primary', title: `Runs ${SIGN_IN_COMMAND[m.agent]}`, onClick: () => this.startLogin(m.agent) }),
+    waiting ? button({ label: 'Cancel', size: 'sm', variant: 'ghost', onClick: () => api('/api/agents/login/cancel', { method: 'POST' }).catch(e => toast(e.message, 'error')) }) : null);
+  }
+  async startLogin(agent) {
+    try { this.login = await api('/api/agents/login', { method: 'POST', body: { agent } }); this.renderLog(); }
+    catch (e) { toast(e.message, 'error'); }
+  }
+  onLogin({ agent, status, error }) {
+    this.login = status === 'started' ? { agent } : null;
+    if (status === 'ok') {
+      this.signedIn[agent] = true; toast(`Signed in to ${AGENTS[agent]}. Send your message again.`, 'ok');
+      const msgs = this.session?.messages || [];
+      if (needsSignIn(agent, msgs.at(-1)?.error) && !this.input.value.trim()) { this.input.value = msgs.findLast(x => x.role === 'user')?.text || ''; this.input.focus(); }
+    }
+    if (error) toast(error, 'error');
+    this.renderLog();
   }
   renderLive() {
     const r = this.running;
@@ -248,6 +274,7 @@ export class AgentPanel {
     const live = this.session.agent === 'builtin' ? this.liveTarget(context) : null;
     if (live) return this.runLive(text, context, live);
     if (this.session.agent === 'builtin') return this.runBuiltin(text, context, scope);
+    delete this.signedIn[this.session.agent];
     this.running = { session: this.session.id, steps: [], text: '', agent: this.session.agent, scope };
     this.session.messages.push({ role: 'user', text, context, at: new Date().toISOString() });
     this.ws.setLocks(scope); this.renderAll(); this.renderRunning();
@@ -255,6 +282,7 @@ export class AgentPanel {
     catch (e) { this.running = null; this.ws.setLocks(null); this.session.messages.pop(); this.renderAll(); this.sendBtn.disabled = false; toast(e.message, 'error'); }
   }
   async onEvent(ev) {
+    if (ev.type === 'agent-login') return this.onLogin(ev);
     if (ev.type !== 'agent' || ev.id !== this.pid) return;
     const e = ev.ev || {};
     if (e.type === 'start') { if (!this.running) { this.running = { session: e.session, steps: [], text: '', agent: e.agent, scope: e.scope || [] }; this.ws.setLocks(e.scope || []); this.renderRunning(); } return; }

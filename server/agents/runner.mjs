@@ -5,7 +5,8 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { available, agentCommand, progressOf, revisePrompt, searchPath } from './cli.mjs';
+import { available, agentCommand, agentEnv, progressOf, revisePrompt } from './cli.mjs';
+import { needsSignIn, SIGN_IN_COMMAND } from '../../js/agent/signin.js';
 
 const JOB_TIMEOUT_MS = 15 * 60 * 1000;
 let current = null; // { id, child, cancelled }
@@ -30,7 +31,7 @@ export async function revise(root, body, send, { spawnFn = spawn } = {}) {
   const bin = available()[body.agent];
   const cmd = agentCommand(body.agent, bin, revisePrompt({ slides: body.slides, instruction: body.instruction.slice(0, 4000), chapter: String(body.chapter || '').slice(0, 200) }, rel), root);
   // own process group, so cancel stops the agent and everything it started
-  const child = spawnFn(cmd[0], cmd.slice(1), { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PATH: searchPath() } });
+  const child = spawnFn(cmd[0], cmd.slice(1), { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: agentEnv() });
   current = { id, child, cancelled: false };
   const timer = setTimeout(() => cancel('timed out after 15 minutes'), JOB_TIMEOUT_MS);
   send({ type: 'progress', text: `${body.agent === 'claude' ? 'Claude Code' : 'Codex'} started` });
@@ -48,7 +49,10 @@ export async function revise(root, body, send, { spawnFn = spawn } = {}) {
   clearTimeout(timer);
   try {
     if (current.cancelled) return send({ type: 'error', message: `Stopped${typeof current.cancelled === 'string' ? `: ${current.cancelled}` : ''}.` });
-    if (code !== 0 || agentError) return send({ type: 'error', message: agentError || `The agent exited with code ${code}. ${stderr.trim().split('\n').slice(-3).join(' ')}` });
+    if (code !== 0 || agentError) {
+      const message = agentError || `The agent exited with code ${code}. ${stderr.trim().split('\n').slice(-3).join(' ')}`;
+      return send({ type: 'error', message: needsSignIn(body.agent, message) ? `${message} Sign in from the agent panel, or run \`${SIGN_IN_COMMAND[body.agent]}\` in a terminal.` : message });
+    }
     const out = fs.readFileSync(path.join(jobDir, 'deck.pptx'));
     if (out.equals(input)) return send({ type: 'error', message: result ? `No change to the deck. ${result.slice(0, 300)}` : 'The agent did not change the deck.' });
     let summary = ''; try { summary = fs.readFileSync(path.join(jobDir, 'summary.txt'), 'utf8').trim().slice(0, 600); } catch { summary = result.trim().slice(0, 600); }

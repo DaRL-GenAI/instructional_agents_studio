@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
+import { settings } from '../config.mjs';
 
 const HOME = os.homedir();
 // Started from a desktop launcher, PATH can be bare; the agent CLIs usually install into ~/.local/bin.
@@ -14,6 +15,15 @@ export function which(bin) {
 }
 export function version(bin) { const r = spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 10000 }); return r.status === 0 ? r.stdout.trim().split('\n')[0] : null; }
 export const available = () => ({ claude: which('claude'), codex: which('codex') });
+
+// An API key in the environment overrides the CLI's own sign-in, even when the key is stale, so it is passed on only
+// when the user chose it (Account → Settings).
+const ENV_CREDENTIALS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'];
+export function agentEnv(extra = {}, useEnvKey = !!settings()?.agentEnvKey) {
+  const env = { ...process.env, PATH: searchPath(), ...extra };
+  if (!useEnvKey) for (const k of ENV_CREDENTIALS) delete env[k];
+  return env;
+}
 
 /** The instruction for one slide revision. `rel`: the deck copy, relative to the project folder (the agent's cwd). */
 export function revisePrompt({ slides, instruction, chapter }, rel) {
@@ -34,6 +44,9 @@ export function agentCommand(agent, bin, prompt, cwd) {
   return [bin, 'exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-C', cwd, prompt];
 }
 
+// Codex reports each reconnect attempt as an error event; only the last failure is one
+const retrying = j => j.type === 'error' && /^Reconnecting\b/.test(j.message || '');
+
 /** One line of agent output → a short progress line (string), a final { result, error }, or null. */
 export function progressOf(agent, line) {
   let j; try { j = JSON.parse(line); } catch { return null; }
@@ -51,6 +64,7 @@ export function progressOf(agent, line) {
     if (item.type === 'command_execution' && j.type === 'item.started') return `$ ${clip(item.command)}`;
     if (item.type === 'agent_message' && j.type === 'item.completed') return clip(item.text);
   }
+  if (retrying(j)) return clip(j.message);
   if (j.type === 'turn.failed' || j.type === 'error') return { error: clip(j.error?.message || j.message || 'Codex failed') };
   return null;
 }
@@ -75,7 +89,7 @@ export function eventOf(agent, line) {
     if (j.type === 'thread.started' && j.thread_id) out.session = j.thread_id;
     const item = j.item || {};
     if (j.type === 'item.completed' && item.type === 'agent_message') out.text = item.text || '';
-    if (j.type === 'turn.failed' || j.type === 'error') out.error = String(j.error?.message || j.message || 'Codex failed').slice(0, 600);
+    if (j.type === 'turn.failed' || (j.type === 'error' && !retrying(j))) out.error = String(j.error?.message || j.message || 'Codex failed').slice(0, 600);
   }
   const p = progressOf(agent, line);
   if (typeof p === 'string' && !(agent === 'codex' && out.text)) out.step = p;

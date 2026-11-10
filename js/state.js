@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS = {
   reviewModel: '',         // vision model for the visual reviewer ('' = same as the text model)
   reviewRounds: 2,         // review → repair rounds for the storyboard
   videoRes: '1080p',       // exported video resolution
+  agentEnvKey: false,      // local app: pass ANTHROPIC_API_KEY from the environment to Claude Code instead of its own sign-in
   editorUrl: 'https://edit.chaxus.com', // presentation editor (ONLYOFFICE document-editor build, runs in the browser)
   theme: 'system',
   rememberKey: false,

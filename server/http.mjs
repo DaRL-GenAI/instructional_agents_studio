@@ -15,6 +15,7 @@ import * as media from './media.mjs';
 import * as config from './config.mjs';
 import * as vcs from './vcs.mjs';
 import * as agents from './agents/runner.mjs';
+import * as login from './agents/login.mjs';
 import { forward } from './llmproxy.mjs';
 import * as files from './files.mjs';
 import * as jobs from './agents/jobs.mjs';
@@ -135,7 +136,12 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
     if (p === '/api/projects/import' && m === 'POST') { const b = await body(req); return send(res, 200, await projects.importJson(b.json, b.dir, { source: b.name || 'project.json' })); }
     if (p === '/api/fs/dirs' && m === 'GET') return send(res, 200, browse(url.searchParams.get('path')));
     if (p === '/api/llm') return forward(req, res);
-    if (p === '/api/agents/health' && m === 'GET') return send(res, 200, agents.health());
+    if (p === '/api/agents/health' && m === 'GET') return send(res, 200, { ...agents.health(), login: login.state() });
+    if (p === '/api/agents/login' && m === 'POST') { // the CLI opens a browser here and waits on localhost, so the page must be on this computer too
+      if (!/^(127\.0\.0\.1|localhost)(:\d+)?$/i.test(req.headers.host || '')) throw new HttpError(400, 'Sign in from a terminal on the computer running the app');
+      return send(res, 202, login.start((await body(req)).agent, broadcast));
+    }
+    if (p === '/api/agents/login/cancel' && m === 'POST') return send(res, 200, { cancelled: login.cancel() });
     if (p === '/api/agents/cancel' && m === 'POST') return send(res, 200, { cancelled: agents.cancel() });
     if (p === '/api/agents/revise' && m === 'POST') return revise(req, res);
     if ((g = p.match(/^\/api\/projects\/([\w-]+)$/))) {
@@ -248,7 +254,7 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
   async function agentApi(req, res, id, sub, m) {
     const s = projects.state(id); let g;
     const managed = () => files.managed(s.dir);
-    if (sub === '' && m === 'GET') { const a = agents.health().agents; return send(res, 200, { agents: a, running: jobs.runningOf(id) }); }
+    if (sub === '' && m === 'GET') { const a = agents.health().agents; return send(res, 200, { agents: a, running: jobs.runningOf(id), login: login.state() }); }
     if (sub === '/sessions' && m === 'GET') return send(res, 200, { sessions: sessions.list(s.dir) });
     if (sub === '/sessions' && m === 'POST') return send(res, 200, sessions.create(s.dir, await body(req)));
     if (sub === '/cancel' && m === 'POST') return send(res, 200, { cancelled: jobs.cancel(id) });
@@ -295,7 +301,7 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
   if (!quiet) console.log(`Instructional Agents ${PKG.version} on ${origin}${editor ? ` (editor: ${editor.dir})` : ' (editor: https://edit.chaxus.com)'}`);
   return {
     server, port: bound, origin, token, url: startUrl, projects, editor,
-    async close() { agents.cancel('server stopped'); jobs.cancelAll('server stopped'); for (const c of clients) c.terminate(); wss.close(); await projects.close(); await new Promise(r => server.close(r)); },
+    async close() { agents.cancel('server stopped'); jobs.cancelAll('server stopped'); login.cancel('server stopped'); for (const c of clients) c.terminate(); wss.close(); await projects.close(); await new Promise(r => server.close(r)); },
   };
 }
 

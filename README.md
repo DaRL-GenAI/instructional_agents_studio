@@ -105,7 +105,10 @@ npx instructional-agents import old_project.json [folder] [--force]
 
 or `npm install -g instructional-agents` and run `instructional-agents …`. Without a folder it opens the project
 list (recent courses, new course, open a folder). To use Claude Code or Codex from the app, install and
-sign in to them as usual (`claude`, `codex login`); `doctor` shows what it found.
+sign in to them as usual (`claude`, `codex login`); `doctor` shows what it found. If a sign-in expires, the agent
+panel offers **Sign in** and opens the browser (from a tunnel or another computer, run the login command on the
+computer running the app). Claude Code uses its own sign-in even when `ANTHROPIC_API_KEY` is set, unless you choose
+the key under *Account → Settings*.
 
 **Opening any folder.** *Open folder* (or `instructional-agents <folder>`) opens any folder, not only course folders.
 An empty folder becomes a course after you name it. A folder that already holds files (slides, Word files, PDFs,

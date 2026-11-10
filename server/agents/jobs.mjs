@@ -7,7 +7,8 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { sha256, resolveInside, sourcesOf } from '../workspace.mjs';
-import { available, panelCommand, panelPrompt, eventOf, searchPath } from './cli.mjs';
+import { available, panelCommand, panelPrompt, eventOf, agentEnv } from './cli.mjs';
+import { needsSignIn } from '../../js/agent/signin.js';
 import { GUIDE_FILES } from './guide.mjs';
 import * as sessions from './sessions.mjs';
 
@@ -104,7 +105,7 @@ export async function run({ id, root, session, message, context = [], scope = []
   sessions.update(root, session, x => { x.messages.push({ role: 'user', text: String(message).slice(0, 20000), context: context.slice(0, 20), at: r.startedAt }); });
   const cmd = panelCommand(s.agent, bin, panelPrompt({ message, context, resumed: !!resume }), dir, resume);
   // own process group (cancel stops everything it started); git must not climb out of the copy into the project's repository
-  const child = r.child = spawnFn(cmd[0], cmd.slice(1), { cwd: dir, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PATH: searchPath(), GIT_CEILING_DIRECTORIES: path.dirname(dir) } });
+  const child = r.child = spawnFn(cmd[0], cmd.slice(1), { cwd: dir, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: agentEnv({ GIT_CEILING_DIRECTORIES: path.dirname(dir) }) });
   const timer = setTimeout(() => cancel(id, 'timed out after 20 minutes'), JOB_TIMEOUT_MS);
   emit({ type: 'start', session, agent: s.agent, scope });
   const steps = []; let text = '', error = null, cliSession = null, buf = '', stderr = '';
@@ -127,6 +128,8 @@ export async function run({ id, root, session, message, context = [], scope = []
     if (!stopped && !error && code !== 0) error = `The agent exited with code ${code}. ${stderr.trim().split('\n').slice(-3).join(' ')}`.trim();
     const at = new Date().toISOString();
     const msg = { role: 'assistant', agent: s.agent, text: text || '', steps, at, error: stopped || error || undefined, changes: list.map(c => ({ path: c.path, status: c.status })) };
+    // a turn that never reached the model is not a session to resume; an earlier good one stays
+    if (needsSignIn(s.agent, error)) cliSession = null;
     sessions.update(root, session, x => { if (cliSession) x.cli = { ...(x.cli || {}), [s.agent]: cliSession }; x.messages.push(msg); });
     if (!list.length) { rmJob(dir); fs.rmSync(metaFile(root, session), { force: true }); }
     else fs.writeFileSync(metaFile(root, session), JSON.stringify({ base, startedAt: r.startedAt, finishedAt: at, agent: s.agent }));
