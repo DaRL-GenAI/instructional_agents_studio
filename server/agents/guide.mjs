@@ -53,7 +53,12 @@ ${rows.map(([f, key]) => `| \`${f}\` | ${stageLabel(project, key)} |`).join('\n'
 - Word files (\`.docx\`): change only the paragraphs in scope and keep their styles.
 - \`sources/\`${kept.length ? ' and the source materials kept in place are' : ' is'} read-only: read them for context, never change them.
 - Do not modify \`.studio/\` (the app's scratch space \`.studio/jobs/\` excepted), \`course.json\`, \`AGENTS.md\` or \`CLAUDE.md\`.
-- Do not run git commands that change the repository; the app commits after the instructor reviews your changes.
+- Do not run git commands that change the repository (commit, reset, checkout, rebase): the app saves every change
+  you make as a version on its own, and the instructor can undo any of them from History.
+- New files are fine (handouts, quizzes, notes); put them in the chapter folder they belong to, or a clearly named
+  folder, never in \`.studio/\` or \`sources/\`.
+- Many instructors are not programmers: answer in plain words, say which files you changed, and ask before large
+  or destructive changes (deleting or replacing many slides or files).
 - No network access is needed.
 `;
   const claude = `${MARK}

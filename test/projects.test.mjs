@@ -85,6 +85,25 @@ test('decks: versions in .studio/decks, the current one as slides.pptx (committe
   assert.equal(fs.readFileSync(path.join(dir, 'chapters/01-what-is-an-agent/slides.pptx'), 'utf8'), 'PK edited in PowerPoint');
 });
 
+test('a deck replaced on disk while the folder is watched (an agent, PowerPoint) is kept and committed, never restored', async () => {
+  const events = []; const projects = new Projects({ onChange: e => events.push(e) });
+  const p = sampleProject(); const dir = path.join(tmpdir(), 'c4w');
+  const deck = Buffer.from('PK fake pptx bytes'); const sha = crypto.createHash('sha256').update(deck).digest('hex');
+  const m = JSON.parse(p.chapters[0].stages.slides.output); m.sha = sha; p.chapters[0].stages.slides.output = JSON.stringify(m);
+  fs.mkdirSync(dir); media.storeDeckFile(dir, 'chaaa1111', deck);
+  await projects.create(p, dir);
+  const f = path.join(dir, 'chapters/01-what-is-an-agent/slides.pptx');
+  fs.writeFileSync(f, 'PK edited by Claude Code');
+  fs.writeFileSync(path.join(dir, 'chapters/01-what-is-an-agent/notes.md.tmp.4060793.e43d3f8c2bf4'), 'scratch'); // an agent's temporary file
+  const ev = await waitFor(() => events.find(e => e.source === 'disk'));
+  await new Promise(r => setTimeout(r, 800));
+  assert.equal(fs.readFileSync(f, 'utf8'), 'PK edited by Claude Code', 'the file on disk is not replaced by the stored deck');
+  assert.deepEqual(ev.paths, ['chapters/01-what-is-an-agent/slides.pptx'], 'temporary files are ignored');
+  assert.match((await vcs.log(dir))[0].message, /^edit: chapters\/01-what-is-an-agent\/slides\.pptx \(on disk\)/);
+  assert.equal(execFileSync('git', ['show', 'HEAD:chapters/01-what-is-an-agent/slides.pptx'], { cwd: dir, encoding: 'utf8' }), 'PK edited by Claude Code');
+  await projects.close();
+});
+
 test('media bundles round trip; chapter media lands in build/ (not committed)', async () => {
   const dir = tmpdir(); const parts = [Buffer.from('abc'), Buffer.from([1, 2, 3, 4])];
   const header = { v: 1, skel: { video: { $bin: 0 }, audios: [{ slide_id: 1, buffer: { $bin: 1 }, seconds: 2 }] }, parts: [{ as: 'blob', type: 'video/webm', len: 3 }, { as: 'ab', len: 4 }] };

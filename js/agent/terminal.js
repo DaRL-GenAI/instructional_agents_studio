@@ -15,7 +15,7 @@ const INSTALL = {
 const LS = 'ia-term.';
 const pref = (k, d) => { try { const v = localStorage.getItem(LS + k); return v == null ? d : JSON.parse(v); } catch { return d; } };
 const setPref = (k, v) => { try { localStorage.setItem(LS + k, JSON.stringify(v)); } catch { /* storage blocked */ } };
-const INTERNAL = /^(\.studio|\.git|build)(\/|$)/;
+const INTERNAL = /^(\.studio|\.git|build)(\/|$)|\.tmp(\.[\w.-]+)?$|(^|\/)(~\$|\.~lock\.)/;
 
 let xtermReady = null;
 function loadXterm() {
@@ -101,11 +101,15 @@ export class TerminalPane {
     this.choices = el('div', { class: 'tm-choices', role: 'group', 'aria-label': 'Answer', hidden: true });
     this.ended = el('div', { class: 'tm-ended', hidden: true });
     const keys = el('div', { class: 'tm-keys', role: 'group', 'aria-label': 'Keys' },
-      key('Enter', '\r', 'Send your message, or confirm the highlighted choice', { variant: 'primary', icon: 'check' }),
+      key('Enter', '\r', 'Confirm the highlighted choice (the same as the Enter key)', { icon: 'check' }),
       key('↑', '\x1b[A', 'Move up in a list', { attrs: { 'aria-label': 'Up' } }),
       key('↓', '\x1b[B', 'Move down in a list', { attrs: { 'aria-label': 'Down' } }),
       key('Esc', '\x1b', 'Cancel the question, or stop the agent while it works'));
-    this.body.replaceChildren(tools, host, this.ended, this.choices, keys);
+    // a plain message box: what older users expect, and it keeps its text when an editor elsewhere takes the focus
+    this.input = el('textarea', { class: 'tm-input', rows: 2, 'aria-label': `Message to ${NAMES[this.program]}`, placeholder: `Type what ${NAMES[this.program]} should do, then press Send` });
+    this.input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.sendMessage(); } });
+    const sendRow = el('div', { class: 'tm-send' }, this.input, button({ label: 'Send', icon: 'arrow-up', variant: 'primary', size: 'lg', onClick: () => this.sendMessage() }));
+    this.body.replaceChildren(tools, host, this.ended, this.choices, sendRow, keys);
     const term = this.term = new window.Terminal({ fontSize: this.fontSize, lineHeight: 1.15, cursorBlink: true, scrollback: 5000, macOptionClickForcesSelection: true, allowProposedApi: false,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono CJK SC", "Microsoft YaHei UI", monospace',
       theme: { background: '#1d1f21', foreground: '#e8e8e8', cursor: '#e8e8e8', selectionBackground: '#3a5f8f' } });
@@ -141,7 +145,9 @@ export class TerminalPane {
         opts = block.map(l => l.replace(MARK, '$2').trim().replace(/^\d+[.)]\s*/, '').replace(/\s+\((esc|shift\+tab|tab)\)$/i, ''));
         cur = block.findIndex(l => MARK.test(l));
         const above = lines.slice(Math.max(0, a - 12), a).map(l => l.trim().replace(/^[│|]\s*|\s*[│|]$/g, '')).filter(l => l && !/^[\s─━═│╭╮╰╯-]+$/.test(l));
-        question = [...above].reverse().find(l => /\?\s*$/.test(l)) || above.at(-1) || '';
+        // the last sentence that asks something (it may wrap over lines), else the line just above the choices
+        const asked = above.join(' ').replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/).filter(x => x.includes('?')).map(x => x.slice(0, x.lastIndexOf('?') + 1));
+        question = (asked.length ? asked.at(-1).trim() : above.at(-1) || '').slice(0, 200);
       }
     }
     const key = opts ? `${question}|${opts.join('|')}` : '';
@@ -151,7 +157,7 @@ export class TerminalPane {
     if (!opts) return this.choices.replaceChildren();
     this.choices.replaceChildren(
       el('div', { class: 'tm-q' }, question ? `${NAMES[this.program]} asks: ${question}` : `${NAMES[this.program]} asks you to choose:`),
-      ...opts.map((o, i) => button({ label: o, size: 'lg', variant: /^(yes|allow|proceed|continue|approve)/i.test(o) && i <= 1 ? 'primary' : '', onClick: () => {
+      ...opts.map((o, i) => button({ label: o, size: 'lg', variant: /^(yes|allow|proceed|continue|approve|trust)/i.test(o) && i <= 1 ? 'primary' : '', onClick: () => {
         const d = i - this.choiceCur; this.send((d > 0 ? '\x1b[B' : '\x1b[A').repeat(Math.abs(d)));
         setTimeout(() => { this.send('\r'); this.term?.focus(); }, 120);
       } })));
@@ -183,12 +189,22 @@ export class TerminalPane {
   }
   zoom(d) { this.fontSize = Math.max(11, Math.min(28, this.fontSize + d * 2)); setPref('font', this.fontSize); if (this.term) { this.term.options.fontSize = this.fontSize; this.fit(true); } }
 
-  /** The open file (and the selected slides or lines) typed into the message as the agent expects a file. */
+  /** The message box → the program: pasted as one block (line breaks included), then Enter. */
+  sendMessage() {
+    const text = this.input?.value.trim(); if (!text) { this.input?.focus(); return; }
+    if (!this.info || this.info.running === false) return toast(`Start ${NAMES[this.program]} first`, 'info');
+    const paste = this.term?.modes?.bracketedPasteMode ? `\x1b[200~${text}\x1b[201~` : text.replace(/\s*\n\s*/g, ' ');
+    this.send(paste); setTimeout(() => this.send('\r'), 150);
+    this.input.value = ''; this.input.focus();
+  }
+  insert(t) { if (!this.input) return this.send(t); const i = this.input; const a = i.selectionStart ?? i.value.length; i.value = `${i.value.slice(0, a)}${t}${i.value.slice(i.selectionEnd ?? a)}`; i.focus(); i.selectionStart = i.selectionEnd = a + t.length; }
+
+  /** The open file (and the selected slides or lines) added to the message as the agent expects a file. */
   async addOpenFile() {
     const t = this.ws.activeTab(); if (!t?.path) return toast('Open a file in the editor first', 'info');
     let where = ''; try { const c = await t.context(); if (c?.slides?.length) where = ` (slide${c.slides.length > 1 ? 's' : ''} ${c.slides.join(', ')})`; else if (c?.lines) where = ` (lines ${c.lines[0]}-${c.lines[1]})`; else if (c?.paragraphs?.length) where = ` (paragraph${c.paragraphs.length > 1 ? 's' : ''} ${c.paragraphs.join(', ')})`; } catch { /* no selection */ }
     const ref = this.program === 'claude' ? `@${t.path}` : t.path;
-    this.send(`${ref}${where} `); this.term?.focus();
+    this.insert(`${ref}${where} `);
   }
 
   /** A request prepared elsewhere (Fix with agent, Draft targeted update): its files and text, typed but not sent. */
@@ -196,7 +212,7 @@ export class TerminalPane {
     if (!this.info) { await this.start(); await new Promise(r => setTimeout(r, 2500)); }
     const refs = chips.map(c => (this.program === 'claude' ? `@${c.path}` : c.path)).join(' ');
     // one line: a line break would send the message before the instructor has read it
-    this.send(`${refs ? `${refs} ` : ''}${String(text).replace(/\s*\n\s*/g, ' ').trim()}`); this.term?.focus();
+    this.insert(`${refs ? `${refs} ` : ''}${String(text).trim()}`);
   }
 
   async restart(quiet = false) {

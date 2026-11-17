@@ -40,7 +40,8 @@ export const isProjectDir = dir => fs.existsSync(path.join(dir, META));
 
 const COMMIT_KIND = e => e.type === 'slide_revision' && /claude|codex/i.test(e.agent || '') ? 'agent' : e.type === 'import' ? 'import' : ['stage_done', 'auto_repair'].includes(e.type) ? 'gen' : 'edit';
 const RANK = { agent: 3, import: 2, gen: 1, edit: 0 };
-const IGNORED = /(^|\/)(\.git|node_modules|\.venv|venv|__pycache__|\.ipynb_checkpoints|build|\.studio\/(decks|jobs|trash|backup|sessions))(\/|$)|\.tmp$|~$|\.swp$/;
+// also editors' and agents' temporary files (x.tmp, x.md.tmp.1234.ab12cd, ~$x.pptx, .~lock.x#, x.swp)
+const IGNORED = /(^|\/)(\.git|node_modules|\.venv|venv|__pycache__|\.ipynb_checkpoints|build|\.studio\/(decks|jobs|trash|backup|sessions))(\/|$)|\.tmp$|\.tmp\.[\w.-]+$|~$|\.swp$|(^|\/)(~\$|\.~lock\.)[^/]*$/;
 
 export class Projects {
   constructor({ onChange = () => {}, watch = true } = {}) { this.byId = new Map(); this.onChange = onChange; this.watch = watch; }
@@ -325,7 +326,10 @@ export class Projects {
         edits++;
       }
       if (edits) project.updatedAt = new Date().toISOString();
-      for (const f of paths) { const b = readBuf(s.dir, f); if (b) s.written.set(f, sha256(b)); }
+      // what is on disk now counts as written, except a deck or Word stage replaced on disk: write() must keep that file
+      // (it becomes a new version of its stage when the app adopts it, app.js adoptExternalDecks), never restore the
+      // stage's stored copy over it
+      for (const f of paths) { if (['deck', 'doc'].includes(fileOwner(meta, f)?.kind)) continue; const b = readBuf(s.dir, f); if (b) s.written.set(f, sha256(b)); }
       // a repository of the user's own: their files are theirs to commit; only the app's files go in
       const own = f => f === META || f === 'course.json' || f.startsWith('.studio/') || fileOwner(meta, f) || (GUIDE_FILES.includes(f) && isManagedGuide(readText(s.dir, f)));
       const extra = meta.repo === 'existing' ? paths.filter(own) : paths;
