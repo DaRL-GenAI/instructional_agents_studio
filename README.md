@@ -192,7 +192,8 @@ URL> --commit <sha>` wraps it (publish it before the app version that depends on
 
 **Windows.** Claude Code and Codex are found as installed by their installers or `npm install -g` (`claude.cmd`,
 `codex.cmd`, `claude.exe`); Google Drive for desktop is found on its own drive letter (`G:\My Drive`), OneDrive and
-iCloud for Windows in your user folder. Courses must be inside your user folder (or on Google Drive's drive).
+iCloud for Windows in your user folder. Courses must be inside your user folder (or on Google Drive's drive). If PowerShell answers `npx` with *running scripts is
+disabled on this system*, run `npx.cmd instructional-agents` (or use Command Prompt).
 
 Tests: `npm test` (Node's test runner); `npm run pack:check` checks what `npm pack` would publish (the app and
 its server, no editor build, tests or scripts); `node scripts/ci-smoke.mjs` starts the server and creates a course in

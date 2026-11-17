@@ -16,7 +16,7 @@ test('install a verified editor package into the cache', async () => {
   const work = tmpdir(); const ed = path.join(work, 'editor-trim');
   fs.mkdirSync(path.join(ed, 'sdkjs/slide'), { recursive: true });
   fs.writeFileSync(path.join(ed, 'editor.html'), '<!doctype html>'); fs.writeFileSync(path.join(ed, 'sdkjs/slide/sdk-all.js'), '// sdk');
-  execFileSync('tar', ['-czf', path.join(work, 'ed.tar.gz'), '-C', work, 'editor-trim']);
+  execFileSync('tar', ['-czf', 'ed.tar.gz', 'editor-trim'], { cwd: work }); // relative: GNU tar on Windows reads C: as a host
   const buf = fs.readFileSync(path.join(work, 'ed.tar.gz')); const sha = crypto.createHash('sha256').update(buf).digest('hex');
   const srv = http.createServer((q, r) => { r.writeHead(200); r.end(buf); }); await new Promise(r => srv.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${srv.address().port}/ed.tar.gz`;

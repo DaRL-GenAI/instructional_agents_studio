@@ -30,10 +30,13 @@ test('which folders are synced', () => {
   assert.equal(localstate.cloudOf(path.join(cs, 'OneDrive-ASU', 'x')), 'OneDrive');
   assert.equal(localstate.cloudOf(path.join(home, 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'x')), 'iCloud Drive');
   assert.equal(localstate.cloudOf(path.join(home, 'My Drive', 'x')), 'Google Drive');
-  assert.equal(localstate.cloudOf('/Volumes/GoogleDrive/My Drive/x'), 'Google Drive');
+  if (process.platform !== 'win32') assert.equal(localstate.cloudOf('/Volumes/GoogleDrive/My Drive/x'), 'Google Drive');
+  assert.equal(localstate.cloudOf(path.join(home, 'iCloudDrive', 'x')), 'iCloud Drive'); // iCloud for Windows
   assert.equal(localstate.cloudOf(path.join(cloud, 'x')), 'a synced folder');
   assert.equal(localstate.cloudOf(path.join(home, 'Documents', 'CS101')), null);
   assert.equal(localstate.cloudOf(path.join(home, 'Library', 'CloudStorage')), null);
+  const od = process.env.OneDriveCommercial; process.env.OneDriveCommercial = path.join(home, 'OneDrive - Arizona State University');
+  try { assert.equal(localstate.cloudOf(path.join(process.env.OneDriveCommercial, 'CS101')), 'OneDrive'); } finally { if (od === undefined) delete process.env.OneDriveCommercial; else process.env.OneDriveCommercial = od; }
 });
 
 test('a course in a synced folder keeps its history and chats on this computer', async () => {

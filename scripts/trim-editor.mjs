@@ -55,7 +55,7 @@ console.log(`trimmed editor: ${count} files, ${mb(bytes)} in ${out} (${dropped} 
 
 if (pack) {
   const tgz = `${out}.tar.gz`;
-  execFileSync('tar', ['-czf', tgz, '-C', path.dirname(out), path.basename(out)]);
+  execFileSync('tar', ['-czf', path.basename(tgz), path.basename(out)], { cwd: path.dirname(out) }); // relative paths: GNU tar on Windows reads C: as a host
   const sha = crypto.createHash('sha256').update(fs.readFileSync(tgz)).digest('hex');
   fs.writeFileSync(`${tgz}.sha256`, `${sha}  ${path.basename(tgz)}\n`);
   console.log(`package: ${tgz} (${mb(fs.statSync(tgz).size)}), sha-256 ${sha}`);
