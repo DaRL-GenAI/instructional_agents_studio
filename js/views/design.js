@@ -3,7 +3,7 @@ import { el, button, badge, dot, input, textarea, notice, empty, icon, toast, co
 import { FOUNDATION, CHAPTER_STAGES } from '../prompts.js';
 import { stageDetail, stageStatus, transcriptView } from './stage.js';
 import { href, go } from '../router.js';
-import { deckChapters, DERIVE } from '../agent/derive.js';
+import { deckChapters, needsDesign, DERIVE } from '../agent/derive.js';
 import { queueAction } from './workspace.js';
 import { LOCAL } from '../fs/api.js';
 
@@ -15,8 +15,8 @@ export function render(ctx) {
 
   // a course that starts from slides it already has: the design can be rebuilt from them (reviewed in the Workspace)
   const decks = deckChapters(p);
-  if (LOCAL && decks.length && !p.foundation.syllabus?.output) page.append(el('div', { class: 'notice info', style: 'display:flex;align-items:center;gap:12px;margin-bottom:16px' },
-    el('span', { style: 'flex:1' }, `This course has ${decks.length} slide deck${decks.length > 1 ? 's' : ''} and no syllabus yet. Rebuild the chapter order, syllabus and learning objectives from the slides, review them, then run the remaining deliberations.`),
+  if (LOCAL && needsDesign(p)) page.append(el('div', { class: 'notice info', style: 'display:flex;align-items:center;gap:12px;margin-bottom:16px' },
+    el('span', { style: 'flex:1' }, `This course has ${decks.length} slide deck${decks.length > 1 ? 's' : ''} but no complete design yet. Rebuild the chapter order, syllabus and learning objectives from the slides, review them, then run the remaining deliberations.`),
     button({ label: DERIVE.design.label, icon: 'compass', variant: 'primary', size: 'sm', disabled: !!ctx.busy, onClick: () => { if (!ctx.requireKey()) return; queueAction('design'); go('p', p.id, 'workspace'); } })));
 
   const rail = el('div', { class: 'rail' }, el('div', { class: 'panel' }, el('div', { class: 'rail-head' }, 'Deliberations'), ...FOUNDATION.map((f, i) => { const st = stageStatus(pipe, p.foundation[f.id], pipe.foundationInputs(f.id)); return el('button', { class: 'rail-item', 'aria-current': String(sel === f.id), onClick: () => go('p', p.id, 'design', f.id) }, el('span', { class: 'n' }, i + 1), el('span', { class: 't' }, f.name), dot(st)); }),

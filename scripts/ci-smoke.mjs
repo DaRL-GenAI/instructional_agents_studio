@@ -43,8 +43,12 @@ try {
   await page.goto(`${new URL(url).origin}/#/p/${id}/workspace`);
   await page.waitForSelector('.ws-tree .ws-row[data-path="AGENTS.md"]', { timeout: 30000 });
   if (!(await page.$('.ws-agent:not([hidden])'))) await page.click('.ws-activity [aria-label="Agent panel"]');
-  await page.waitForSelector('.ag-head select option[value="builtin"]', { state: 'attached', timeout: 15000 });
-  step(`workspace + agent panel: ${(await page.$$eval('.ag-head select:first-child option', o => o.map(x => x.textContent + (x.disabled ? ' (off)' : '')))).join(', ')}`);
+  await page.waitForSelector('.dock-tab', { timeout: 15000 });
+  const tabs = await page.$$eval('.dock-tab', b => b.map(x => x.textContent));
+  if (!['Claude Code', 'Codex', 'Assistant'].every(t => tabs.includes(t))) fail(`agent panel tabs: ${tabs.join(', ')}`);
+  await page.click('.dock-tab:has-text("Assistant")'); await page.waitForSelector('textarea[aria-label="Message to the agent"]', { timeout: 15000 });
+  await page.click('.dock-tab:has-text("Claude Code")'); await page.waitForSelector('.tm-start, .tm-screen', { timeout: 15000 });
+  step(`workspace + agent panel: ${tabs.join(', ')}; ${await page.$eval('.tm-start h3, .tm-screen', e => e.textContent.slice(0, 60))}`);
   if (errors.length) fail(`page errors:\n${errors.join('\n')}`);
   console.log('smoke test passed');
 } finally {

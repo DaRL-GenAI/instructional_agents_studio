@@ -17,6 +17,9 @@ export const DERIVE = {
 
 /** Chapters that have slides (the material a course rebuilt from scattered decks starts with). */
 export const deckChapters = project => (project?.chapters || []).filter(ch => textOf(ch.stages?.slides?.output).trim());
+/** A course that started from its slides and has no design yet: no syllabus, no objectives, or chapters without a
+ *  description (what an import of decks leaves). */
+export const needsDesign = project => !!deckChapters(project).length && (!textOf(project.foundation?.syllabus?.output).trim() || !textOf(project.foundation?.objectives?.output).trim() || project.chapters.every(ch => !String(ch.description || '').trim()));
 
 /** The derive actions for a stage file (owner: the Workspace's ownerInfo). */
 export function deriveActions(owner, project = null) {
@@ -25,7 +28,7 @@ export function deriveActions(owner, project = null) {
   if (owner?.key === 'foundation.syllabus') out.push('objectives', 'chapters');
   // the whole course from its decks: offered while there is no syllabus yet, and on the design files themselves
   const designFile = ['foundation.syllabus', 'foundation.objectives', 'chaptersStage'].includes(owner?.key);
-  if (deckChapters(project).length && (designFile || !textOf(project.foundation?.syllabus?.output).trim())) out.push('design');
+  if (deckChapters(project).length && (designFile || needsDesign(project))) out.push('design');
   return out;
 }
 

@@ -19,8 +19,8 @@ test('a shell in the course folder: input, output, replay for a second page, siz
     const created = await (await api('/api/projects', { method: 'POST', body: JSON.stringify({ project: sampleProject() }) })).json();
     const P = `/api/projects/${created.project.id}/terminals`;
     const list0 = await (await api(P)).json(); assert.equal(list0.available.shell, true); assert.equal(list0.unavailable, null);
-    const t = await (await api(P, { method: 'POST', body: JSON.stringify({ program: 'shell', cols: 90, rows: 20 }) })).json();
-    assert.match(t.id, /^[0-9a-f]{12}$/); assert.equal(t.running, true);
+    const r = await api(P, { method: 'POST', body: JSON.stringify({ program: 'shell', cols: 90, rows: 20 }) }); const t = await r.json();
+    assert.equal(r.status, 200, JSON.stringify(t)); assert.match(t.id, /^[0-9a-f]{12}$/); assert.equal(t.running, true);
     const open = () => new Promise((res, rej) => { const ws = new WebSocket(`ws://127.0.0.1:${app.port}/ws/term/${t.id}`, { headers: { Authorization: `Bearer ${app.token}`, Origin: `http://127.0.0.1:${app.port}` } }); let out = ''; ws.on('message', d => { out += d.toString(); }); ws.on('open', () => res({ ws, out: () => out })); ws.on('error', rej); });
     const until = async (f, ms = 15000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (f()) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
     const a = await open();

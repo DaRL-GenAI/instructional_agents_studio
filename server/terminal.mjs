@@ -6,6 +6,8 @@
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
 import { available, agentEnv } from './agents/cli.mjs';
 import { command, isWin } from './platform.mjs';
 import { HttpError } from './projects.mjs';
@@ -21,7 +23,12 @@ let pty = null, ptyError = null;
 /** node-pty (an optional dependency with a native part): null, with the reason, when it could not be installed. */
 export function loadPty() {
   if (pty || ptyError) return pty;
-  try { pty = createRequire(import.meta.url)('node-pty'); } catch (e) { ptyError = e.message; }
+  const req = createRequire(import.meta.url);
+  // node-pty's macOS builds start programs through a helper that npm can unpack without its execute bit
+  if (process.platform === 'darwin') {
+    try { const d = path.join(path.dirname(req.resolve('node-pty/package.json')), 'prebuilds'); for (const a of fs.readdirSync(d)) { const h = path.join(d, a, 'spawn-helper'); if (fs.existsSync(h)) fs.chmodSync(h, 0o755); } } catch { /* not installed, or not ours to change */ }
+  }
+  try { pty = req('node-pty'); } catch (e) { ptyError = e.message; }
   return pty;
 }
 export const unavailable = () => (loadPty() ? null : `The terminal component (node-pty) is not installed${ptyError ? `: ${ptyError.split('\n')[0]}` : ''}. Reinstall the app${process.platform === 'linux' ? ' (on Linux it needs a C++ compiler: sudo apt install build-essential python3)' : ''}.`);
