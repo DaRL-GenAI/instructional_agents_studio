@@ -11,7 +11,10 @@ export async function api(path, { method = 'GET', body, raw = false, headers = {
     if (body instanceof Blob || body instanceof ArrayBuffer) init.body = body;
     else { init.body = JSON.stringify(body); init.headers['Content-Type'] = 'application/json'; }
   }
-  const r = await fetch(path, init);
+  let r;
+  try { r = await fetch(path, init); }
+  catch (e) { if (e.name === 'AbortError') throw e; throw new ApiError('The app is not running. Start it again in a terminal (npx instructional-agents) and open the address it prints.', 0); }
+  if (r.status === 401) throw new ApiError('This page belongs to an earlier start of the app. Open the address printed in the terminal where instructional-agents runs.', 401);
   if (!r.ok) { const j = await r.json().catch(() => null); throw new ApiError(j?.error || `Local server error ${r.status}`, r.status, j); }
   if (raw) return r;
   return r.status === 204 ? null : r.json();

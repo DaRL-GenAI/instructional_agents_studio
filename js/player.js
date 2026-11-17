@@ -3,11 +3,11 @@
 // (js/vendor/interactive-runtime.js). Exports: manifest builder, self-contained player HTML, ZIP bundle,
 // single-file standalone HTML and an in-app preview (iframe). Everything is assembled in the browser.
 
-const JSZIP_SRC = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+import { loadJSZip as loadZipLib } from './export.js';
 let jszipLoading;
 function loadJSZip() {
   if (window.JSZip) return Promise.resolve(window.JSZip);
-  jszipLoading ||= new Promise((res, rej) => { const s = document.createElement('script'); s.src = JSZIP_SRC; s.onload = () => res(window.JSZip); s.onerror = () => { jszipLoading = null; rej(new Error('Could not load JSZip from cdnjs')); }; document.head.appendChild(s); });
+  jszipLoading ||= loadZipLib().catch(e => { jszipLoading = null; throw e; });
   return jszipLoading;
 }
 

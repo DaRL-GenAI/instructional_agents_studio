@@ -92,7 +92,8 @@ export const fmtInt = n => new Intl.NumberFormat().format(n || 0);
 let markedReady;
 export async function renderMarkdown(md) {
   if (!window.marked) {
-    markedReady ||= new Promise(res => { const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js'; s.onload = res; s.onerror = res; document.head.appendChild(s); });
+    const load = src => new Promise(res => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = res; document.head.appendChild(s); });
+    markedReady ||= load(new URL('./vendor/lib/marked.min.js', import.meta.url).href).then(() => window.marked || load('https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js'));
     await markedReady;
   }
   if (!window.marked) return `<pre>${esc(md)}</pre>`;
@@ -100,5 +101,19 @@ export async function renderMarkdown(md) {
 }
 export function loadScript(src, test) {
   if (test()) return Promise.resolve();
-  return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error(`Could not load ${src}`)); document.head.appendChild(s); });
+  return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => { s.remove(); rej(new Error(`Could not load ${src}`)); }; document.head.appendChild(s); });
+}
+
+/** pdf.js 3.11 (window.pdfjsLib) with its worker: the copy served with the app, else cdnjs. */
+const PDFJS_BASES = [new URL('./vendor/lib/', import.meta.url).href, 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/'];
+export async function loadPdfjs() {
+  if (!window.pdfjsLib) {
+    let last;
+    for (const base of PDFJS_BASES) {
+      try { await loadScript(`${base}pdf.min.js`, () => !!window.pdfjsLib); window.pdfjsLib.GlobalWorkerOptions.workerSrc = `${base}pdf.worker.min.js`; break; }
+      catch (e) { last = e; }
+    }
+    if (!window.pdfjsLib) throw last || new Error('Could not load pdf.js');
+  }
+  return window.pdfjsLib;
 }

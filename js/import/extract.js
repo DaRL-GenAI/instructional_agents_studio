@@ -68,7 +68,6 @@ export function texText(src) {
 }
 
 // ---------------------------------------------------------------- PDF
-const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
 /** The text of the first pages of a PDF: pdf.js in the browser, the built-in reader when pdf.js is unavailable. */
 export async function pdfText(bytes, { pages = PDF_PAGES } = {}) {
   const lib = await loadPdfjs();
@@ -87,12 +86,7 @@ export async function pdfText(bytes, { pages = PDF_PAGES } = {}) {
 }
 async function loadPdfjs() {
   if (typeof document === 'undefined') return null;
-  if (!window.pdfjsLib) {
-    await new Promise(res => { const s = document.createElement('script'); s.src = `${PDFJS}pdf.min.js`; s.onload = res; s.onerror = res; document.head.appendChild(s); });
-    if (!window.pdfjsLib) return null;
-  }
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS}pdf.worker.min.js`;
-  return window.pdfjsLib;
+  try { const { loadPdfjs: load } = await import('../ui.js'); return await load(); } catch { return null; }
 }
 
 const latin1 = b => { let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000)); return s; };

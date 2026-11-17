@@ -343,7 +343,8 @@ function drawChartCanvas(ctx, e, x, y, w, h, s) {
 }
 
 // ---------------------------------------------------------------- pptxgenjs backend
-const PPTX_SOURCES = ['https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js', 'https://unpkg.com/pptxgenjs@3.12.0/dist/pptxgen.bundle.js'];
+// the copy served with the app first (js/vendor/lib, scripts/vendor.mjs), then the CDNs
+const PPTX_SOURCES = [new URL('./vendor/lib/pptxgen.bundle.js', import.meta.url).href, 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js', 'https://unpkg.com/pptxgenjs@3.12.0/dist/pptxgen.bundle.js'];
 let pptxLoading;
 export function loadPptx() {
   if (window.PptxGenJS) return Promise.resolve();

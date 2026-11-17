@@ -34,6 +34,15 @@ export class OfficeFrame {
     this.onDirty = onDirty; this.onStatus = onStatus; this.onExported = onExported;
     this.state = { ready: false, opened: false, dirty: false };
     this.pending = new Map(); this.saving = null;
+    // the local app without its own editor build: the hosted editor cannot hand the file back, so edits would be lost
+    if (LOCAL && !LOCAL.editor && this.origin !== location.origin) {
+      const m = 'The slides and documents editor is not installed with this app. Reinstall it (npx instructional-agents@latest, or npm install -g instructional-agents) or set IA_EDITOR_DIR, then restart; `instructional-agents doctor` checks it.';
+      this.el = el('div', { class: 'office-frame office-missing', role: 'alert' }, el('p', {}, m));
+      this.readyP = Promise.reject(new Error(m)); this.readyP.catch(() => {});
+      queueMicrotask(() => this.onStatus('error', 'Editor not installed'));
+      this._onMessage = () => {};
+      return;
+    }
     this.el = el('iframe', { class: 'office-frame', title: title || `Editor · ${fileName}`, allow: 'clipboard-read; clipboard-write; fullscreen', src: `${this.base}/editor?embed=1&locale=${encodeURIComponent(account.settings.language || 'en')}&embedOrigin=${encodeURIComponent(location.origin)}` });
     this.readyP = new Promise((res, rej) => { this._ready = res; this._fail = rej; });
     this.loadTimer = setTimeout(() => { if (!this.state.ready) { const m = `The editor at ${this.origin} did not respond`; this.onStatus('error', m); this._fail(new Error(m)); } }, 45000);

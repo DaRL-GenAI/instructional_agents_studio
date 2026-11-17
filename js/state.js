@@ -1,6 +1,7 @@
 // state.js — account settings, project registry and the per-project store (with audit trail).
 import { db } from './db.js';
 import { backend } from './fs/backend.js';
+import { LOCAL } from './fs/api.js';
 import { sha1Short } from './llm.js';
 import { copyDecks, unpackDecks, packDecks } from './pptxdeck.js';
 import { packDocs, unpackDocs } from './docstage.js';
@@ -58,13 +59,17 @@ export async function loadAccount() {
     try { const legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || 'null'); if (legacy?.settings) account.settings = { ...DEFAULT_SETTINGS, ...legacy.settings }; } catch { /* ignore */ }
   }
   try { account.apiKey = localStorage.getItem(KEY_LOCAL) || sessionStorage.getItem(KEY_SESSION) || ''; } catch { account.apiKey = ''; }
+  // local app: the key lives in the settings file on this computer (0600), not in this origin's storage, which
+  // a new port (a second start, --port) would not see
+  if (LOCAL) { if (account.settings.apiKey) account.apiKey = account.settings.apiKey; delete account.settings.apiKey; account.settings.rememberKey = true; }
   account.loaded = true;
   applyTheme();
   return account;
 }
-export async function saveAccount() { await backend.putSettings(account.settings); applyTheme(); }
+export async function saveAccount() { await backend.putSettings(LOCAL ? { ...account.settings, apiKey: account.apiKey || undefined } : account.settings); applyTheme(); }
 export function setApiKey(key, remember) {
   account.apiKey = key || '';
+  if (LOCAL) { try { localStorage.removeItem(KEY_LOCAL); sessionStorage.removeItem(KEY_SESSION); } catch { /* blocked */ } account.settings.rememberKey = true; return; } // saved with the settings
   try {
     if (remember && key) { localStorage.setItem(KEY_LOCAL, key); sessionStorage.removeItem(KEY_SESSION); }
     else { localStorage.removeItem(KEY_LOCAL); if (key) sessionStorage.setItem(KEY_SESSION, key); else sessionStorage.removeItem(KEY_SESSION); }

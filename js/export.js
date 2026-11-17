@@ -17,8 +17,18 @@ export const textBlob = (s, type = 'text/plain') => new Blob([s], { type: `${typ
 let zipLoading;
 export async function loadJSZip() {
   if (window.JSZip) return window.JSZip;
-  zipLoading ||= new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'; s.onload = res; s.onerror = () => rej(new Error('Could not load JSZip from cdnjs')); document.head.appendChild(s); });
+  zipLoading ||= loadFirst([new URL('./vendor/lib/jszip.min.js', import.meta.url).href, 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'], () => !!window.JSZip).catch(e => { zipLoading = null; throw e; });
   await zipLoading; return window.JSZip;
+}
+
+/** Load the first classic script of `urls` that loads and makes ready() true (the app's own copy, then a CDN). */
+export async function loadFirst(urls, ready) {
+  let last;
+  for (const src of urls) {
+    try { await new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => { s.remove(); rej(new Error(`Could not load ${src}`)); }; document.head.appendChild(s); }); if (ready()) return; }
+    catch (e) { last = e; }
+  }
+  throw last || new Error(`Could not load ${urls[0]}`);
 }
 
 export const slug = s => String(s || 'untitled').toLowerCase().replace(/[^a-z0-9一-鿿]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'untitled';

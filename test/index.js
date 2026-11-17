@@ -15,3 +15,4 @@ import './openfolder.test.mjs';
 import './agentsignin.test.mjs';
 import './cloudfolders.test.mjs';
 import './platform.test.mjs';
+import './newuser.test.mjs';

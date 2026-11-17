@@ -113,9 +113,11 @@ the key under *Account → Settings*.
 **Opening any folder.** *Open folder* (or `instructional-agents <folder>`) opens any folder, not only course folders.
 An empty folder becomes a course after you name it. A folder that already holds files (slides, Word files, PDFs,
 notes) is offered as a course: *Open as course* creates the course there and sorts the folder's own files in the
-import table. Your files are not copied, moved or changed: the ones you keep become stages in the usual layout
-(`chapters/…`, `design/…`) and stay where they are as read-only sources, listed in `.studio/meta.json` (`sources`),
-badged **S** in the file tree, refused to agents, and compared against when you import a newer version later. Files
+import table. Your files are not moved or changed: they stay where they are as sources, listed in
+`.studio/meta.json` (`sources`), badged **S** in the file tree, refused to agents, and compared against when you
+import a newer version later. Each one you keep as a stage gets the app's working copy in the usual layout
+(`chapters/…`, `design/…`; a Word syllabus becomes Markdown there), which is what generation, agents and the
+out-of-date tracking work on. LaTeX files and notes without a chapter number are kept as references by default. Files
 you leave unchecked are left alone. A folder without git becomes a repository whose first commit holds your files as
 they are (dependency folders such as `node_modules/` and `.venv/` excluded); a folder that is already a git repository
 is used as it is, on its current branch: the app commits only its own files (`.studio/`, `course.json`, `AGENTS.md`,

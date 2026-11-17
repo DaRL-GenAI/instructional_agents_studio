@@ -40,6 +40,11 @@ export function remember(entry) {
 export function forget(id) { writeJson('projects.json', recent().filter(r => r.id !== id)); }
 export const dirOf = id => recent().find(r => r.id === id)?.dir || null;
 
+// ---------------------------------------------------------------- the running app (bin/cli.mjs): { pid, port, token }
+export const instance = () => readJson('instance.json', null);
+export const saveInstance = v => writeJson('instance.json', v);
+export function clearInstance(pid) { if (instance()?.pid === pid) try { fs.rmSync(path.join(configDir(), 'instance.json'), { force: true }); } catch { /* gone */ } }
+
 // ---------------------------------------------------------------- local state of courses in synced folders: [{ dir, id, name }]
 export const localStates = () => readJson('local-state.json', []);
 export const saveLocalStates = list => writeJson('local-state.json', list);

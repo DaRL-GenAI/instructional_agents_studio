@@ -4,7 +4,28 @@ import path from 'node:path';
 import git from 'isomorphic-git';
 import { gitdirOf, cloudOf } from './localstate.mjs';
 
-const author = () => ({ name: process.env.IA_GIT_NAME || 'Instructional Agents', email: process.env.IA_GIT_EMAIL || 'studio@localhost' });
+import os from 'node:os';
+
+/** user.name / user.email from a git config file (the simple [user] section; includes are not followed). */
+export function gitUser(file) {
+  let text; try { text = fs.readFileSync(file, 'utf8'); } catch { return {}; }
+  const out = {}; let inUser = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/(^|\s)[#;].*$/, '').trim(); if (!line) continue;
+    const sec = line.match(/^\[\s*([^\]\s"]+)/); if (sec) { inUser = sec[1].toLowerCase() === 'user'; continue; }
+    const kv = inUser && line.match(/^(name|email)\s*=\s*(.*)$/i);
+    if (kv) out[kv[1].toLowerCase()] = kv[2].replace(/^"(.*)"$/, '$1').trim();
+  }
+  return out;
+}
+/** The commit author: IA_GIT_NAME / IA_GIT_EMAIL, else the user's own git identity (the repository's config, then
+ *  ~/.gitconfig and ~/.config/git/config, as git would), else the app. */
+function author(dir) {
+  const xdg = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+  const files = [dir && path.join(gitdir(dir), 'config'), path.join(os.homedir(), '.gitconfig'), path.join(xdg, 'git', 'config')].filter(Boolean);
+  const found = {}; for (const f of files) { const u = gitUser(f); found.name ||= u.name; found.email ||= u.email; }
+  return { name: process.env.IA_GIT_NAME || found.name || 'Instructional Agents', email: process.env.IA_GIT_EMAIL || found.email || 'studio@localhost' };
+}
 export const GITIGNORE = `# Instructional Agents: generated media and scratch space stay out of git
 build/
 .studio/decks/
@@ -87,7 +108,7 @@ export async function commit(dir, paths, message) {
   const base = prev ? (await git.readCommit({ ...R(dir), oid: prev })).commit.tree : null;
   const tree = (await treeWith(dir, base, changes)) || await git.writeTree({ ...R(dir), tree: [] });
   if (prev && tree === base) { await syncIndex(dir, changes); return prev; }
-  const oid = await git.commit({ ...R(dir), message, author: author(), tree, parent: prev ? [prev] : [] });
+  const oid = await git.commit({ ...R(dir), message, author: author(dir), tree, parent: prev ? [prev] : [] });
   await syncIndex(dir, changes);
   return oid;
 }

@@ -1,5 +1,5 @@
 // views/basics.js — course facts, learners, grounding materials, per-project generation overrides.
-import { el, button, field, input, select, textarea, notice, empty, icon, toast, loadScript, confirmDialog } from '../ui.js';
+import { el, button, field, input, select, textarea, notice, empty, icon, toast, loadScript, loadPdfjs, confirmDialog } from '../ui.js';
 import { account } from '../state.js';
 import { chunkText } from '../pipeline.js';
 
@@ -49,8 +49,7 @@ function overridesSection(ctx) {
 
 let pdfReady;
 async function extractPdfText(file, onPage) {
-  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', () => !!window.pdfjsLib);
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  await loadPdfjs();
   const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
   const pages = []; const max = Math.min(pdf.numPages, 600);
   for (let i = 1; i <= max; i++) { onPage?.(i); const page = await pdf.getPage(i); const content = await page.getTextContent(); pages.push(content.items.map(it => it.str).join(' ')); }

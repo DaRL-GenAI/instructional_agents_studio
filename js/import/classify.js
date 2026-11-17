@@ -56,8 +56,12 @@ export function ruleClassify(path, text = '') {
   const base = { chapterNo };
   if (baseName(path).startsWith('.') || MEDIA_EXT.has(ext)) return { ...base, kind: 'ignore', confidence: 0.95, reason: `.${ext || baseName(path)} files are not course material the app edits` };
   if (!STAGE_EXT.has(ext)) return { ...base, kind: 'reference', confidence: 0.85, reason: `.${ext} is kept in sources/ as reference` };
+  // LaTeX stays LaTeX: as a stage it would become Markdown without its markup; the Workspace edits and compiles it
+  if (ext === 'tex') return { ...base, kind: 'reference', confidence: 0.75, reason: 'LaTeX is kept as it is (edit and compile it in the Workspace)' };
   for (const [kind, re, conf] of NAME_RULES) {
     if (!re.test(name)) continue;
+    // "notes.md" with no week, lecture or chapter number is not one chapter's script (it would start a chapter of its own)
+    if (kind === 'script' && chapterNo == null && !/\b(script|transcript|narration)\b/.test(name)) return { ...base, kind: 'reference', confidence: 0.6, reason: `Notes without a chapter number (choose Lecture script and a chapter to use them as one)` };
     if (kind === 'slides' && ext !== 'pptx') {
       // a lecture PDF or Markdown file: chapter material, but not a deck the app can open as slides
       if (/\b(lecture|lectures|lec|slides|slide|deck)\b/.test(name)) return { ...base, kind: 'reference', confidence: 0.6, reason: `Named like lecture material, but slides must be .pptx` };

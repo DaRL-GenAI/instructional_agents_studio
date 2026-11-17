@@ -27,13 +27,27 @@ const KEEP_FILES = /^(editor\.html|LICENSE|NOTICE|manifest\.json|themes\.json|pl
 // left out: the in-editor local LLM (loaded on demand only), the Monaco macro editor, the Internet Explorer builds
 const DROP = /(^|\/)(assets\/(wllama-[\w-]+\.wasm|webllm\.worker-[\w-]+\.js)|web-apps\/vendor\/monaco|web-apps\/apps\/\w+\/main\/ie)$/;
 const FONT_MAX = 2 * 1024 * 1024; // keep every font file up to this size…
-const FONT_FAMILIES = new Set(['Noto Sans SC', 'Noto Serif SC']); // …and the regular face of these larger families
+// …and the regular face of these larger families (Chinese sans and serif, Korean, symbols, a full Latin serif)
+const FONT_FAMILIES = new Set(['Noto Sans SC', 'Noto Serif SC', 'Noto Sans KR', 'Symbola', 'FreeSerif']);
+// A font file that is left out is still named in AllFonts.js; the editor stops with "Fonts are not loaded" when one it
+// needs is missing (a bold Chinese title is enough). So every file left out gets a stand-in, written to
+// fonts-alias.json, which the app serves under the missing name: another face of the same family, else the kept
+// regular face of the closest script.
+const SERIF_CJK = /song|kai|fang|ming|宋|楷|仿|ukai|小标/i, KOREAN = /nanum|\bKR\b|gothic kr|myeongjo/i;
 
-function fontKeep() {
+function fontPlan() {
   const w = {}; vm.runInNewContext(fs.readFileSync(path.join(src, 'sdkjs/common/AllFonts.js'), 'utf8').replace(/^\uFEFF/, ''), { window: w });
-  const files = w.__fonts_files, keep = new Set();
-  for (const info of w.__fonts_infos) if (FONT_FAMILIES.has(info[0]) && info[1] >= 0) keep.add(files[info[1]]);
-  return name => keep.has(name) || fs.statSync(path.join(src, 'fonts', name)).size <= FONT_MAX;
+  const files = w.__fonts_files, infos = w.__fonts_infos, keep = new Set(), regularOf = {};
+  for (const info of infos) if (FONT_FAMILIES.has(info[0]) && info[1] >= 0) { keep.add(files[info[1]]); regularOf[info[0]] = files[info[1]]; }
+  const kept = name => keep.has(name) || fs.statSync(path.join(src, 'fonts', name)).size <= FONT_MAX;
+  const alias = {};
+  const fallback = family => regularOf[KOREAN.test(family) ? 'Noto Sans KR' : SERIF_CJK.test(family) ? 'Noto Serif SC' : 'Noto Sans SC'];
+  for (const info of infos) {
+    const faces = [1, 3, 5, 7].map(k => info[k]).filter(i => i >= 0).map(i => files[i]);
+    const keptFace = faces.find(kept);
+    for (const f of faces) if (!kept(f) && !alias[f]) alias[f] = keptFace || fallback(info[0]);
+  }
+  return { kept, alias };
 }
 
 let bytes = 0, count = 0;
@@ -47,8 +61,9 @@ function copy(rel) {
 fs.rmSync(out, { recursive: true, force: true }); fs.mkdirSync(out, { recursive: true });
 for (const n of fs.readdirSync(src)) if (KEEP_FILES.test(n)) copy(n);
 for (const d of KEEP_DIRS) if (fs.existsSync(path.join(src, d))) copy(d);
-const keepFont = fontKeep(); let dropped = 0;
-for (const n of fs.readdirSync(path.join(src, 'fonts'))) if (keepFont(n)) copy(`fonts/${n}`); else dropped++;
+const plan = fontPlan(); let dropped = 0;
+for (const n of fs.readdirSync(path.join(src, 'fonts'))) if (plan.kept(n)) copy(`fonts/${n}`); else { dropped++; if (!plan.alias[n]) console.warn(`  no stand-in for fonts/${n}`); }
+fs.writeFileSync(path.join(out, 'fonts-alias.json'), JSON.stringify(plan.alias, null, 1));
 fs.writeFileSync(path.join(out, '.ia-editor.json'), JSON.stringify({ version: 'trim', from: src, at: new Date().toISOString() }));
 const mb = n => `${(n / 1024 / 1024).toFixed(1)} MB`;
 console.log(`trimmed editor: ${count} files, ${mb(bytes)} in ${out} (${dropped} font files left out)`);

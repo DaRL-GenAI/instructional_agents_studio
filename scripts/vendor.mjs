@@ -17,3 +17,17 @@ for (const [name, entry] of Object.entries(bundles)) {
   const bytes = Object.values(r.metafile.outputs)[0].bytes;
   console.log(`js/vendor/${name}.js ${(bytes / 1024).toFixed(0)} KB`);
 }
+
+// Browser libraries the app loads on demand, copied as published (local first, so the app works offline and where
+// a CDN is blocked; the CDN stays as the fallback). Versions are pinned in package.json devDependencies.
+import fs from 'node:fs';
+const COPY = {
+  'pptxgen.bundle.js': 'pptxgenjs/dist/pptxgen.bundle.js', 'mp4-muxer.js': 'mp4-muxer/build/mp4-muxer.mjs',
+  'jszip.min.js': 'jszip/dist/jszip.min.js', 'marked.min.js': 'marked/marked.min.js',
+  'pdf.min.js': 'pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': 'pdfjs-dist/build/pdf.worker.min.js',
+};
+fs.mkdirSync(path.join(root, 'js/vendor/lib'), { recursive: true });
+for (const [name, from] of Object.entries(COPY)) {
+  fs.copyFileSync(path.join(root, 'node_modules', from), path.join(root, 'js/vendor/lib', name));
+  console.log(`js/vendor/lib/${name} ${(fs.statSync(path.join(root, 'js/vendor/lib', name)).size / 1024).toFixed(0)} KB`);
+}

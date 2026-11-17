@@ -43,7 +43,8 @@ export async function openPptxEditor(ctx, o) {
   addEventListener('beforeunload', onUnload);
 
   async function save() {
-    if (!office.state.opened || !state.dirty || state.saving) return false;
+    if (!office.state.opened) { toast('The editor has not finished opening the deck, so there is nothing to save yet.', 'error'); return false; }
+    if (!state.dirty || state.saving) return false;
     state.saving = true; saveBtn.disabled = true; setStatus('', 'Saving…');
     try { const { file, dirty } = await office.save('PPTX'); return await commit(file, dirty); }
     catch (err) { setStatus('error', err.message); toast(err.message, 'error'); return false; }

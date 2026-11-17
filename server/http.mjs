@@ -79,19 +79,27 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed');
     const o = guard.checkOrigin(req); if (o) return send(res, o[0], o[1]);
     if (p === '/' || p === '/index.html') {
-      if (!guard.authed(req)) return send(res, 401, 'This is the Instructional Agents local app. Open the address printed in the terminal (it carries the access token).');
+      if (!guard.authed(req)) { res.writeHead(401, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(SIGN_IN_PAGE); }
       return sendIndex(res);
     }
     if (editor && (p === '/editor' || p.startsWith('/editor/'))) {
       if (p === '/editor') { res.writeHead(301, { Location: '/editor/' }); return res.end(); }
       let rel = p.slice('/editor/'.length) || 'index.html';
       if (rel === 'editor' || (!path.extname(rel) && fs.existsSync(path.join(editor.dir, `${rel}.html`)))) rel += '.html';
-      return sendFile(req, res, editor.dir, rel, 'editor');
+      return sendFile(req, res, editor.dir, fontAlias(rel), 'editor');
     }
     const top = p.split('/')[1];
     if (STATIC_TOP.has(top)) return sendFile(req, res, APP_ROOT, p.slice(1), 'app');
-    if (editorTop.has(top)) return sendFile(req, res, editor.dir, p.slice(1), 'editor'); // absolute paths inside the editor build (/sdkjs/…)
+    if (editorTop.has(top)) return sendFile(req, res, editor.dir, fontAlias(p.slice(1)), 'editor'); // absolute paths inside the editor build (/sdkjs/…)
     return send(res, 404, 'Not found');
+  }
+
+  // a font file left out of the trimmed editor is served as its stand-in (scripts/trim-editor.mjs, fonts-alias.json)
+  let aliases = null;
+  function fontAlias(rel) {
+    const m = rel.match(/^fonts\/(\w+)$/); if (!m || fs.existsSync(path.join(editor.dir, rel))) return rel;
+    aliases ??= (() => { try { return JSON.parse(fs.readFileSync(path.join(editor.dir, 'fonts-alias.json'), 'utf8')); } catch { return {}; } })();
+    const to = aliases[m[1]]; return typeof to === 'string' && /^\w+$/.test(to) ? `fonts/${to}` : rel;
   }
 
   function sendIndex(res) {
@@ -128,6 +136,13 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
       if (m === 'PUT') { config.saveSettings(await body(req)); return send(res, 204); }
     }
     if (p === '/api/projects' && m === 'GET') return send(res, 200, { projects: projects.list() });
+    // a second `instructional-agents <folder>` hands its folder to this running app (bin/cli.mjs) → the page to open
+    if (p === '/api/handoff' && m === 'POST') {
+      const b = await body(req); if (!b.dir) return send(res, 200, { hash: '#/projects' });
+      const abs = checkDir(b.dir);
+      if (isProjectDir(abs)) return send(res, 200, { hash: `#/p/${projects.open(abs).id}/overview` });
+      session.pendingDir = abs; session.openId = null; return send(res, 200, { hash: '#/projects' });
+    }
     if (p === '/api/projects' && m === 'POST') { const b = await body(req); const r = await projects.create(b.project, b.dir || (session.pendingDir && !isProjectDir(session.pendingDir) ? session.pendingDir : null)); if (r.dir === session.pendingDir) session.pendingDir = null; return send(res, 200, r); }
     if (p === '/api/projects/open' && m === 'POST') { // a course folder opens; any other folder comes back described, to be opened as a course (adopt)
       const d = checkDir((await body(req)).dir);
@@ -306,6 +321,14 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
     async close() { agents.cancel('server stopped'); jobs.cancelAll('server stopped'); login.cancel('server stopped'); for (const c of clients) c.terminate(); wss.close(); await projects.close(); await new Promise(r => server.close(r)); },
   };
 }
+
+const SIGN_IN_PAGE = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Instructional Agents</title>
+<body style="font:16px/1.55 system-ui,sans-serif;max-width:560px;margin:12vh auto;padding:0 20px;color:#222">
+<h1 style="font-size:22px">Instructional Agents is running, but this tab needs its access link</h1>
+<p>For your safety the app only answers the address it printed when it started, which carries a one-time key.
+This tab is from an earlier start, or was opened without that address.</p>
+<p>Go to the terminal where <code>npx instructional-agents</code> runs and open the address shown after <b>Open</b>.
+Running <code>npx instructional-agents</code> again also opens it.</p></body>`;
 
 function send(res, status, data) {
   if (status === 204 || data === undefined || data === null && status === 204) { res.writeHead(status); return res.end(); }

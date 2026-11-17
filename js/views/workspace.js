@@ -6,7 +6,7 @@
 // call update(), so editors (and the ONLYOFFICE iframes, which reload when moved in the DOM) survive navigation.
 // A file that backs a stage is saved through the store (userEdit / commitDeck / commitDoc), so the stage's version,
 // history and audit trail stay right; any other file is written as is (local app only).
-import { el, append, button, icon, toast, confirmDialog, notice, empty, renderMarkdown, loadScript, fmtRel, fmtBytes } from '../ui.js';
+import { el, append, button, icon, toast, confirmDialog, notice, empty, renderMarkdown, loadScript, loadPdfjs, fmtRel, fmtBytes } from '../ui.js';
 import { wsHref, go, href } from '../router.js';
 import { LOCAL, onServerEvent } from '../fs/api.js';
 import { makeSource, shaHex, typeOf } from '../ws/source.js';
@@ -532,8 +532,7 @@ const wsParts = (id, path) => ['p', id, 'workspace', ...path.split('/')];
 
 /** A PDF as a column of page canvases (PDF.js), `width` px wide. alive(): stop early once the tab is gone. */
 async function renderPdfPages(blob, width, alive = () => true) {
-  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', () => !!window.pdfjsLib);
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  await loadPdfjs();
   const pdf = await window.pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise;
   const pages = el('div', { class: 'ws-pdf', 'aria-label': `${pdf.numPages} page${pdf.numPages > 1 ? 's' : ''}` });
   for (let i = 1; i <= Math.min(pdf.numPages, 300); i++) {

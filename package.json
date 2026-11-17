@@ -62,8 +62,12 @@
     "codemirror": "^6.0.2",
     "docx": "^9.15.1",
     "esbuild": "^0.25.12",
+    "jszip": "^3.10.2",
     "mammoth": "^1.13.0",
     "marked": "^12.0.2",
-    "playwright-core": "^1.64.1"
+    "mp4-muxer": "5.2.2",
+    "pdfjs-dist": "3.11.174",
+    "playwright-core": "^1.64.1",
+    "pptxgenjs": "3.12.0"
   }
 }

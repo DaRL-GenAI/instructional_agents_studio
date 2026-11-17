@@ -38,4 +38,12 @@ Bundled JavaScript libraries (js/vendor/, built by scripts/vendor.mjs)
   * mammoth, BSD 2-Clause License, Copyright (c) Michael Williamson
   * marked, MIT License, Copyright (c) Christopher Jeffrey and contributors
 
+Copied as published into js/vendor/lib/ (scripts/vendor.mjs), loaded on demand:
+
+  * PptxGenJS 3.12.0, MIT License, Copyright (c) Brent Ely
+  * JSZip 3.10, MIT License (dual MIT / GPL-3.0, used under MIT), Copyright (c) Stuart Knightley and contributors
+  * PDF.js 3.11.174 (pdfjs-dist), Apache License 2.0, Copyright (c) Mozilla Foundation
+  * mp4-muxer 5.2.2, MIT License, Copyright (c) Vanilagy
+  * marked 12, MIT License (see above)
+
 Runtime dependencies installed by npm: isomorphic-git (MIT), ws (MIT), chokidar (MIT).

@@ -5,11 +5,12 @@
 // Callers fall back to MediaRecorder when encoderSupport().ok is false (e.g. Safari without AudioEncoder).
 
 const MUXER_SOURCES = [
+  new URL('./vendor/lib/mp4-muxer.js', import.meta.url).href, // served with the app (works offline)
   'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs',
   'https://unpkg.com/mp4-muxer@5.2.2/build/mp4-muxer.mjs',
 ];
 let muxerLoading;
-/** Load mp4-muxer (ESM build) once; jsDelivr first, unpkg as fallback. */
+/** Load mp4-muxer (ESM build) once: the app's own copy, then jsDelivr, then unpkg. */
 export function loadMuxer() {
   muxerLoading ||= (async () => {
     let lastErr;

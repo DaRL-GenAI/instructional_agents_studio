@@ -183,7 +183,7 @@ export class Pipeline {
       const messages = [{ role: 'system', content: prompt.agents[0].system }, { role: 'user', content: prompt.user }];
       let text = await this.stream(key, transcript, usage, { where: ch.title, stage: st.name, agent: prompt.agents[0].name, json, messages });
       const parse = async (t) => {
-        if (stageId === 'outline') return JSON.stringify(normalizeOutline(extractJson(t, 'array')), null, 2);
+        if (stageId === 'outline') { const o = normalizeOutline(extractJson(t, 'array')); if (!o.length) throw new Error('The model returned no outline items. Re-run, or check the Transcript tab for the raw response.'); return JSON.stringify(o, null, 2); }
         if (stageId === 'slides') {
           const outline = itemsOf(ch.stages.outline?.output);
           const d = normalizeDeck(extractJson(t, 'object'), outline);
