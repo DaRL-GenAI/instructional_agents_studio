@@ -1,0 +1,102 @@
+# Caching contract for the self-hosted Docker image (static-web-server).
+#
+# This file is the Docker twin of public/_headers: the Cloudflare Pages
+# deployment gets its cache rules from _headers, which static-web-server does
+# not read. Without it the server falls back to its extension-based defaults --
+# `max-age=86400` for HTML and `max-age=31536000` for every .js/.css -- and the
+# stable-named files then outlive the image they came from. A self-hoster who
+# pulls a new image keeps serving the previous editor.html (and with it the
+# previous hashed bundle) out of the browser cache for a day, and the previous
+# vendor JS for a year, which is how a fix that shipped weeks ago can still be
+# missing from a freshly pulled container (GitHub #144).
+#
+# Rules are applied in order and merged per header, so the catch-all below sets
+# the safe default and the specific rules that follow relax it.
+
+[advanced]
+
+# Default: revalidate. Same semantics as the Pages default, and what every
+# stable-named file needs -- HTML, sw.js, the deploy-coupled shell files
+# (home.css, landing.css, lang-switch.js, sw-register.js, open-local.js,
+# landing-prefetch.js, ranui-iife/) and the vendor trees,
+# whose JS carries our own runtime patch (x2t_helper.js). Revalidation is a
+# conditional request answered with 304, not a re-download.
+[[advanced.headers]]
+source = "**"
+[advanced.headers.headers]
+Cache-Control = "no-cache"
+Cross-Origin-Opener-Policy = "same-origin"
+Cross-Origin-Embedder-Policy = "require-corp"
+
+# Keep the vendored editor trees out of search indexes (mirrors _headers).
+[[advanced.headers]]
+source = "/sdkjs/**"
+[advanced.headers.headers]
+X-Robots-Tag = "noindex"
+
+[[advanced.headers]]
+source = "/web-apps/**"
+[advanced.headers.headers]
+X-Robots-Tag = "noindex"
+
+# Hashed build outputs: the filename changes with the content.
+[[advanced.headers]]
+source = "/assets/**"
+[advanced.headers.headers]
+Cache-Control = "public, max-age=31536000, immutable"
+
+# Fingerprinted by bin/build.sh, same reasoning.
+[[advanced.headers]]
+source = "/ran-tokens.*.css"
+[advanced.headers.headers]
+Cache-Control = "public, max-age=31536000, immutable"
+
+# Self-hosted webfonts: unhashed, but they only change with a ranui release.
+[[advanced.headers]]
+source = "/ran-fonts/**"
+[advanced.headers.headers]
+Cache-Control = "public, max-age=604800, must-revalidate"
+
+# The editor's indexed font catalog (000..266, 2 KB - 16 MB each): replaced
+# only together with the vendor build, and revalidating them per open is what
+# put a CJK deck on "Loading presentation" for minutes on production.
+# Content-Type mirrors _headers -- these have no extension, so without it the
+# server types them application/octet-stream and skips compression on files
+# that gzip to roughly half. The bytes are an XOR-prefixed TTF consumed via
+# XHR arraybuffer, so the label is for transport only (see public/_headers).
+[[advanced.headers]]
+source = "/fonts/*"
+[advanced.headers.headers]
+Cache-Control = "public, max-age=31536000, immutable"
+Content-Type = "font/ttf"
+X-Robots-Tag = "noindex"
+
+# The x2t WASM: the single largest download, vendor-versioned. The file holds
+# gzip bytes in the Docker image (bin/prepare-docker-wasm.mjs re-encodes the
+# builder's copy before build.sh hashes it). Chrome will not decode Brotli on
+# ordinary http://<server-ip> origins (#267), so only HTTPS Pages keeps Brotli.
+# The loader URL keeps its .br suffix; Content-Encoding describes the actual
+# transport bytes. Leave Content-Type as octet-stream to avoid recompression.
+[[advanced.headers]]
+source = "/sdkjs/common/wasm/x2t/x2t.wasm.br"
+[advanced.headers.headers]
+Content-Encoding = "gzip"
+Cache-Control = "public, max-age=31536000, immutable"
+
+# Same narrow model-Worker policy as Pages and Vite.
+[[advanced.headers]]
+source = "/assets/webllm.worker-*.js"
+[advanced.headers.headers]
+Content-Security-Policy = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https: http: blob:; worker-src 'self' blob:"
+
+# PDF extraction uses a bundled module worker, including offline.
+[[advanced.headers]]
+source = "/assets/pdf.worker.min-*.mjs"
+[advanced.headers.headers]
+Content-Type = "text/javascript; charset=utf-8"
+
+# Final served-tree deployment probe (same rule as Pages).
+[[advanced.headers]]
+source = "/build-identity.json"
+[advanced.headers.headers]
+Cache-Control = "no-store"

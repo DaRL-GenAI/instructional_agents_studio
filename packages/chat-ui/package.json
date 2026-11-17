@@ -1,0 +1,42 @@
+{
+  "name": "@ranuts/chat-ui",
+  "version": "0.0.1",
+  "description": "Chat / IM UI component — message list, streaming, and an input box — built with the ranui builder. Bring your own backend.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "prepare": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "marked": "16.4.2",
+    "ranui": "0.5.2",
+    "ranuts": "0.5.2"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  },
+  "keywords": [
+    "chat",
+    "im",
+    "chat-ui",
+    "messages",
+    "streaming",
+    "ui-component",
+    "ranui"
+  ],
+  "license": "MIT"
+}

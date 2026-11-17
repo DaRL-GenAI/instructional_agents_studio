@@ -1,0 +1,226 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+/**
+ * Hosting contract sentinel (Cloudflare Pages). Three of the campaign's
+ * production-only defects lived in this layer (a vendor loader stuck behind
+ * the index.html -> directory 308, the font catalog shipped without a cache
+ * rule, sw.js/HTML that must never be cached). Pin the rules the app relies
+ * on so an edit to public/_headers / _redirects / sw.js that drops one turns
+ * red here first. The rules themselves are exercised for real by the
+ * `e2e-pages` job (wrangler pages dev) and the production smoke.
+ */
+const ROOT = resolve(__dirname, '../..');
+/** The x2t module, shipped brotli-compressed under its plain name. */
+const WASM_PATH = '/sdkjs/common/wasm/x2t/x2t.wasm.br';
+const read = (rel: string) => readFileSync(resolve(ROOT, rel), 'utf8');
+
+/** Parse the simple `_headers` format into { path: { header: value } }. */
+function parseHeaders(src: string): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  let current: string | null = null;
+  for (const raw of src.split('\n')) {
+    const line = raw.replace(/#.*$/, '').trimEnd();
+    if (!line.trim()) continue;
+    if (!/^\s/.test(line)) {
+      current = line.trim();
+      out[current] = {};
+    } else if (current) {
+      const idx = line.indexOf(':');
+      out[current][line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
+    }
+  }
+  return out;
+}
+
+describe('public/_headers', () => {
+  const rules = parseHeaders(read('public/_headers'));
+  const cc = (path: string) => rules[path]?.['cache-control'];
+
+  it('restricts executable code only on the WebLLM Worker response', () => {
+    expect(rules['/assets/webllm.worker-*.js']?.['content-security-policy']).toBe(
+      "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https: http: blob:; worker-src 'self' blob:",
+    );
+    for (const path of ['/*', '/assets/*', '/web-apps/*', '/sdkjs/*'])
+      expect(rules[path]?.['content-security-policy']).toBeUndefined();
+  });
+
+  it('enables local WASM multithreading on every static response', () => {
+    expect(rules['/*']?.['cross-origin-opener-policy']).toBe('same-origin');
+    expect(rules['/*']?.['cross-origin-embedder-policy']).toBe('require-corp');
+  });
+
+  it('keeps deploy-coupled files uncacheable (a stale one breaks the shell)', () => {
+    const deployCoupled = [
+      '/sw.js',
+      '/sw-register.js',
+      '/home.css',
+      '/landing.css',
+      '/lang-switch.js',
+      // Stable-named landing scripts: content changes with the deploy, so the
+      // one combination caching cannot get right (see /ran-tokens above).
+      '/open-local.js',
+      '/landing-prefetch.js',
+      '/ranui-iife/*',
+      // Its message protocol changes with the app bundle that posts to it.
+      '/libs/sheetjs/convert.worker.js',
+    ];
+    for (const p of deployCoupled) {
+      expect(cc(p), p).toBe('no-cache');
+    }
+  });
+
+  it('never caches the deployment identity on Pages or the local production preview', () => {
+    expect(cc('/build-identity.json')).toBe('no-store');
+    expect(read('vite.config.ts')).toContain("'/build-identity.json'");
+    expect(read('vite.config.ts')).toContain("res.setHeader('Cache-Control', 'no-store')");
+  });
+
+  it('declares the x2t wasm pre-encoded, which is the only thing that makes it loadable', () => {
+    // The file under that name holds brotli bytes (6.6 MB, against 42.1 MB
+    // raw and 9.0 MB for the best gzip). The browser decoding it at the
+    // network layer is what lets `instantiateStreaming` compile the module
+    // straight off the response with nothing in our code decompressing
+    // anything. Drop this line and every host serves an opaque blob: x2t
+    // never instantiates and no document opens at all.
+    expect(rules[WASM_PATH]?.['content-encoding']).toBe('br');
+  });
+
+  it('keeps hashed/immutable assets long-lived: build assets, font catalog, x2t wasm', () => {
+    for (const p of ['/assets/*', '/fonts/*', WASM_PATH, '/ran-tokens.*.css']) {
+      expect(cc(p), p).toMatch(/max-age=31536000.*immutable/);
+    }
+  });
+
+  it('does not make patched vendor trees immutable (x2t_helper.js and editor HTML must revalidate)', () => {
+    for (const p of Object.keys(rules)) {
+      if (/^\/(sdkjs|web-apps)\/\*$/.test(p) || p === '/sdkjs/*' || p === '/web-apps/*') {
+        expect(cc(p) ?? '').not.toMatch(/immutable/);
+      }
+    }
+    expect(Object.keys(rules).some((p) => p.startsWith('/sdkjs/common/wasm/x2t/x2t_helper'))).toBe(false);
+  });
+
+  /**
+   * The catalog files have no extension, so Pages typed them
+   * application/octet-stream -- not on Cloudflare's compressible list, so
+   * production shipped every font byte uncompressed (a 16 MB CJK face that
+   * gzips to 9.9 MB). Declaring font/ttf is what puts them back on it. The
+   * bytes are an XOR-prefixed TTF read through XHR arraybuffer, so the label
+   * never has to be parseable as a webfont.
+   */
+  it('declares a compressible Content-Type on the font catalog', () => {
+    expect(rules['/fonts/*']?.['content-type']).toBe('font/ttf');
+  });
+
+  it('keeps vendor trees and the font catalog out of search indexes, and landing pages in', () => {
+    const robots = (path: string) => rules[path]?.['x-robots-tag'];
+    for (const p of ['/web-apps/*', '/sdkjs/*', '/fonts/*']) expect(robots(p), p).toMatch(/noindex/);
+    for (const p of ['/*', '/open/*', '/zh-CN/*', '/assets/*']) expect(robots(p), p).toBeUndefined();
+  });
+});
+
+/**
+ * Docker twin of the same contract. static-web-server never reads `_headers`,
+ * and its extension-based defaults are actively wrong for this app: HTML for a
+ * day and every stable-named .js/.css for a year, both without revalidation.
+ * A self-hoster who pulled a new image therefore kept serving the previous
+ * editor.html -- and with it the previous hashed bundle -- so a shipped fix
+ * was simply not there (GitHub #144, "re-pulled the image, same error").
+ */
+describe('sws.toml (self-hosted Docker)', () => {
+  /** Parse the `[[advanced.headers]]` blocks into { source, headers }. */
+  const rules = read('sws.toml')
+    .split(/^\[\[advanced\.headers\]\]$/m)
+    .slice(1)
+    .map((block) => {
+      const source = /source\s*=\s*"([^"]+)"/.exec(block)?.[1] ?? '';
+      const headers: Record<string, string> = {};
+      for (const line of block.split('\n')) {
+        const match = /^([A-Za-z-]+)\s*=\s*"([^"]*)"$/.exec(line.trim());
+        if (match && match[1] !== 'source') headers[match[1].toLowerCase()] = match[2];
+      }
+      return { source, headers };
+    });
+  const cc = (source: string) => rules.find((rule) => rule.source === source)?.headers['cache-control'];
+
+  it('restricts only the WebLLM Worker in the Docker host', () => {
+    const policyRules = rules.filter((rule) => rule.headers['content-security-policy']);
+    expect(policyRules).toEqual([
+      {
+        source: '/assets/webllm.worker-*.js',
+        headers: {
+          'content-security-policy':
+            "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https: http: blob:; worker-src 'self' blob:",
+        },
+      },
+    ]);
+  });
+
+  it('enables the same isolation policy in the self-hosted image', () => {
+    expect(rules[0]?.headers['cross-origin-opener-policy']).toBe('same-origin');
+    expect(rules[0]?.headers['cross-origin-embedder-policy']).toBe('require-corp');
+  });
+
+  it('defaults every path to revalidation, so a new image is actually served', () => {
+    expect(rules[0]?.source).toBe('**');
+    expect(cc('**')).toBe('no-cache');
+  });
+
+  it('never caches the deployment identity in Docker', () => {
+    expect(cc('/build-identity.json')).toBe('no-store');
+  });
+
+  it('declares gzip for x2t so ordinary HTTP self-hosting can decode it', () => {
+    // Chrome only decodes Brotli on trustworthy origins. Docker must serve
+    // gzip for http://<server-ip>, while HTTPS Pages keeps its Brotli payload.
+    const rule = rules.find((entry) => entry.source === WASM_PATH);
+    expect(rule?.headers['content-encoding']).toBe('gzip');
+  });
+
+  it('pins the same immutable set as _headers (hashed assets, font catalog, x2t wasm)', () => {
+    for (const source of ['/assets/**', '/fonts/*', WASM_PATH, '/ran-tokens.*.css']) {
+      expect(cc(source), source).toMatch(/max-age=31536000.*immutable/);
+    }
+  });
+
+  it('declares the same compressible Content-Type on the font catalog as _headers', () => {
+    const fonts = rules.find((r) => r.source === '/fonts/*');
+    expect(fonts?.headers['content-type']).toBe('font/ttf');
+  });
+
+  it('never makes the patched vendor trees immutable', () => {
+    for (const rule of rules) {
+      if (/^\/(sdkjs|web-apps)\/\*\*$/.test(rule.source)) {
+        expect(rule.headers['cache-control'] ?? '', rule.source).not.toMatch(/immutable|max-age=[1-9]/);
+      }
+    }
+  });
+
+  it('is wired into the image (a config the server never loads pins nothing)', () => {
+    const dockerfile = read('Dockerfile');
+    expect(dockerfile).toMatch(/COPY sws\.toml \/sws\.toml/);
+    expect(dockerfile).toMatch(/ENV SERVER_CONFIG_FILE=\/sws\.toml/);
+    // Re-encode before the build hashes the served vendor tree for sw.js.
+    expect(dockerfile).toMatch(
+      /node bin\/prepare-docker-wasm\.mjs public\s*&&\s*BUILD_REVISION="\$BUILD_REVISION" pnpm run build/,
+    );
+  });
+});
+
+describe('public/_redirects', () => {
+  it('canonicalizes the localized landing directory', () => {
+    expect(read('public/_redirects')).toMatch(/^\/zh-CN\s+\/zh-CN\/\s+308/m);
+    // /zh/ is the prefix people guess for the Chinese pages; the real one is
+    // the BCP-47 tag the hreflang set and the sitemap use.
+    expect(read('public/_redirects')).toMatch(/^\/zh\/\*\s+\/zh-CN\/:splat\s+301/m);
+  });
+});
+
+describe('index.html -> directory normalization awareness', () => {
+  it('the app never relies on the vendor common loader for PDFs (it breaks behind the 308)', () => {
+    const src = read('lib/onlyoffice-editor.ts');
+    expect(src).toMatch(/isForm:\s*false/);
+  });
+});

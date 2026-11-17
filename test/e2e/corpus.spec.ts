@@ -1,0 +1,593 @@
+import { appendFileSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { join, extname, basename } from 'node:path';
+import { expect, test } from './lib/l0';
+import { pixelDiff, settleEditor } from './lib/visual';
+import { ooxmlDocumentText, textCoverage } from './lib/ooxml';
+
+/**
+ * Real-document regression matrix (roadmap direction zero).
+ *
+ * Synthetic minimal fixtures proved the pipeline works but hid every
+ * real-world failure (image-save freeze, real-PPTX fatal error), so this
+ * suite drives the editor with a local corpus of REAL documents. The corpus
+ * stays on the tester's machine and is never committed:
+ *
+ *   CORPUS_DIR=~/Documents pnpm run test:e2e:corpus
+ *   CORPUS_FILTER='EMP' ...   # optional include regex on file paths
+ *   CORPUS_EXCLUDE='password|encrypt' ...   # optional exclude regex
+ *   CORPUS_LIMIT=300 ...      # optional cap (logged, never silent)
+ *   CORPUS_VISUAL=1 ...       # opt-in L3: pixel-diff original vs re-opened save
+ *   CORPUS_DEEP=1 ...         # opt-in: also export to PDF and toggle readonly
+ *
+ * Without CORPUS_DIR the whole suite is skipped, which keeps CI green.
+ *
+ * Per file: open -> fatal-dialog/asc_onError watch -> save -> output sanity
+ * -> trusted-input edit -> save again. The OnlyOffice fatal dialog ("An error
+ * occurred during the work with the document") and asc_onError events are hard
+ * failures, not just crashes.
+ *
+ * CORPUS_DEEP adds two more stages to the same loaded document. They exist
+ * because the legacy binary formats have no other route: .doc, .xls and .ppt
+ * cannot be synthesised the way a minimal OOXML package can, so every fixed
+ * spec in the suite skips them, and the only thing that has ever opened one is
+ * this run. Exporting to PDF and toggling readonly on a real legacy document
+ * are therefore covered here or nowhere. Both reuse the document already on
+ * screen -- no second open -- which is what keeps them affordable.
+ */
+
+const CORPUS_DIR = process.env.CORPUS_DIR;
+const FILTER = process.env.CORPUS_FILTER ? new RegExp(process.env.CORPUS_FILTER, 'i') : null;
+// Public corpora carry files that are expected to fail (password-protected,
+// deliberately corrupt); exclude by path regex so findings stay meaningful.
+const EXCLUDE = process.env.CORPUS_EXCLUDE ? new RegExp(process.env.CORPUS_EXCLUDE, 'i') : null;
+// Optional cap for large public corpora (nightly CI). Never silent: the
+// truncation is logged and recorded in the report.
+const LIMIT = process.env.CORPUS_LIMIT ? Number(process.env.CORPUS_LIMIT) : Infinity;
+// Opt-in L3: after the save, re-open the original and the saved bytes
+// readonly and pixel-diff the two renderings (roughly doubles the run time).
+const VISUAL = Boolean(process.env.CORPUS_VISUAL);
+// Opt-in: export to PDF and toggle readonly on the document already open.
+const DEEP = Boolean(process.env.CORPUS_DEEP);
+const SUPPORTED = new Set(['.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.csv']);
+const MAX_BYTES = 60 * 1024 * 1024;
+
+// Asc.c_oAscFileType.PDF, the same number the format-parity spec reaches
+// through the embed API's targetExt.
+const PDF_FORMAT_CODE = 513;
+
+const SAVE_TARGET: Record<string, string> = {
+  '.docx': 'DOCX',
+  '.doc': 'DOCX',
+  '.xlsx': 'XLSX',
+  '.xls': 'XLSX',
+  '.pptx': 'PPTX',
+  '.ppt': 'PPTX',
+  '.csv': 'CSV',
+};
+
+function collectCorpus(root: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string, depth: number) => {
+    if (depth > 4) return;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of entries) {
+      if (name === 'node_modules' || name === 'code' || name.startsWith('.')) continue;
+      const p = join(dir, name);
+      let st;
+      try {
+        st = statSync(p);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) walk(p, depth + 1);
+      else if (SUPPORTED.has(extname(name).toLowerCase()) && st.size > 0 && st.size <= MAX_BYTES) out.push(p);
+    }
+  };
+  walk(root, 0);
+  return out.filter((p) => (!FILTER || FILTER.test(p)) && !(EXCLUDE && EXCLUDE.test(p))).sort();
+}
+
+type Row = {
+  file: string;
+  sizeKB: number;
+  open: string;
+  edit: string;
+  save: string;
+  // Second save after the keyboard edit (L1 only).
+  saveEdited: string;
+  // L2 content check (spreadsheets only): sheet names + first-sheet cell count
+  // of the input vs the saved output, parsed in-page with SheetJS.
+  content: string;
+  // L3 (opt-in): pixel diff between the rendering of the original and of the
+  // saved output, both re-opened readonly.
+  visual: string;
+  // CORPUS_DEEP: PDF export of the pristine document, and whether a runtime
+  // readonly lock actually refuses a save.
+  exportPdf: string;
+  readonly: string;
+  ascErrors: unknown[];
+  fatalDialog: string | null;
+  ms: number;
+};
+const rows: Row[] = [];
+
+const allFiles = CORPUS_DIR ? collectCorpus(CORPUS_DIR) : [];
+const files = allFiles.slice(0, LIMIT);
+if (allFiles.length > files.length) {
+  console.log(
+    `CORPUS: CORPUS_LIMIT=${LIMIT} keeps ${files.length} of ${allFiles.length} files (${allFiles.length - files.length} dropped)`,
+  );
+}
+
+test.describe('real-document corpus matrix', () => {
+  test.skip(!CORPUS_DIR, 'CORPUS_DIR not set — corpus matrix is a local/nightly suite');
+  test.describe.configure({ timeout: 300_000 });
+
+  // Every row is appended as soon as its test finishes (JSON lines, one file
+  // per worker): an afterAll write was observed to go missing when Playwright
+  // restarted a worker after a failure. bin/corpus-report.mjs merges them.
+  test.afterEach(() => {
+    const row = rows[rows.length - 1];
+    if (!row || (row as Row & { __written?: boolean }).__written) return;
+    (row as Row & { __written?: boolean }).__written = true;
+    // Mirrors playwright.config.ts outputDir (isolated per E2E_PORT).
+    const dir = process.env.E2E_PORT ? `test-results-${process.env.E2E_PORT}` : 'test-results';
+    mkdirSync(dir, { recursive: true });
+    const { __written: _w, ...clean } = row as Row & { __written?: boolean };
+    appendFileSync(
+      `${dir}/corpus-rows-${test.info().workerIndex}.jsonl`,
+      JSON.stringify({ corpusDir: CORPUS_DIR, total: allFiles.length, kept: files.length, row: clean }) + '\n',
+    );
+  });
+
+  test.afterAll(() => {
+    if (!rows.length) return;
+    const bad = rows.filter(
+      (r) =>
+        !r.open.startsWith('ok') ||
+        r.edit === 'fatal' ||
+        r.save.startsWith('fail') ||
+        r.saveEdited.startsWith('fail') ||
+        r.content.startsWith('fail') ||
+        r.visual.startsWith('fail') ||
+        r.exportPdf.startsWith('fail') ||
+        r.readonly.startsWith('fail') ||
+        r.ascErrors.length > 0 ||
+        r.fatalDialog,
+    );
+    console.log(`\nCORPUS SUMMARY (this worker): ${rows.length} files, ${bad.length} with findings`);
+    for (const r of bad) {
+      console.log(
+        `  FINDING ${r.file}: open=${r.open} edit=${r.edit} save=${r.save} saveEdited=${r.saveEdited} content=${r.content} visual=${r.visual} pdf=${r.exportPdf} readonly=${r.readonly} ascErrors=${JSON.stringify(r.ascErrors).slice(0, 120)} dialog=${r.fatalDialog}`,
+      );
+    }
+  });
+
+  for (const [index, filePath] of files.entries()) {
+    const name = basename(filePath);
+    const ext = extname(filePath).toLowerCase();
+
+    // Index prefix keeps titles unique when the same filename exists in
+    // several corpus folders.
+    test(`corpus #${index}: ${name}`, async ({ page }) => {
+      const t0 = Date.now();
+      const row: Row = {
+        file: filePath,
+        sizeKB: Math.round(statSync(filePath).size / 1024),
+        open: 'pending',
+        edit: 'skipped',
+        save: 'skipped',
+        saveEdited: 'skipped',
+        content: 'n/a',
+        visual: 'n/a',
+        exportPdf: DEEP ? 'pending' : 'n/a',
+        readonly: DEEP ? 'pending' : 'n/a',
+        ascErrors: [],
+        fatalDialog: null,
+        ms: 0,
+      };
+      rows.push(row);
+
+      // L2 for word/slide OOXML inputs: text of the input vs the saved output
+      // (Node side; the page hands over base64). Capped to keep the transfer
+      // sane; bigger files report "skipped".
+      await page.exposeFunction('__corpusTextCoverage', async (inB64: string, outB64: string) => {
+        const before = await ooxmlDocumentText(new Uint8Array(Buffer.from(inB64, 'base64')));
+        const after = await ooxmlDocumentText(new Uint8Array(Buffer.from(outB64, 'base64')));
+        return { ...textCoverage(before, after), inLen: before.length, outLen: after.length };
+      });
+
+      await page.goto('/embed-demo.html');
+      await expect(page.locator('#status')).toHaveText('ready', { timeout: 60_000 });
+
+      // ---- open ----
+      // Hand the real File to the demo page's own <input type=file> and open
+      // it through document:open-file: no network hop, real filename, no
+      // 60 MB base64 round trip. The first harness served the bytes over
+      // page.route(), which the app's service worker silently bypassed once
+      // it controlled the page: the route never fired, vite preview answered
+      // with the SPA index.html and x2t was fed 20 KB of HTML (abort on the
+      // stubbed HTML importer). That, not the documents, produced the
+      // "25/25 fail" and the filename red herring of campaign day 1.
+      await page.setInputFiles('#fileInput', filePath);
+      const opened = await page.evaluate(async () => {
+        const input = document.getElementById('fileInput') as HTMLInputElement;
+        const file = input.files && input.files[0];
+        if (!file) return { ok: false, error: 'file input is empty' };
+        try {
+          await Promise.race([
+            post('document:open-file', { file, readonly: false }),
+            new Promise<never>((_, rej) => setTimeout(() => rej(new Error('open timed out (120s)')), 120_000)),
+          ]);
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, error: String((e as Error).message || e) };
+        }
+      });
+      if (!opened.ok) {
+        row.open = `fail: ${opened.error}`;
+        row.ms = Date.now() - t0;
+        expect(opened.ok, `open failed: ${opened.error}`).toBe(true);
+        return;
+      }
+
+      // Register error listeners, then gate on the REAL load-complete signal:
+      // document:opened only means the editor was constructed. The corpus's
+      // first finding was a deck stuck on "Loading presentation" forever
+      // while the embed promise had long resolved.
+      const load = await page.evaluate(async () => {
+        const w = window as any;
+        w.__ascErrors = [];
+        // Only the innermost SDK instance (Asc.editor inside the editor
+        // frame) carries isDocumentLoadComplete; the app-level `window.editor`
+        // one frame up is the DocEditor wrapper and must not be mistaken for
+        // it.
+        const visit = (): any =>
+          (
+            window.__ooFrames.find((win) => {
+              const api = (win as any).Asc?.editor;
+              return api && typeof api.asc_registerCallback === 'function' && 'isDocumentLoadComplete' in api;
+            }) as any
+          )?.Asc.editor ?? null;
+        const t = Date.now();
+        let api = visit();
+        while (!api && Date.now() - t < 60_000) {
+          await new Promise((r) => setTimeout(r, 500));
+          api = visit();
+        }
+        if (!api) return { loaded: false, loadMs: Date.now() - t, reason: 'editor api never appeared' };
+        w.__corpusApi = true;
+        api.asc_registerCallback('asc_onError', (id: unknown, level: unknown) => {
+          w.__ascErrors.push({ id: String(id), level: String(level) });
+        });
+        // Both flags: an asc_DownloadAs fired before isLoadFullApi is
+        // silently dropped by the SDK (the app's triggerPersonalDownloadAs
+        // gates on the same pair) -- the first corpus save run timed out
+        // on every large deck for exactly that reason.
+        const fatalAsc = () => w.__ascErrors.some((e: { level: string }) => e.level === '-1');
+        while (!(api.isDocumentLoadComplete && api.isLoadFullApi) && !fatalAsc() && Date.now() - t < 180_000) {
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        if (fatalAsc()) {
+          return {
+            loaded: false,
+            loadMs: Date.now() - t,
+            reason: `critical asc_onError ${JSON.stringify(w.__ascErrors)}`,
+          };
+        }
+        if (!(api.isDocumentLoadComplete && api.isLoadFullApi))
+          return {
+            loaded: false,
+            loadMs: Date.now() - t,
+            reason: `not ready after 180s (isDocumentLoadComplete=${String(api.isDocumentLoadComplete)}, isLoadFullApi=${String(api.isLoadFullApi)}, docLoadStarted=${String(api.isDocumentLoadStarted ?? 'n/a')})`,
+          };
+        await new Promise((r) => setTimeout(r, 4000));
+        return { loaded: true, loadMs: Date.now() - t };
+      });
+
+      const findFatalDialog = () =>
+        page.evaluate(() => {
+          let text: string | null = null;
+          window.__ooFrames.find((win) => {
+            for (const el of Array.from(win.document.querySelectorAll('.asc-window, .modal, [role="dialog"]'))) {
+              const he = el as HTMLElement;
+              if (
+                he.offsetParent !== null &&
+                /error occurred during the work|与文档工作|критическ/i.test(he.textContent || '')
+              ) {
+                text = (he.textContent || '').trim().slice(0, 160);
+                return true;
+              }
+            }
+            return false;
+          });
+          return text;
+        });
+
+      row.fatalDialog = await findFatalDialog();
+      row.open = row.fatalDialog
+        ? 'fatal-dialog-on-open'
+        : load.loaded
+          ? `ok (load ${Math.round(load.loadMs / 1000)}s)`
+          : `fail: ${(load as { reason?: string }).reason}`;
+
+      // ---- save (direct editor API + file-stream listener; the embed
+      //      post() helper caps at 200s which can still be too short for big decks
+      //      and hides slow-vs-hung). Done TWICE: first pristine (right after
+      //      load: L1 + L2 content + bytes for L3), then again after the
+      //      keyboard edit (L1 only -- the edit itself changes content, e.g. a
+      //      double-click in a slide selects a word that the typed "QA"
+      //      replaces, which is not a save defect).
+      const targetCode = { DOCX: 65, XLSX: 257, PPTX: 129, CSV: 257 }[SAVE_TARGET[ext]] as number;
+      const runSave = (withChecks: boolean, code: number = targetCode) =>
+        page.evaluate(
+          async ({ code, spreadsheet, ooxmlText, withChecks }) => {
+            const started = Date.now();
+            try {
+              // Export bytes belong to the editor's immediate host. Use a
+              // realm-independent buffer check for the nested app window.
+              const saveWin = window.__ooFrames.find((win) => {
+                const api = (win as any).Asc?.editor || (win as any).editor;
+                return typeof api?.asc_DownloadAs === 'function';
+              }) as any;
+              const found = saveWin ? { api: saveWin.Asc?.editor || saveWin.editor, win: saveWin } : null;
+              if (!found) return { ok: false, ms: 0, error: 'no editor api for save' };
+              if (!(found.api.isDocumentLoadComplete && found.api.isLoadFullApi)) {
+                return { ok: false, ms: 0, error: 'editor lost readiness before save' };
+              }
+              const isArrayBuffer = (v: unknown) => Object.prototype.toString.call(v) === '[object ArrayBuffer]';
+              const streamPromise = new Promise<{
+                size: number;
+                isZip: boolean;
+                magic: string;
+                bytes: Uint8Array;
+              }>((resolve) => {
+                const onMsg = (e: MessageEvent) => {
+                  const d = e.data;
+                  if (d && d.type === 'onlyoffice-file-stream' && isArrayBuffer(d.buffer)) {
+                    found.win.parent.removeEventListener('message', onMsg);
+                    const b = new Uint8Array(d.buffer);
+                    resolve({
+                      size: b.byteLength,
+                      isZip: b[0] === 0x50 && b[1] === 0x4b,
+                      magic: String.fromCharCode(...Array.from(b.subarray(0, 5))),
+                      bytes: b,
+                    });
+                  }
+                };
+                found.win.parent.addEventListener('message', onMsg);
+              });
+              found.api.asc_DownloadAs(new found.win.Asc.asc_CDownloadOptions(code));
+              const out = await Promise.race([
+                streamPromise,
+                new Promise<never>((_, rej) => setTimeout(() => rej(new Error('save timed out (180s)')), 180_000)),
+              ]);
+              if (withChecks) (window as any).__corpusSaved = out.bytes;
+              // L2 for spreadsheets: parse input and output with SheetJS and
+              // compare sheet names + non-empty cell count of the first sheet.
+              let content = 'n/a';
+              if (spreadsheet) {
+                try {
+                  const XLSX = (window as any).XLSX;
+                  const input = (document.getElementById('fileInput') as HTMLInputElement).files![0];
+                  const inWb = XLSX.read(new Uint8Array(await input.arrayBuffer()), { type: 'array' });
+                  const outWb = XLSX.read(out.bytes, { type: 'array' });
+                  const cells = (wb: any) => {
+                    const ws = wb.Sheets[wb.SheetNames[0]];
+                    return ws
+                      ? Object.keys(ws).filter((k) => k[0] !== '!' && ws[k].v !== '' && ws[k].v !== undefined).length
+                      : 0;
+                  };
+                  const inNames = inWb.SheetNames.join('|');
+                  const outNames = outWb.SheetNames.join('|');
+                  const inCells = cells(inWb);
+                  const outCells = cells(outWb);
+                  const sameNames = inNames === outNames;
+                  // The keyboard edit adds "QA" (1 cell) and the editor may
+                  // materialize formula results; only a loss is a finding.
+                  const lost = outCells < inCells;
+                  content =
+                    sameNames && !lost
+                      ? `ok (sheets ${outWb.SheetNames.length}, cells ${inCells}->${outCells})`
+                      : `fail: ${sameNames ? '' : `sheets ${inNames} -> ${outNames}; `}cells ${inCells}->${outCells}`;
+                } catch (e) {
+                  content = `inconclusive: ${String((e as Error).message || e).slice(0, 80)}`;
+                }
+              }
+              if (ooxmlText && out.isZip) {
+                try {
+                  const input = (document.getElementById('fileInput') as HTMLInputElement).files![0];
+                  if (input.size > 20 * 1024 * 1024) {
+                    content = 'skipped (input > 20MB)';
+                  } else {
+                    const toB64 = (u8: Uint8Array) => {
+                      let s = '';
+                      for (let i = 0; i < u8.length; i += 0x8000)
+                        s += String.fromCharCode.apply(null, Array.from(u8.subarray(i, i + 0x8000)));
+                      return btoa(s);
+                    };
+                    const inB64 = toB64(new Uint8Array(await input.arrayBuffer()));
+                    const cov = await (window as any).__corpusTextCoverage(inB64, toB64(out.bytes));
+                    content =
+                      cov.coverage >= 0.98
+                        ? `ok (text ${(cov.coverage * 100).toFixed(1)}% of ${cov.shingles} shingles, ${cov.inLen}->${cov.outLen} chars)`
+                        : `fail: text coverage ${(cov.coverage * 100).toFixed(1)}% (${cov.inLen}->${cov.outLen} chars)`;
+                  }
+                } catch (e) {
+                  content = `inconclusive: ${String((e as Error).message || e).slice(0, 80)}`;
+                }
+              }
+              return {
+                ok: true,
+                ms: Date.now() - started,
+                size: out.size,
+                isZip: out.isZip,
+                magic: out.magic,
+                content,
+              };
+            } catch (e) {
+              return { ok: false, ms: Date.now() - started, error: String((e as Error).message || e) };
+            }
+          },
+          {
+            code,
+            spreadsheet: withChecks && (ext === '.xlsx' || ext === '.xls' || ext === '.csv'),
+            // Only OOXML inputs can be text-compared (legacy .doc/.ppt bytes have no parts to read).
+            ooxmlText: withChecks && (ext === '.docx' || ext === '.pptx'),
+            withChecks,
+          },
+        );
+
+      if (!row.fatalDialog && load.loaded) {
+        const saved = await runSave(true);
+        if (saved.ok) {
+          row.save = saved.isZip
+            ? `ok (${saved.ms}ms, ${Math.round((saved.size || 0) / 1024)}KB)`
+            : 'fail: output not a zip container';
+          row.content = saved.content || 'n/a';
+        } else {
+          row.save = `fail: ${saved.error}`;
+        }
+        row.fatalDialog = row.fatalDialog || (await findFatalDialog());
+      }
+
+      // ---- export to PDF (CORPUS_DEEP) ----
+      // The canvas render path, on documents nothing else in the suite can
+      // reach: a .doc or .ppt has no synthetic equivalent, so this is the only
+      // place their export is exercised at all. Reuses the loaded document, so
+      // the cost is one more save rather than another open.
+      if (DEEP && !row.fatalDialog && load.loaded) {
+        const pdf = await runSave(false, PDF_FORMAT_CODE);
+        row.exportPdf = pdf.ok
+          ? pdf.magic === '%PDF-'
+            ? `ok (${pdf.ms}ms, ${Math.round((pdf.size || 0) / 1024)}KB)`
+            : `fail: not a PDF (magic ${JSON.stringify(pdf.magic)}, ${pdf.size}B)`
+          : `fail: ${pdf.error}`;
+        row.fatalDialog = row.fatalDialog || (await findFatalDialog());
+      }
+
+      // ---- runtime readonly (CORPUS_DEEP) ----
+      // Locking has to actually refuse a save, and unlocking has to give the
+      // document back. Both directions matter: a lock that does not hold loses
+      // the guarantee, and a lock that will not lift strands the document.
+      if (DEEP && !row.fatalDialog && load.loaded) {
+        row.readonly = await page.evaluate(async () => {
+          try {
+            await post('document:set-readonly', { readonly: true });
+            const state = await post('document:get-state', {});
+            if (!state.readonly) return 'fail: set-readonly reported not readonly';
+            let refused = false;
+            try {
+              await post('document:save', {});
+            } catch {
+              refused = true;
+            }
+            await post('document:set-readonly', { readonly: false });
+            const back = await post('document:get-state', {});
+            if (back.readonly) return 'fail: still readonly after unlocking';
+            return refused ? 'ok' : 'fail: save went through while locked';
+          } catch (e) {
+            return `inconclusive: ${String((e as Error).message || e).slice(0, 80)}`;
+          }
+        });
+        row.fatalDialog = row.fatalDialog || (await findFatalDialog());
+      }
+
+      // ---- edit (trusted input; the real-PPTX fatal error fired on edit) ----
+      if (!row.fatalDialog && load.loaded) {
+        try {
+          const editorFrame = page.frameLocator('iframe').frameLocator('iframe[name="frameEditor"]');
+          const sdk = editorFrame.locator('#editor_sdk');
+          await sdk.waitFor({ state: 'visible', timeout: 15_000 });
+          if (ext === '.pptx' || ext === '.ppt') {
+            await sdk.dblclick({ position: { x: 400, y: 300 }, timeout: 10_000 });
+          } else {
+            await sdk.click({ position: { x: 400, y: 300 }, timeout: 10_000 });
+          }
+          await page.keyboard.type('QA', { delay: 100 });
+          await page.waitForTimeout(3000);
+          row.fatalDialog = await findFatalDialog();
+          row.edit = row.fatalDialog ? 'fatal' : 'ok';
+        } catch (e) {
+          row.edit = `inconclusive: ${String((e as Error).message).slice(0, 80)}`;
+        }
+      }
+
+      // ---- save again after the edit (L1) ----
+      if (!row.fatalDialog && load.loaded && row.edit === 'ok') {
+        const saved = await runSave(false);
+        row.saveEdited = saved.ok
+          ? saved.isZip
+            ? `ok (${saved.ms}ms, ${Math.round((saved.size || 0) / 1024)}KB)`
+            : 'fail: output not a zip container'
+          : `fail: ${saved.error}`;
+        row.fatalDialog = row.fatalDialog || (await findFatalDialog());
+      }
+
+      // ---- visual (opt-in L3) ----
+      if (VISUAL && row.save.startsWith('ok') && !row.fatalDialog) {
+        try {
+          const sdk = page.frameLocator('iframe').frameLocator('iframe[name="frameEditor"]').locator('#editor_sdk');
+          await page.evaluate(async () => {
+            const input = document.getElementById('fileInput') as HTMLInputElement;
+            await post('document:open-file', { file: input.files![0], readonly: true });
+          });
+          await sdk.waitFor({ state: 'visible', timeout: 60_000 });
+          await settleEditor(page);
+          const shotA = await sdk.screenshot();
+          await page.evaluate(
+            async (fileName) => {
+              const bytes = (window as any).__corpusSaved as Uint8Array;
+              await post('document:open-buffer', { fileName, buffer: bytes.buffer, readonly: true });
+            },
+            name.replace(
+              /\.(doc|xls|ppt|csv)$/i,
+              (m) => ({ '.doc': '.docx', '.xls': '.xlsx', '.ppt': '.pptx', '.csv': '.xlsx' })[m.toLowerCase()] || m,
+            ),
+          );
+          await sdk.waitFor({ state: 'visible', timeout: 60_000 });
+          await settleEditor(page);
+          const shotB = await sdk.screenshot();
+          const d = await pixelDiff(page, shotA, shotB);
+          // Legacy binary inputs (.doc/.ppt/.xls) come back as OOXML: the
+          // re-render legitimately differs a little (line spacing/autofit
+          // after conversion, verified by eye on POI .ppt samples), so their
+          // threshold is looser and the row says so.
+          const legacy = ext === '.doc' || ext === '.ppt' || ext === '.xls';
+          const threshold = legacy ? 10 : 0.5;
+          const visualOk = d.sizeSame && d.differingPct < threshold;
+          row.visual = visualOk
+            ? `ok${legacy ? '-legacy' : ''} (${d.differingPct.toFixed(3)}%, ink ${d.nonWhitePct.toFixed(1)}%)`
+            : `fail: ${d.differingPct.toFixed(3)}% differing (${d.w}x${d.h}, sizeSame=${d.sizeSame})`;
+          if (!visualOk) {
+            // Keep both renderings next to the report so a reviewer can judge
+            // the difference (conversion artifact vs real damage).
+            const dir = process.env.E2E_PORT ? `test-results-${process.env.E2E_PORT}` : 'test-results';
+            const stem = `${dir}/visual-${index}-${name.replace(/[^\w.-]+/g, '_')}`;
+            await test.info().attach('visual-original', { body: shotA, contentType: 'image/png' });
+            await test.info().attach('visual-resaved', { body: shotB, contentType: 'image/png' });
+            writeFileSync(`${stem}-original.png`, shotA);
+            writeFileSync(`${stem}-resaved.png`, shotB);
+          }
+        } catch (e) {
+          row.visual = `inconclusive: ${String((e as Error).message || e).slice(0, 80)}`;
+        }
+      }
+
+      row.ascErrors = await page.evaluate(() => (window as any).__ascErrors || []);
+      row.ms = Date.now() - t0;
+
+      expect(row.fatalDialog, `fatal document-error dialog appeared: ${row.fatalDialog}`).toBeNull();
+      expect(row.ascErrors, `asc_onError fired: ${JSON.stringify(row.ascErrors)}`).toEqual([]);
+      expect(row.open.startsWith('ok'), `open result: ${row.open}`).toBe(true);
+      expect(row.save.startsWith('ok'), `save result: ${row.save}`).toBe(true);
+      expect(row.exportPdf.startsWith('fail'), `pdf export result: ${row.exportPdf}`).toBe(false);
+      expect(row.readonly.startsWith('fail'), `readonly result: ${row.readonly}`).toBe(false);
+    });
+  }
+});

@@ -1,0 +1,60 @@
+import { ciTestMatch } from './bin/ci-shards.mjs';
+import { playwrightArtifacts } from './bin/ci-artifacts.mjs';
+import { defineConfig, devices } from '@playwright/test';
+
+// Runs the SAME e2e suite (test/e2e) against the production Docker image
+// instead of the vite preview server, proving the container serves the full
+// editor correctly end to end (static-web-server file serving, the gzipped
+// x2t WASM, extensionless indexed fonts, the embed save round-trip...).
+//
+// The image must exist as `document:e2e` before the run -- use
+// `pnpm run test:e2e:docker`, which builds it first, or build manually with
+// `pnpm run docker:build`.
+// Marks the run as the containerised one: docker-cache-headers.spec.ts checks
+// the image's own cache-control contract (sws.toml) and must not run against
+// the vite preview server, which serves different headers.
+process.env.E2E_DOCKER = '1';
+
+export default defineConfig({
+  testDir: 'test/e2e',
+  // No `@serial`: this suite proves the image serves the app, not what the
+  // font system costs. Re-measuring a wall-clock budget inside a container
+  // adds noise, not signal -- and the cases run in parallel here anyway.
+  // Declared in the config rather than passed on the CI command line, so a
+  // local `pnpm run test:e2e:docker` means the same thing CI does.
+  grepInvert: /@serial/,
+  timeout: 120_000,
+  expect: {
+    timeout: 10_000,
+  },
+  fullyParallel: true,
+  ...playwrightArtifacts('playwright-report-docker', 'test-results-docker'),
+  ...ciTestMatch('preview'),
+  use: {
+    baseURL: 'http://127.0.0.1:8090',
+    // Exercise an untrustworthy HTTP origin too: localhost would conceal
+    // Chrome's refusal to decode Brotli on plain HTTP self-hosting (#267).
+    launchOptions: {
+      args: ['--host-resolver-rules=MAP document-http.test 127.0.0.1', '--no-proxy-server'],
+    },
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+  },
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 900 } },
+    },
+  ],
+  webServer: {
+    // Foreground `docker run` so Playwright owns the lifecycle. The kill it
+    // sends on shutdown does not always reach the container, so the wrapper
+    // (bin/test-e2e-docker.sh) and CI both force-remove the container --
+    // never reuse one, or a stale image could be served silently.
+    command: 'docker run --rm --name document-e2e-docker -p 8090:80 document:e2e',
+    url: 'http://127.0.0.1:8090',
+    reuseExistingServer: false,
+    timeout: 60_000,
+  },
+});

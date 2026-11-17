@@ -1,0 +1,584 @@
+/* /history -- the local document library.
+ *
+ * ranui tokens only, and the same measurements the landing pages use: this is
+ * as much the product's face as they are (CLAUDE.md convention 4), and a page
+ * that sets its own spacing scale reads as a different product.
+ *
+ * The layout is a table without being a <table>: one grid, five columns, so
+ * every row's name, age, size and expiry line up down the page. Alignment is
+ * what makes a list of files legible -- with each row free-flowing, the eye has
+ * to re-find the same fact in a new place on every line.
+ */
+/* The bar is shared chrome (landing.css); the page's own column starts below it.
+
+   The list used to sit alone in the 720px reading column, because at 1152 it
+   was mostly air -- 236px of dead space between a file name and the first
+   figure. It now takes the site's wide frame for the same reason the content
+   pages do: there is something to put in that space. The list keeps a reading
+   column and the rail beside it holds everything that is about the feature
+   rather than about one document. */
+.history-shell {
+  max-width: 1152px;
+  margin: 0 auto;
+  padding: var(--ran-space-10) clamp(20px, 5vw, 56px) var(--ran-space-24);
+  display: grid;
+  gap: var(--ran-space-10);
+}
+.history-page {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ran-space-8);
+}
+@media (min-width: 1081px) {
+  .history-shell {
+    grid-template-columns: minmax(0, 660px) minmax(0, 284px);
+    justify-content: center;
+    gap: clamp(40px, 5vw, 96px);
+  }
+  /* Unlike an article page's rail, this one holds controls, so it never
+     disappears -- below the breakpoint it simply falls under the list, which
+     is where it lived before. */
+  .history-rail {
+    position: sticky;
+    top: var(--ran-space-8);
+    align-self: start;
+  }
+}
+.history-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ran-space-6);
+  min-width: 0;
+}
+.history-rail-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ran-space-3);
+  padding-top: var(--ran-space-4);
+  border-top: 1px solid var(--ran-color-border);
+}
+.history-rail-label {
+  font: 600 var(--ran-text-label-3)/1 var(--ran-font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ran-color-text-secondary);
+}
+
+/* ---- header ---- */
+
+.history-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ran-space-3);
+}
+/* The homepage's badge, same recipe: bordered pill on the page background, no
+   fill, mono at 12px, a live dot in the success colour. */
+.history-chip {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ran-space-2);
+  padding: var(--ran-space-1) var(--ran-space-3);
+  border-radius: var(--ran-radius-full);
+  box-shadow: 0 0 0 1px var(--ran-color-border);
+  font: 500 var(--ran-text-label-3)/1.8 var(--ran-font-mono);
+  color: var(--ran-color-text-secondary);
+}
+.history-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--ran-radius-full);
+  background: var(--ran-color-success);
+}
+
+.history-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ran-space-6);
+  flex-wrap: wrap;
+}
+/* The site's page title: same size, weight and tracking as every other h1
+   (landing.css sets these on the satellites; matching them by hand here is the
+   one thing that cannot be shared, since this page's h1 is built in JS). */
+.history-title {
+  margin: 0;
+  font-size: clamp(28px, 4vw, 40px);
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+}
+.history-header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--ran-space-4);
+}
+.history-intro {
+  margin: 0;
+  /* 60ch lands at roughly 65 characters per line -- the middle of the 45-75
+     range that typography settled on long before the web. The container is
+     wide because of the table; the prose must not follow it out there. */
+  max-width: 60ch;
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-copy-2);
+}
+
+/* Autosave switch: a real control, not a bare checkbox dropped on the page. */
+.history-autosave {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ran-space-2);
+  font-size: var(--ran-text-label-1);
+  color: var(--ran-color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.history-switch {
+  appearance: none;
+  margin: 0;
+  width: 36px;
+  height: 20px;
+  border-radius: var(--ran-radius-full);
+  background: var(--ran-color-bg-muted);
+  border: 1px solid var(--ran-color-border);
+  position: relative;
+  cursor: pointer;
+  /* The track's fill is a palette property, so it snaps on a theme flip; the
+     knob's transform still animates (DESIGN.md §5). */
+  --history-switch-transition: none;
+  transition: var(--history-switch-transition);
+}
+.history-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--ran-radius-full);
+  background: var(--ran-color-bg-elevated);
+  box-shadow: var(--ran-shadow-elevated);
+  transition: transform var(--ran-motion-duration-fast, 120ms) ease;
+}
+.history-switch:checked {
+  background: var(--ran-color-primary);
+  border-color: var(--ran-color-primary);
+}
+.history-switch:checked::after {
+  transform: translateX(16px);
+}
+.history-switch:focus-visible {
+  outline: 2px solid var(--ran-color-link);
+  outline-offset: 2px;
+}
+
+/* Button scale. Two sizes, and which one to use is decided by what the button
+   acts on, not by where it happens to sit: a page-level action (open the
+   editor, delete everything) is the same 42px as a landing-page CTA, while an
+   action that belongs to one row of a table is smaller so a list of them does
+   not read as a stack of calls to action. Same split as the component libraries
+   (Ant's `size`, Material's density) -- the point is that it is a rule, not a
+   value picked per page. */
+.history-header-actions r-button::part(content),
+.history-empty-action::part(content) {
+  min-height: max(var(--app-control-page), var(--app-control-height));
+  box-sizing: border-box;
+  padding: var(--ran-space-2) var(--ran-space-4);
+  font-size: var(--ran-text-copy-2);
+  font-weight: 600;
+}
+.history-row-actions r-button::part(content) {
+  min-height: var(--app-control-height);
+  padding: var(--ran-space-1) var(--ran-space-3);
+  font-size: var(--ran-text-label-1);
+}
+
+/* ---- toolbar ---- */
+
+.history-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--ran-space-4);
+  flex-wrap: wrap;
+}
+.history-search {
+  /* Bounded: a search box stretched across the page implies long queries and
+     leaves the controls beside it looking stranded. */
+  width: 320px;
+  max-width: 100%;
+}
+.history-usage {
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-2);
+  font-family: var(--ran-font-mono);
+}
+
+/* ---- list ---- */
+
+/* Rules, not a container: one hairline per row is all the separation a list of
+   files needs, and it is the same device the homepage's format index and the
+   FAQ use. A bordered, filled panel around the whole thing made the list read
+   as a widget dropped onto the page. The hover ground still extends past the
+   text into the gutter, so a row lights up as a band. */
+.history-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--ran-color-border);
+}
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ran-space-4);
+  padding: var(--ran-space-3);
+  margin: 0 calc(-1 * var(--ran-space-3));
+  border-bottom: 1px solid var(--ran-color-border);
+  border-radius: var(--ran-radius-sm);
+}
+.history-row:hover {
+  background: var(--ran-color-bg-hover);
+}
+
+/* The file kind, as a mark rather than an extension buried in the name: it is
+   the fastest thing to scan down a list of documents, and it is the one column
+   a table would have got right. */
+.history-kind {
+  flex-shrink: 0;
+  width: 46px;
+  /* A stamp, not a badge: the boxed version put a third bordered object in
+     every row next to the file name and the status dot. */
+  color: var(--ran-color-text-secondary);
+  /* Mono is for stamping, not for reading: a file kind is a machine fact, and
+     it is the one thing scanned down the whole column. */
+  font-family: var(--ran-font-mono);
+  font-size: var(--ran-text-label-3);
+  line-height: 14px;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+.history-row-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--ran-space-1) / 2);
+}
+.history-row-title-line {
+  display: flex;
+  align-items: center;
+  gap: var(--ran-space-2);
+  min-width: 0;
+}
+/* The title is the row's action: one target per row, reachable by keyboard and
+   openable in a new tab, instead of a button repeated down the page. A column
+   of primary buttons reads as a column of demands. */
+.history-row-title {
+  color: var(--ran-color-text);
+  font-weight: 500;
+  font-size: var(--ran-text-copy-2);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-row-title:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* One line of facts, separated by generated dots -- as their own elements they
+   could end a wrapped line stranded, and they would read as data in a table
+   this list deliberately is not. */
+.history-row-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--ran-space-2);
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-2);
+}
+.history-row-facts > span:not(:first-child)::before {
+  content: '·';
+  margin-right: var(--ran-space-2);
+  color: var(--ran-color-text-disabled);
+}
+/* A dot and a word, the same device the homepage chip uses. A dot carries a
+   state in a way a grey pill cannot: this row holds the only copy of that
+   work, which is the whole reason the list exists. */
+.history-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ran-space-1);
+  flex-shrink: 0;
+  color: var(--ran-color-text-disabled);
+  font-size: var(--ran-text-label-3);
+  white-space: nowrap;
+}
+.history-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--ran-radius-full);
+  background: var(--ran-color-warning);
+  /* A ring rather than a hard edge, so the dot reads as lit rather than drawn. */
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ran-color-warning) 22%, transparent);
+}
+.history-row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ran-space-2);
+  flex-shrink: 0;
+}
+/* Available, not offered: visible enough to find, quiet enough that a list of
+   documents does not read as a list of things to delete. Opacity rather than
+   display, so it keeps its space and nothing shifts on hover -- and it stays
+   fully visible for keyboard users and anyone who cannot hover. */
+.history-download,
+.history-delete {
+  opacity: 0.55;
+  transition: opacity var(--ran-motion-duration-fast, 120ms) ease;
+}
+.history-row:hover .history-download,
+.history-row:hover .history-delete,
+.history-download:focus-within,
+.history-delete:focus-within {
+  opacity: 1;
+}
+.history-download::part(content) {
+  color: var(--ran-color-text-secondary);
+}
+/* The row's two actions are not equals: getting the bytes out is the one
+   people came for, deleting is the one that cannot be undone. Only the
+   destructive one takes a colour, and only once the pointer is on the row. */
+.history-row:hover .history-download::part(content),
+.history-download:focus-within::part(content) {
+  color: var(--ran-color-text);
+}
+@media (hover: none) {
+  .history-download,
+  .history-delete {
+    opacity: 1;
+  }
+}
+
+/* ---- toolbar filter ---- */
+
+/* A pressed-state pill rather than a checkbox: it is a view switch, and it
+   reads as "showing only these" when it is on. */
+.history-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ran-space-2);
+  padding: var(--ran-space-2) var(--ran-space-3);
+  border: 1px solid var(--ran-color-border);
+  border-radius: var(--ran-radius-full);
+  background: transparent;
+  color: var(--ran-color-text-secondary);
+  font-family: inherit;
+  font-size: var(--ran-text-label-2);
+  line-height: 1;
+  /* The search field beside it is a 32px ranui control; without this the pill
+     comes out 31px and the two sit half a pixel apart in the same row. */
+  min-height: var(--app-control-height);
+  cursor: pointer;
+}
+.history-filter:hover {
+  color: var(--ran-color-text);
+  border-color: var(--ran-color-border-hover);
+}
+.history-filter.is-on {
+  background: var(--ran-color-bg-active);
+  border-color: var(--ran-color-border-hover);
+  color: var(--ran-color-text);
+}
+
+/* The last day is the only deadline on this page; until now it was printed in
+   the same grey as the file size. */
+.fact-expiry-urgent {
+  color: var(--ran-color-warning);
+  font-weight: 500;
+}
+
+/* ---- empty, pager, notes ---- */
+
+/* Empty space is a decision, not a gap left where the product thinking should
+   be: it says why the list is empty and offers the one thing to do next. */
+.history-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ran-space-2);
+  padding: var(--ran-space-16) var(--ran-space-6);
+  text-align: center;
+}
+.history-empty-mark {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  margin-bottom: var(--ran-space-2);
+  border-radius: var(--ran-radius-full);
+  background: var(--ran-color-bg-subtle);
+  box-shadow: 0 0 0 1px var(--ran-color-border);
+  color: var(--ran-color-text-secondary);
+}
+.history-empty-title {
+  font-size: var(--ran-text-copy-2);
+  font-weight: 600;
+  color: var(--ran-color-text);
+}
+.history-empty-body {
+  max-width: 44ch;
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-copy-2);
+}
+.history-empty-action {
+  --ran-btn-align-self: center;
+  margin-top: var(--ran-space-2);
+}
+.history-pager {
+  display: flex;
+  gap: var(--ran-space-4);
+  align-items: center;
+  justify-content: center;
+}
+.history-page-info {
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-2);
+  font-variant-numeric: tabular-nums;
+}
+/* Everything that acts on the whole feature rather than on one document: the
+   switch that governs it, the one destructive action, and the two rules they
+   operate under. Below the list, because that is where a decision about all of
+   it belongs -- and because a "delete everything" button next to a search box
+   is a mis-click waiting to happen. */
+.history-note {
+  max-width: 72ch;
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-2);
+  line-height: 1.5;
+}
+.history-note-warn {
+  color: var(--ran-color-warning);
+}
+
+/* ---- narrow screens ---- */
+
+@media (max-width: 640px) {
+  .history-shell {
+    padding: var(--ran-space-8) var(--ran-space-4) var(--ran-space-16);
+    gap: var(--ran-space-8);
+  }
+  .history-page {
+    gap: var(--ran-space-6);
+  }
+  /* Two actions changed this. With only Delete on the row, keeping everything
+     on one line and ellipsising the title was the right trade. Download beside
+     it took so much of a 390px row that the file name -- the thing being
+     looked for -- was down to "Q3 r...". The actions drop to their own line
+     instead, right-aligned under the facts. */
+  .history-row {
+    padding: var(--ran-space-3);
+    gap: var(--ran-space-3);
+    flex-wrap: wrap;
+  }
+  .history-row-actions {
+    flex-basis: 100%;
+    justify-content: flex-end;
+    margin-top: calc(-1 * var(--ran-space-1));
+  }
+  .history-row-main {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .history-row-facts {
+    font-size: var(--ran-text-label-3);
+    /* One line, or the leading separator ends up starting the next one. Size is
+       the fact worth dropping: nobody looks for a document by how big it is. */
+    flex-wrap: nowrap;
+    overflow: hidden;
+  }
+  .history-row-facts .fact-size {
+    display: none;
+  }
+  /* Only the header's text action aligns to the column edge; empty-state
+     primary actions retain balanced horizontal padding. */
+  .history-header-actions r-button::part(content) {
+    min-height: max(var(--app-control-page), var(--app-control-height));
+    box-sizing: border-box;
+    padding-left: 0;
+  }
+  .history-header-actions {
+    margin-left: 0;
+  }
+  .history-search {
+    width: 100%;
+  }
+  .history-usage {
+    font-size: var(--ran-text-label-3);
+  }
+}
+
+/* One focus ring for the whole page, on the token layer's link colour: a page
+   whose actions are a link, a switch and a text button needs them to agree. */
+.history-page :focus-visible {
+  outline: 2px solid var(--ran-color-link);
+  outline-offset: 2px;
+  border-radius: var(--ran-radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .history-row,
+  .history-switch,
+  .history-switch::after {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (pointer: coarse) {
+  .history-autosave {
+    min-height: var(--app-control-touch);
+  }
+  .history-search {
+    --ran-input-min-height: var(--app-control-touch);
+    --ran-input-content-min-height: var(--app-control-touch);
+  }
+}
+
+/* Native destructive triggers share density and typography with row/page
+   commands while retaining a real focus target after confirmation closes. */
+button.history-delete,
+button.history-clear {
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--ran-radius-sm);
+  background: transparent;
+  color: var(--ran-color-text-secondary);
+  font: inherit;
+  font-size: var(--ran-text-label-1);
+  line-height: 1.5;
+  cursor: pointer;
+}
+button.history-delete {
+  min-height: var(--app-control-height);
+  padding: var(--ran-space-1) var(--ran-space-3);
+}
+button.history-clear {
+  min-height: max(var(--app-control-page), var(--app-control-height));
+  padding: var(--ran-space-1) 0;
+}
+.history-row:hover button.history-delete:enabled,
+button.history-delete:focus-visible,
+button.history-clear:hover:enabled,
+button.history-clear:focus-visible {
+  color: var(--app-danger-fill);
+}
+button.history-delete:focus-visible,
+button.history-clear:focus-visible {
+  outline: 2px solid var(--ran-color-link);
+  outline-offset: 2px;
+}
+button.history-delete:disabled,
+button.history-clear:disabled {
+  color: var(--ran-color-text-disabled);
+  cursor: default;
+}

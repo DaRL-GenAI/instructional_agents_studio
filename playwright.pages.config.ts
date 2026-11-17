@@ -1,0 +1,54 @@
+import { ciTestMatch } from './bin/ci-shards.mjs';
+import { playwrightArtifacts } from './bin/ci-artifacts.mjs';
+import { defineConfig } from '@playwright/test';
+import base from './playwright.config';
+
+/**
+ * The same suites against the DEPLOY artifact served with the host's own
+ * semantics: `bin/build.sh` (the real deploy build, not a bare vite build)
+ * served by `wrangler pages dev`, which reproduces Cloudflare Pages'
+ * `/index.html` -> directory 308, `_headers` and `_redirects`. This is the
+ * layer that would have caught "PDF blank on the live site" and "fonts
+ * without a cache rule" before merge. PR CI job `e2e-pages`.
+ *   pnpm exec playwright test -c playwright.pages.config.ts
+ */
+const PORT = Number(process.env.PAGES_PORT || 8788);
+
+// wrangler's workerd has been observed to die mid-run on CI when a browser
+// aborts a large download (sdk-all.js) while several workers hammer it
+// ("kj/async-io-unix.c++ ... Connection reset by peer"), after which every
+// test fails with ECONNREFUSED. Two mitigations: run the suites serially so
+// concurrent aborts don't pile up, and supervise the dev server in a restart
+// loop (bin/serve-pages-dev.sh, which also pins the compatibility date) so a
+// crash costs one retried test instead of the whole job.
+const SERVE = `sh ./bin/serve-pages-dev.sh ${PORT}`;
+
+// The suite's own server can die mid-run: workerd aborts on a large response
+// and bin/serve-pages-dev.sh restarts it (~20 s), while Playwright keeps
+// sending tests -- including the immediate retry of the case that hit the
+// outage. With this set, each test waits for the port to answer first (see
+// waitForServer in test/e2e/lib/l0.ts).
+process.env.E2E_WAIT_FOR_SERVER = '1';
+
+export default defineConfig({
+  ...base,
+  // No `@serial`: this suite proves Cloudflare Pages hosting semantics.
+  // Re-measuring a wall-clock budget behind wrangler adds noise, not signal.
+  // Declared here rather than on the CI command line so a local run of this
+  // config means the same thing CI's does.
+  grepInvert: /@serial/,
+  ...playwrightArtifacts('playwright-report-pages', 'test-results-pages'),
+  ...ciTestMatch('pages'),
+  // CI assigns files by measured total durations. fullyParallel keeps the
+  // same execution semantics; workers: 1 still runs one test at a time.
+  fullyParallel: true,
+  workers: 1,
+  retries: 1,
+  use: { ...base.use, baseURL: `http://127.0.0.1:${PORT}` },
+  webServer: {
+    command: `sh ./bin/build.sh && (${SERVE})`,
+    url: `http://127.0.0.1:${PORT}`,
+    reuseExistingServer: !process.env.CI,
+    timeout: 300_000,
+  },
+});

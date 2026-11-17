@@ -1,0 +1,252 @@
+/**
+ * Tests for the fetch routing rules in public/sw.js.
+ *
+ * sw.js is a non-module service worker file that can't be imported directly,
+ * so we replicate the routing conditions here as a living specification.
+ * If sw.js changes, update both files together.
+ *
+ * The rules guard against two classes of bug found in this project:
+ *   - Font files intercepted by SW → added latency → Chrome "Slow Network"
+ *     intervention → OnlyOffice v7.5 fallback font crash (units_per_EM)
+ *   - Document URLs cached by SW → stale content served to editor
+ */
+
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+const FONT_REGEX = /\.(ttf|woff2?|otf|eot)(\?.*)?$/;
+
+/** Keep in sync with DEPLOY_COUPLED in public/sw.js and the no-cache group in public/_headers. */
+const DEPLOY_COUPLED =
+  /^\/(?:home|landing|app-tokens)\.css$|^\/(?:lang-switch|sw-register|open-local|landing-prefetch|history-recent|theme-presentation)\.js$|^\/ranui-iife\/|^\/libs\/sheetjs\/convert\.worker\.js$/;
+
+const isHtmlRequest = (mode: string, pathname: string): boolean =>
+  mode === 'navigate' || pathname.endsWith('.html') || pathname === '/' || pathname.endsWith('/');
+
+/**
+ * The vendored editor tree, which sw.js serves cache-first. Keep in sync with
+ * VENDOR_ASSET / isVendorAsset there.
+ *
+ * Cache-first is sound only because the runtime cache is named after the vendor
+ * CONTENT: the name changes if and only if a byte under these trees changes, so a
+ * matching cache name implies matching bytes.
+ */
+const VENDOR_ASSET = /^\/(?:sdkjs|web-apps|fonts)\//;
+
+type Strategy = 'cache-first' | 'network-first' | 'stale-while-revalidate';
+
+/** Which strategy sw.js picks, in the same order the fetch handler tests them. */
+function strategyFor(pathname: string, mode = 'no-cors'): Strategy {
+  if (VENDOR_ASSET.test(pathname)) return 'cache-first';
+  return isHtmlRequest(mode, pathname) || DEPLOY_COUPLED.test(pathname) ? 'network-first' : 'stale-while-revalidate';
+}
+
+const ORIGIN = 'http://localhost:5173';
+
+function swShouldHandle(method: string, urlStr: string): boolean {
+  if (method !== 'GET') return false;
+  const url = new URL(urlStr);
+  if (url.origin !== ORIGIN) return false;
+  if (url.pathname.startsWith('/api/')) return false;
+  if (url.searchParams.has('file') || url.searchParams.has('src')) return false;
+  if (FONT_REGEX.test(url.pathname)) return false;
+  if (url.pathname.includes('/sdkjs/common/spell/')) return false;
+  return true;
+}
+
+describe('SW fetch routing', () => {
+  describe('non-GET requests are not handled', () => {
+    it.each(['POST', 'PUT', 'DELETE', 'PATCH'])('%s', (method) => {
+      expect(swShouldHandle(method, `${ORIGIN}/index.html`)).toBe(false);
+    });
+  });
+
+  describe('cross-origin requests are not handled', () => {
+    it('skips external document URL', () => {
+      expect(swShouldHandle('GET', 'https://example.com/doc.docx')).toBe(false);
+    });
+
+    it('skips CDN asset', () => {
+      expect(swShouldHandle('GET', 'https://cdn.example.com/font.ttf')).toBe(false);
+    });
+  });
+
+  describe('document query params bypass the SW cache', () => {
+    it('skips ?src= URLs', () => {
+      expect(swShouldHandle('GET', `${ORIGIN}/?src=https://example.com/doc.docx`)).toBe(false);
+    });
+
+    it('skips ?file= URLs', () => {
+      expect(swShouldHandle('GET', `${ORIGIN}/?file=report.xlsx`)).toBe(false);
+    });
+
+    it('skips URL with both src and other params', () => {
+      expect(swShouldHandle('GET', `${ORIGIN}/?src=doc.docx&readonly=true`)).toBe(false);
+    });
+  });
+
+  describe('font files are not intercepted (crash prevention)', () => {
+    // Intercepting font files adds SW latency which triggers Chrome's
+    // "Slow Network" font-loading intervention. OnlyOffice v7.5 then
+    // crashes with "Cannot read properties of undefined (reading 'units_per_EM')"
+    // in the fallback font code path of slide/word/cell sdk-all.js.
+    it.each([
+      ['/web-apps/apps/common/main/resources/font/ASC.ttf', '.ttf (OnlyOffice internal font)'],
+      ['/fonts/NotoSansTC-VF.ttf', '.ttf (CJK fallback font)'],
+      ['/fonts/LiberationSans-Bold.woff2', '.woff2'],
+      ['/fonts/arial.woff', '.woff'],
+      ['/fonts/symbol.otf', '.otf'],
+      ['/fonts/legacy.eot', '.eot'],
+      ['/fonts/font.ttf?v=123', '.ttf with query string'],
+    ])('%s (%s)', (pathname) => {
+      expect(swShouldHandle('GET', `${ORIGIN}${pathname}`)).toBe(false);
+    });
+  });
+
+  describe('spellchecker engine is not intercepted (cold-profile hang prevention)', () => {
+    // The spell engine is importScripts'd from inside a dedicated worker
+    // during the editor's first boot; routing it through a just-activated SW
+    // hangs forever on a cold profile and leaves every save/export broken.
+    it.each(['/sdkjs/common/spell/spell/spell.js', '/sdkjs/common/spell/spell/spell.wasm'])('%s', (pathname) => {
+      expect(swShouldHandle('GET', `${ORIGIN}${pathname}`)).toBe(false);
+    });
+  });
+
+  describe('font regex matches extensions correctly', () => {
+    it.each(['.ttf', '.woff', '.woff2', '.otf', '.eot'])('matches %s', (ext) => {
+      expect(FONT_REGEX.test(`/fonts/file${ext}`)).toBe(true);
+    });
+
+    it('does not match .ttfx', () => {
+      expect(FONT_REGEX.test('/fonts/file.ttfx')).toBe(false);
+    });
+
+    it('does not match .js or .css', () => {
+      expect(FONT_REGEX.test('/sdk-all.js')).toBe(false);
+      expect(FONT_REGEX.test('/styles.css')).toBe(false);
+    });
+
+    it('matches font extensions embedded in longer paths', () => {
+      expect(FONT_REGEX.test('/web-apps/apps/common/main/resources/font/ASC.ttf')).toBe(true);
+    });
+  });
+
+  describe('same-origin static assets are handled', () => {
+    it.each([
+      `${ORIGIN}/index.html`,
+      `${ORIGIN}/`,
+      `${ORIGIN}/web-apps/apps/api/documents/api.js`,
+      `${ORIGIN}/public/sdkjs/slide/sdk-all.js`,
+      `${ORIGIN}/styles/base.css`,
+      `${ORIGIN}/manifest.json`,
+      `${ORIGIN}/img/64.png`,
+    ])('%s', (url) => {
+      expect(swShouldHandle('GET', url)).toBe(true);
+    });
+  });
+});
+
+/**
+ * Deploy-coupled assets keep a stable filename while their content changes with every
+ * deploy, so they must never be served stale.
+ *
+ * The bug this guards against: stale-while-revalidate returns the cached copy first, so a
+ * deploy that changes a design token renders with the previous one; and because the
+ * background refresh used a plain `fetch`, the browser could answer it from its own HTTP
+ * disk cache and write the stale bytes straight back into the SW cache — the old copy then
+ * survived deploy after deploy (`200 OK (from disk cache)` long after the tokens changed).
+ */
+describe('the hand-copied DEPLOY_COUPLED', () => {
+  it('is the regex the shipped worker actually uses', () => {
+    // The copy above is a living specification, and a specification nothing
+    // compares to the implementation drifts silently: sw.js could lose a path
+    // from the group and every routing test here would stay green, because
+    // they only ever asked the copy. (Observed while reverse-verifying the
+    // 2026-08-20 additions -- reverting sw.js changed nothing.)
+    const src = readFileSync(resolve(__dirname, '../../public/sw.js'), 'utf8');
+    const shipped = /const DEPLOY_COUPLED =\s*(\/.*\/);/.exec(src)?.[1];
+    expect(shipped).toBe(String(DEPLOY_COUPLED));
+  });
+});
+
+describe('deploy-coupled assets use network-first', () => {
+  it('covers the other unhashed, deploy-coupled files', () => {
+    for (const path of [
+      '/home.css',
+      '/landing.css',
+      '/lang-switch.js',
+      '/sw-register.js',
+      // The landing pages' two other stable-named scripts. They were on SWR
+      // for the whole route-split era: editing either shipped a deploy whose
+      // landing pages kept running the previous copy, refilling itself from
+      // the browser's disk cache indefinitely.
+      '/open-local.js',
+      '/landing-prefetch.js',
+      // Reads one history row so the homepage can offer the way back to it.
+      '/history-recent.js',
+      '/ranui-iife/button.iife.js',
+      '/ranui-iife/card.iife.js',
+      // The SheetJS worker's message protocol changes with the app bundle that
+      // posts to it; a stale copy fails the first conversion after a deploy.
+      '/libs/sheetjs/convert.worker.js',
+    ]) {
+      expect(strategyFor(path)).toBe('network-first');
+    }
+  });
+
+  it('leaves hashed build output on stale-while-revalidate — its filename already busts the cache', () => {
+    expect(strategyFor('/assets/index-BX1VO-Oz.css')).toBe('stale-while-revalidate');
+    expect(strategyFor('/assets/lib-CF3G5uGZ.js')).toBe('stale-while-revalidate');
+  });
+
+  it('treats the fingerprinted token layer as immutable, not deploy-coupled', () => {
+    // bin/build.sh renames it to ran-tokens.<hash>.css and rewrites every <link>, so a new
+    // build is a new URL. SWR is then both correct and faster than revalidating each load.
+    expect(strategyFor('/ran-tokens.a1b2c3d4.css')).toBe('stale-while-revalidate');
+  });
+
+  it('still would not serve a bare /ran-tokens.css stale — but the build makes sure none is referenced', () => {
+    // Kept as a tripwire: if a page ever ships pointing at the unhashed name again, the build
+    // fails first (it greps dist/ and exits non-zero), so this path should never be requested.
+    expect(strategyFor('/ran-tokens.css')).toBe('stale-while-revalidate');
+  });
+
+  it('serves the whole OnlyOffice tree cache-first, including its HTML', () => {
+    // SWR revalidated each of these with `cache: 'no-cache'`: measured on a warm
+    // profile, a second open still sent 46 requests for files already cached. The
+    // vendor branch sits ahead of the HTML branch, so the editor's own iframe
+    // document is cache-first too -- sound because the cache name tracks the
+    // vendor content, so a matching name implies matching bytes.
+    expect(strategyFor('/web-apps/apps/documenteditor/main/index.html')).toBe('cache-first');
+    expect(strategyFor('/web-apps/apps/documenteditor/main/index.html', 'navigate')).toBe('cache-first');
+    expect(strategyFor('/sdkjs/word/sdk-all.js')).toBe('cache-first');
+    expect(strategyFor('/web-apps/apps/api/documents/api.js')).toBe('cache-first');
+    // The catalog and the x2t WASM were the first entries on this path, and stay on it.
+    expect(strategyFor('/fonts/103')).toBe('cache-first');
+    expect(strategyFor('/sdkjs/common/wasm/x2t/x2t.wasm.br')).toBe('cache-first');
+    // Patched vendor files are covered too: bin/build.sh hashes what it serves,
+    // so shipping a new x2t_helper.js renames the cache and empties it.
+    expect(strategyFor('/sdkjs/common/wasm/x2t/x2t_helper.js')).toBe('cache-first');
+  });
+
+  it('does not let the vendor branch reach our own app shell', () => {
+    expect(strategyFor('/assets/editor-BX1VO-Oz.js')).toBe('stale-while-revalidate');
+    expect(strategyFor('/ran-fonts/fonts.css')).toBe('stale-while-revalidate');
+    expect(strategyFor('/', 'navigate')).toBe('network-first');
+    expect(strategyFor('/editor.html')).toBe('network-first');
+    // A lookalike outside the vendor trees is a normal asset.
+    expect(strategyFor('/other/fonts/103')).toBe('stale-while-revalidate');
+  });
+
+  it('does not match a lookalike path outside the group', () => {
+    expect(strategyFor('/vendor/ran-tokens.css')).toBe('stale-while-revalidate');
+    expect(strategyFor('/ran-tokens.css.map')).toBe('stale-while-revalidate');
+  });
+
+  it('still treats HTML and navigations as network-first', () => {
+    expect(strategyFor('/', 'navigate')).toBe('network-first');
+    expect(strategyFor('/open/docx')).toBe('stale-while-revalidate'); // extensionless, non-navigate
+    expect(strategyFor('/open/docx', 'navigate')).toBe('network-first');
+  });
+});

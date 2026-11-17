@@ -1,0 +1,694 @@
+# Changelog
+
+User-facing changes to the document editor ([edit.chaxus.com](https://edit.chaxus.com/)).
+Format loosely follows [Keep a Changelog](https://keepachangelog.com/); this
+file is the single source for the site changelog page and GitHub release
+notes. Entries describe what users experience, not internal refactors.
+
+## [Unreleased]
+
+### Removed
+
+- External MCP and Google Drive connections in the AI assistant. Local file
+  references, citations and saved artifacts remain available without account
+  authorization or a connector backend.
+
+### Fixed
+
+- Exporting a PDF or another format keeps unsaved changes in the editable original visible until the original is saved.
+- Failed file opens restore usable file controls, including keyboard access.
+- Document history search keeps focus and ignores outdated results while typing.
+- Chat history conflicts offer an explicit way to keep local copies and restore saved conversations.
+- Dictation reaching its time limit finishes normally and preserves the final recognized words.
+- Spreadsheet conversions run in a background worker where supported, keeping the page responsive and canceling superseded opens.
+- Saving long chat histories avoids repeatedly processing unchanged conversations.
+
+- The language menu no longer flashes open and stretches the page header while
+  the page is still loading.
+- Select lists and the dictation privacy note open above the AI assistant panel
+  instead of behind it.
+- Local references attached while saved chat history is loading remain attached
+  when the conversation finishes restoring.
+- Reloading after a completed save restores the saved document instead of an
+  older recovery snapshot or the original file.
+- Opening a copied editor tab no longer removes the original tab's reload
+  source.
+- Document links preserve encoded path and query characters, including signed
+  URLs with encoded delimiters.
+- Gemini artifact revisions accept normally completed responses while retaining
+  incomplete-response protection.
+- Using a downloaded model from a custom mirror preserves its source and runtime
+  settings; deleting another source of the same model keeps the active one loaded.
+- Editing a document after more than seven idle days keeps the new recovery
+  bytes instead of leaving an empty history record.
+- Turning off recovery, or stopping it after a storage failure, keeps ordinary
+  saves linked to the document's authorized file.
+- Closing or replacing a document cancels recovery startup still waiting for a
+  browser lock, so late callbacks cannot revive the previous document's session.
+- Anthropic requests now time out even when response data stops after headers;
+  timeouts and service overloads show the corresponding recovery guidance.
+- Browser tools report failed or superseded local opens as failures and apply
+  read-only mode only as part of the document being opened.
+- Repeated document opens no longer retain extra Blob URLs for previous source
+  files. App updates reuse unchanged prepared assistant runtime assets already
+  held in earlier app caches.
+- First-visit editor preparation waits for the service worker to control the
+  page, so warmed font resources remain available in its offline cache.
+- A failed recovery snapshot no longer removes an older document when storage
+  remains full after a retry.
+- Recovery files that exceed the storage budget are rejected before their
+  contents are copied into another memory buffer.
+- Unresponsive OpenAI-compatible, Gemini and Ollama requests now time out,
+  including stalled response reads, so another request can be sent.
+- Gemini authentication, rate-limit and service failures now show actionable
+  guidance without exposing the service's response body.
+- Plain assistant requests omit unused tool-calling settings for better
+  compatibility with configured AI services.
+- Oversized AI responses stop before unbounded data accumulates in memory.
+- OpenAI-compatible, Gemini, Ollama and local-service chat answers appear
+  progressively; interrupted streams are not treated as complete replies.
+- AI offline preparation now downloads only the runtime capabilities actually
+  used. Cloud-only setup avoids local inference downloads, and prepared
+  capabilities remain available after app updates.
+
+- A failed download started while switching documents no longer leaves the
+  editor empty. Closing the editor still cancels an unfinished replacement.
+- A document still loading can recover from a temporary conversion failure
+  even if a newer download fails before replacing it.
+- Opening or creating a document through browser tools during startup no longer
+  raises an uncaught cancellation error for the initial blank document.
+- Saving keeps edits made during conversion or writing protected. Further edits
+  after a save reactivate the unsaved-changes warning and recovery snapshots.
+- Long document context no longer blocks a short assistant question. Partial
+  context is identified while the original question and conversation stay intact.
+- A recovery snapshot too large for the storage budget leaves existing recovery
+  records intact. Reading the newest version avoids loading every older file.
+
+- Returning to the latest assistant conversation during dictation keeps each
+  chat's draft intact and ignores late speech results after navigation.
+- The first assistant request stays in its original chat while saved conversations
+  finish loading. Requests being prepared or stopped show their state and keep
+  unavailable queue actions disabled until recovery is ready.
+- Ordinary chat continues while you edit the document. Deleting another saved
+  chat preserves the current reply, loaded messages, draft and reading position.
+- Returning to the latest reply follows new content during smooth scrolling;
+  scrolling or dragging the scrollbar keeps you in control of your reading position.
+- Starting assistant dictation or editing a draft during first-use setup no longer
+  gets interrupted by the background model-cache check opening settings.
+- Docker deployments accessed over ordinary HTTP can load the document converter
+  in Chrome without a WASM content-decoding error ([#267](https://github.com/ranuts/document/issues/267)).
+- Stopping a browser-local assistant response no longer prevents the next question
+  from being answered. Stop responds immediately and keeps your next draft and
+  partial answer available.
+- Cancelling a save keeps the unsaved-changes warning and recovery status intact.
+- Exporting another format, such as PDF, preserves the original document file
+  and its ordinary save target, including when the export is cancelled or fails.
+- Deleting, clearing or expiring local recovery records also forgets their saved
+  file associations. Unchanged documents no longer create duplicate recovery
+  versions or repeatedly run a full export.
+
+### Added
+
+- **Start with a task for the document in front of you.** Assistant suggestions
+  follow the editor and selection. Choose a task to prepare an editable request,
+  then send. If the document scope changes, your draft is kept for you to confirm
+  again. Selected passages align with the input and expand or collapse smoothly.
+- **Read drafts and review changes more clearly.** Document drafts and incomplete
+  responses have distinct labels. Change reviews emphasize Apply and Cancel,
+  with editing, refinement, copying and location in More actions.
+
+- **See what the assistant is doing while you wait.** Request understanding,
+  generation and review show their actual stage. A compact elapsed-time hint
+  clears when content arrives or you stop, while your next draft stays editable.
+
+- **Find earlier assistant conversations.** Search titles and messages locally,
+  browse recent chats by date and see the current conversation at a glance.
+  Large histories load in pages and search without rebuilding every conversation.
+  Long conversations open with recent messages; load earlier messages without
+  losing your place or the full original text.
+  Compact row actions confirm which conversation will be deleted; history
+  saving and data tools stay available in a collapsed section.
+  Click the assistant title to return to your latest conversation; unsent drafts
+  stay with their own chat and remain reachable from history.
+
+- **Keep document structure when writing an assistant draft.** Word headings,
+  lists and emphasis remain formatted; long slide content continues on fitted
+  pages without dropping text. Completed changes keep location and Undo guidance.
+  Reading progress names the actual scope, and spreadsheet reviews distinguish
+  formulas from calculated values.
+
+- **Read formatted replies as they arrive.** Headings, lists, code and tables
+  appear progressively, with stable completed paragraphs and safe partial links.
+  Very large unfinished sections remain readable as original text.
+
+- **Keep going while the assistant responds.** Send follow-ups to a queue, edit or
+  remove them, or choose Send now. Dictate the next draft during a reply and send
+  it when ready. Older queued requests pause after Stop or an
+  error; resume when ready. Document changes still wait for your review.
+  Reading older messages keeps your place, and activity hints distinguish
+  reading, responding and waiting for your review.
+  The draft adapts when you resize the sidebar, and long drafts scroll inside the
+  input. Copy feedback stays compact; code and tables can be navigated by keyboard.
+
+- **Spend less time preparing simple requests.** Greetings and document-reading
+  shortcuts avoid unnecessary model steps. Ordinary chat no longer scans the
+  whole document before answering, and long source excerpts show when only part
+  of the content is included.
+
+- **Ask the assistant about the current PDF page and review notes before adding them.**
+  It can read selectable page text and add page notes that you can undo. Scanned
+  pages still need text recognition elsewhere; the assistant does not rewrite PDF text.
+- **Review changes where they belong.** Text changes and spreadsheet values show
+  what will change before you approve. You can refine a suggestion in conversation,
+  and completed changes stay in a compact record instead of a separate panel.
+
+- **Embed API: the host page can tell when a document has unsaved edits.**
+  `document:dirty-changed` is pushed when the flag flips, and `dirty` is
+  reported on `document:state` and `document:saved`, so an embedding page can
+  save when the user switches documents or goes idle instead of exporting
+  documents nobody touched. Edits made after a save are reported again, and
+  edits made while an export is running keep the document dirty.
+- **Saving now writes back into your own file.** Pick the file once and every
+  save after that goes straight into it -- no "save as" dialog each time, and
+  no "a file with that name already exists" prompt. The document ends up where
+  you keep your documents, not in a pile of downloads. (Chrome, Edge and other
+  Chromium browsers; Safari and Firefox keep the download they always had.)
+- **Your edits are kept while you work, and you can get them back.** Every
+  document you edit is also saved to a recovery point inside your own browser --
+  never uploaded, never leaving the device. If the tab closes, the browser
+  crashes, or you simply come back the next day, the homepage offers the work
+  back by name and tells you when you made it, so you do not have to remember
+  where you were. The editor itself stays quiet: it never interrupts the
+  document you are in to talk about a different one.
+- **A page listing what this browser is holding**, at `/history`, linked from
+  the homepage: your saved documents, newest first, searchable by any part of a
+  file name in any language, with a delete on every row and a delete-all below
+  the list. Rows holding the only copy of your work -- edits that never reached
+  your disk -- say so.
+- **It clears itself.** A document is deleted seven days after you last edit or
+  open it, automatically, whether or not you visit the page. The rule is stated
+  on the homepage and on that page, and every row shows how long it has left.
+  Autosave can also be switched off entirely.
+- **Closing a tab with unsaved edits now asks first.** It never did, so a
+  mistaken Cmd+W or Ctrl+R silently threw the session away.
+- **A reload comes back to the same document.** The address bar carries the
+  document's identity (`?saved=<id>`), so refreshing an unsaved document reopens
+  it instead of starting a blank one, and two files sharing a name stay
+  separate.
+
+### Changed
+
+- The editor page fetches less than half the JavaScript it did before it can
+  start (163 KB instead of 350 KB compressed). Browser-agent text reading and
+  the install prompt load when first needed, and an unused character-set
+  detector is no longer shipped.
+- The local history page no longer downloads the editor to show its list
+  (122 KB instead of 148 KB compressed).
+- The editor and history pages load only the interface language you use rather
+  than all seven, so the editor starts on 105 KB instead of 162 KB compressed,
+  and the history page on 61 KB instead of 121 KB.
+- The editor no longer loads the assistant's dropdown control or an unused
+  file-type table at startup (84 KB instead of 105 KB compressed).
+- Voice controls stay in place while recording or finishing. Explanations appear
+  without moving the draft, and cancelling preserves the text typed before dictation.
+- **Configured assistants reopen in chat.** Enable a downloaded model or reconnect
+  your service without losing your draft. Preparation never sends the draft.
+  Speech language choices open directly, and model settings use one consistent
+  expansion style.
+- **Presentation drafts can have separate titles and body text.** Review the new
+  slide before adding it; one Undo restores the previous presentation.
+- **Interrupted tasks explain what happened.** Confirmed changes remain visible
+  when later steps fail or repeat an operation. Check the result before asking
+  for the unfinished work; completed changes can still be undone.
+
+- **Read requests now finish with an answer to your question.** After reading text
+  or cells, the assistant answers from that content instead of showing the whole
+  tool result. Empty files still show a clear message, and stopped requests cannot
+  add a late answer.
+
+- **Browser model choices now start at Qwen3 4B.** Smaller presets are no longer
+  offered, and saved choices move to 4B. Previously downloaded smaller models can
+  still be deleted in settings. Browser models remain experimental.
+
+- **Writing help now goes to a model on your own machine by default.** Rewrite,
+  summarize and translate used to run on the small model inside the browser tab.
+  We tested sixteen of those models and none of them kept dates, names, roles or
+  negations straight across the seven interface languages -- and a rewrite that
+  quietly turns "not approved" into "approved" is worse than no rewrite. So the
+  assistant now talks to a model service you run yourself (Ollama on
+  `http://localhost:11434` by default, set up under Settings -> Writing
+  destination); your file still never leaves the device, because a local service
+  is only reachable on your own machine.
+- **Or point it at a cloud model with your own API key.** Settings -> Writing
+  destination also accepts an OpenAI-compatible endpoint (OpenAI, DeepSeek, Groq,
+  OpenRouter, a local vLLM/LM Studio server, ...), Claude or Gemini. A remote
+  address must be HTTPS. The panel always states where the writing will go, and
+  when it goes to a third party it says so plainly, because that text leaves your
+  device. Which destination wins when you have configured both is your choice
+  (this device first, or the cloud endpoint first).
+- **Browser-local writing is still available, but you have to ask for it.** With
+  no destination connected, asking for a rewrite tells you so instead of silently
+  using the in-browser model. Tick "Allow browser-local model writing" in Settings
+  to use it anyway; it is marked experimental, because it is.
+- **Offline, only a destination on this device can work.** A cloud endpoint is not
+  attempted without a connection -- the panel says so (next to the destination it
+  would use) instead of failing with a network error. A local service and the
+  in-browser model both keep working offline, and the choice between them is still
+  yours rather than an automatic substitution.
+- **The assistant no longer asks you to download a model you are not going to use.**
+  With a cloud endpoint connected, writing goes there even if no in-browser model
+  is loaded; previously that combination quietly did nothing but tell you to load
+  one. A fixed spreadsheet command such as "read A1:A5, then set B1 to `done`"
+  likewise runs without any model loaded, because choosing the operation is not
+  something it needs help with. Changing the address, model or key now also disconnects the endpoint (and
+  does not carry the key to a different address) instead of leaving the panel
+  showing one destination while requests went to another.
+
+- **The editor gives its memory back while you work.** Converting a document
+  used to reserve a few hundred megabytes and hold them for as long as the tab
+  was open; that work now happens off to one side and is released once it is
+  done. Nothing changes about what you see, except that the page stays
+  responsive while a large file is being opened or saved.
+- **The editor's conversion engine is 2.6 MB smaller to download.** It is the
+  largest single file the app fetches, and the browser now unpacks it while it
+  arrives instead of the page unpacking it afterwards. Nothing to do; the first
+  save on a slow connection just starts sooner.
+
+- **The language menu is now a plain list of links.** Every language is named in
+  its own words -- English is no longer the one abbreviated "EN" among six full
+  names -- with a check on the one you are reading. Each entry is a real link, so
+  you can open a language in a new tab, copy its address, or reach it with
+  JavaScript off. The menu opens from the right edge of its button instead of
+  sliding back in from the edge of the window, and the button itself now matches
+  the other links in the bar rather than sitting in a form field. On a phone it
+  keeps the globe and drops the language name, which means the GitHub link no
+  longer has to disappear to make room.
+
+- Recovery points are taken more often on a fast machine and less often on a
+  slow one. The editor times its own exports and spends a fixed, small share of
+  the session on them, so a laptop keeps a recovery point about every 30
+  seconds while a phone under load backs off instead of competing with the
+  document you are editing.
+- **Neutral presentation with legal attribution retained.** Product logos
+  and ecosystem promotion are removed. A neutral document icon supplies PWA and browser icons. The editor's About pane stays
+  available with the upstream copyright and version, a modified-version notice,
+  license and source links. NOTICE explains the logo decision with reference to
+  the FSF's interpretation of AGPLv3; it does not claim a court ruling. Offline caching remains available.
+
+### Fixed
+
+- Browser icons, theme-color and native controls now follow the effective light
+  or dark theme, including manual choices opposite to the OS preference.
+  Universal PWA / touch icons remain stable. The editor's existing theme
+  follow behavior is covered by light/dark browser tests.
+
+- Save messages are accepted only from the same-origin editor frame. Embedded
+  commands are accepted only from the direct parent, with a fixed origin.
+  Exported document bytes no longer bypass the host API by going straight to
+  the top-level ancestor.
+- Service Worker cache eviction stays within its `waitUntil` lifetime, removes
+  excess entries in a batch and tolerates storage failures.
+- Editor title updates preserve the filename and unsaved marker without
+  restoring a product-name suffix. Language controls include the visible
+  language in their accessible names.
+- Image-export tests use the current neutral icon. All README translations
+  distinguish local editing from optional cloud AI, qualify offline resource
+  availability and state the seven supported site languages.
+
+### Known issues
+
+- A report of "An error occurred during the work with the document" while
+  editing a complex real-world PPTX could not be reproduced on the current
+  build (the same deck opens, edits and saves cleanly in the automated
+  real-document matrix); the likely cause is a browser still running a
+  cached older build. If you see it, hard-refresh (or unregister the site's
+  service worker) and try again; a full regression campaign against
+  real-world documents runs nightly and gates the next release announcement.
+
+### Changed
+
+- The self-hosted Docker image is 27 MB smaller: the bundle carried asm.js
+  copies of five engines, only ever used by browsers without WebAssembly --
+  which cannot open a document here at all, since the conversion engine is
+  WebAssembly.
+- Chinese and Japanese text is set in one typeface again. A single line used to
+  be assembled from up to four different fonts -- the characters from one, the
+  comma from another, the full stop from a third -- because each Unicode block
+  fell to whichever font happened to cover it. They now all resolve to Noto
+  Sans SC, or Noto Serif SC where the document asks for a Song/Ming face, which
+  also means Chinese finally has a real bold instead of a smeared one. Coverage
+  went up too: the previous Chinese fonts were partial, so uncommon characters
+  dropped out to another font mid-sentence. (Korean keeps its own face, which
+  was already a complete one.)
+- Arabic, Hebrew, Armenian, Georgian and Cyrillic Supplement each got a proper
+  font of their own, and Syriac and Thaana are readable for the first time --
+  nothing in the bundle had ever covered them, so they showed as empty boxes.
+- Documents that name Arial, Times New Roman, Courier New or Calibri now
+  render in the metric-compatible open equivalents (Liberation, Carlito).
+  Character widths are identical, so line and page breaks do not move.
+- The download is 136 MB lighter. The bundle shipped 79 fonts nobody was
+  allowed to redistribute -- the set an OnlyOffice server picks up from its
+  host machine -- and they have been replaced by open ones. Every font name a
+  document can reference still resolves; it just lands on a face that may be
+  shared freely.
+
+### Changed
+
+- **Search engines and AI assistants now see one editor, not one per page.**
+  Every page described the application from scratch, so a site of 154 pages
+  looked like 154 unrelated tools that happened to share a name. The pages now
+  all point at the same one, and say which of the seven languages they are in.
+  Nothing on the pages themselves changed.
+
+### Fixed
+
+- **A link that cannot be opened now says why, and what to do.** Opening a
+  document by URL from a site that does not allow other pages to read its
+  files used to raise a browser alert reading "Failed to fetch", in English
+  whatever language you were using. It is now the app's own message, in your
+  language, and it tells you the thing that always works: download the file and
+  open it from your device.
+- **Scrolling to the bottom of the font list no longer breaks the editor.** The
+  last nine fonts had no name to draw, and reaching them threw an error that
+  repeated on every scroll and left the document uneditable. All of them are
+  drawn now.
+- **An image that will not load now says so in your language.** When a picture
+  inserted by URL could not be fetched, the editor reported it in Chinese --
+  whatever language you were using -- and suggested a setting that does not
+  exist on this site. The message the editor already carries in 45 languages is
+  shown instead.
+- **The top bar is one row again.** The language button was 8px shorter than
+  the links beside it, so hovering GitHub and hovering the language name lit up
+  two differently sized boxes; on a phone it was the other way round. The
+  language switch also sat on the left of GitHub on every page except the
+  homepage, where it sat on the right. Same order, same height, everywhere.
+- **The saved-documents and embed demo pages no longer scroll sideways on a
+  phone.** Both carry a theme switch in the top bar that other pages keep in a
+  footer, and at 390px wide the row ran past the edge of the screen -- the site
+  name broke onto two lines and the whole page could be dragged left and right.
+  On a phone the bar now shows the mark without the wordmark, which fits the
+  row on every page.
+- **Safari: opening a file from the homepage landed on an empty editor.** The
+  homepage hands the file you pick to the editor through this browser's own
+  storage, and Safari refuses to store a file that way -- so the editor opened
+  with nothing in it and you had to pick the same document a second time. The
+  handoff now checks that the file really arrived, and passes the contents
+  across when it did not.
+- **Safari: leaving the homepage logged errors.** The homepage quietly loads
+  the editor while you read, and whatever was still downloading when you
+  clicked was reported as a failure. The download now stops when you leave --
+  which also stops spending your connection on a page you are no longer on --
+  and picks up again if you turn out to have stayed.
+- **A new version now reaches you by itself.** An update used to wait until no
+  document was open anywhere, which for anyone who goes straight to the editor
+  meant never -- reloading served the same old build back, and when that build
+  referred to files a deploy had removed, the page was not merely stale but
+  broken. A tab still on an older build now moves onto the new one on its next
+  load, without asking and without interrupting anything: it happens while the
+  page is still loading, once, and never over unsaved edits.
+- **An update could leave the editor blank.** When a new version took over
+  while the page was still starting up, the request for the editor itself was
+  cancelled mid-flight and nothing asked for it again -- an empty white page
+  that reloading was the only way out of. The page now reloads itself when the
+  version serving it really has changed, which is what repairs it -- unless you
+  have unsaved edits, which nothing is allowed to reload over.
+- The four home-screen buttons ("View/Edit Document", "New Word"...) no longer
+  flash behind the spinner while a document named in the URL is loading.
+- Chinese, Japanese and Korean text in an exported PDF came out blank. The
+  export writes its own list of font files, and that list had been pointing at
+  files that were not in the bundle.
+- Fonts are now sent compressed. The editor's font files have no extension, so
+  the CDN had been typing them as generic binary and shipping every byte raw --
+  a 16 MB Chinese font arrived as 16 MB rather than the 9.9 MB it compresses to.
+  Opening your first Chinese, Japanese or Korean document was downloading
+  roughly twice what it needed to.
+- Browser AI agents were told this editor could not open OpenDocument, RTF or
+  plain-text files. It always could -- the list the tools advertised had been
+  written out by hand and fallen behind the engine. It is now derived from the
+  engine's own format table, so it cannot drift again.
+- An agent asking for the text of a spreadsheet or presentation used to get an
+  empty answer, which reads as "this file is empty". The engine only exposes
+  full text for word-processing documents, and the tool now says exactly that
+  and points at exporting instead.
+
+- A document that fails to open because the browser cannot allocate memory for
+  the conversion engine no longer claims the file "may be corrupted, in an
+  unsupported format, or not what its extension says". The file is fine: the
+  engine never started, so it never read it. The message now says so, suggests
+  what actually helps (close other tabs, or use a 64-bit browser), and carries
+  what the browser refused -- the 2 GB address-space reservation or the 283 MB
+  of real memory -- plus the browser's build architecture. Such a failure is
+  also retried once now, like the other "the editor was not ready" failures;
+  it used to be treated as a verdict on the file and reported immediately. A
+  document the engine did read and reject still fails straight away, even when
+  it ran out of memory doing so -- retrying that one, or blaming the browser
+  for it, would only waste the reader's time.
+- A hiccup from the CDN no longer costs you the document. The conversion
+  engine is a 9.4 MB download, and a single failed answer for it (a 500, a
+  dropped connection) used to end the open with "the document failed to open".
+  It is now asked for again, twice, before anything is reported -- a file that
+  is genuinely missing still fails immediately.
+- The conversion engine is now compiled as it downloads, so the 40 MB
+  decompressed copy of it never exists at all. It used to be held in memory at
+  the exact moment the engine asked for its own (much larger) working memory,
+  which is when opening a document fails on a machine that is short of it.
+  Where a browser cannot compile while downloading, the engine still loads the
+  old way and that copy is released as soon as it has started.
+- A new version now applies on your next visit instead of waiting for you to
+  close every tab of the site first. Updates were being downloaded and then
+  left waiting indefinitely, which is why a fixed bug could look unchanged
+  after an upgrade. Two things caused it: nothing was asking the update to take
+  over (and the Chinese homepage did not register the offline worker at all),
+  and every release looked to the browser as if it were replacing the editor
+  engine even when only the app had changed. Keeping a second homepage tab open
+  no longer holds an update back either -- only a tab with the editor actually
+  open does, since that is the one an update could disturb. Releases that leave the engine
+  untouched -- almost all of them -- now take over immediately; one that does
+  replace it still waits until you have no document open, so a running editor
+  cannot end up half-updated. Self-hosters: this is also why a freshly pulled
+  image could keep serving the old app; the other half of that was fixed
+  earlier in the image's cache contract. The offline cache no longer carries
+  retired releases around either: each release's own files are cleared out when
+  the next one takes over -- and never while a tab of the outgoing release is
+  still open, so an editor left open across an update keeps working instead of
+  losing pieces of itself. Two homepage scripts (the local-file picker and the
+  editor prefetch) were also being served from the offline cache without
+  checking for a newer copy, so a change to either could stay invisible on the
+  homepage indefinitely; they now revalidate like the rest of the shell.
+- The pill-shaped buttons on the homepage and the landing pages no longer draw
+  a straight line under themselves that pokes out past their rounded ends: the
+  raised shadow was being painted on a square box behind the round button.
+- Documents are no longer at risk of opening with every font dropped when the
+  font system is slow to start: the editor now waits longer for it before
+  falling back to a font-free import.
+
+### Removed
+
+- The floating "Menu" button in the bottom-right corner of the editor, and the
+  first-run bubble that pointed at it. It sat over the vertical scrollbar just
+  above the zoom bar. Opening and creating documents start from the homepage
+  (or `/editor?new=docx`, `/editor?file=<url>`); the AI assistant opens with
+  `?agent=1`. Theme now follows the switch in the homepage footer -- there is
+  no in-editor theme toggle any more.
+
+### Changed
+
+- The first document you open is quicker. The homepage now quietly warms the
+  editor while you are still on it -- the font engine, the font entries every
+  document needs, the conversion engine, and then all three editors (Word,
+  Excel, PowerPoint) -- and keeps them in the offline cache, so opening no
+  longer starts from nothing. Measured against a cold visit: a Word document
+  asks the network for 45% less, a spreadsheet 72% less, a presentation 25%
+  less. Skipped entirely on a metered or slow connection, or when the device
+  has no room to store it, and it never competes with the homepage itself: one
+  file at a time, at low priority, only in idle moments. Hovering an Open or New
+  button still jumps that format to the front, and now covers one 1.2 MB file
+  that had been missing from the list.
+
+- Returning to the editor is much lighter on the network. Its own files are now
+  served straight from the offline cache instead of being checked with the
+  server one by one on every visit -- a second open used to make 46 such checks
+  for files it already had, and now makes none. Most noticeable on a slow or
+  metered connection, where those checks competed with the requests that
+  actually mattered.
+
+- The conversion engine downloads 377 KB smaller (about 4%), the largest single
+  download in the app. Same engine, byte for byte -- only the compression of
+  the file it ships in changed.
+
+- Hovering (or focusing) an Open / New button starts downloading the editor
+  engine in the background, so the document opens noticeably faster after the
+  click; skipped on Save-Data and 2G connections.
+- The homepage is now a plain landing page and the editor lives at `/editor`
+  (`/editor?new=docx`, `/editor?file=<url>`, `/editor?embed=1`). The homepage
+  no longer downloads the editor at all, so it loads faster; old links to
+  `/?src=`, `/?file=`, `/?new=` and `/?embed=1` keep working (they redirect).
+- The iframe embedding demo (`/embed-demo.html`) now uses the same design
+  system as the rest of the site (ranui components and tokens, dark mode,
+  shared top bar) instead of its own ad-hoc styling; the demo's postMessage
+  behaviour is unchanged.
+- The editor interface now defaults to the classic Office theme
+  (`theme-classic-light`, coloured per-app toolbar header) instead of the flat
+  white theme; a theme you pick inside the editor is still remembered.
+- The editor engine was upgraded to an OnlyOffice 9.3-based build: new
+  rendering engine and font pipeline, sharp toolbar icons on 2k/4k displays,
+  fonts loaded on demand instead of up front.
+
+### Added
+
+- Browser AI agents can now create a document and read one. The WebMCP tool set
+  gains `create_document` (a new Word / Excel / PowerPoint file) and
+  `get_document_text`, which lets an agent answer questions about what a
+  document says without exporting it first. As before, everything runs on your
+  device -- the tools call the same code the buttons do, and nothing is
+  uploaded. A page explaining the whole thing is at `/webmcp-document-editor`,
+  and the help center has a section on it.
+
+- OpenDocument files now open from the file picker. ODT, ODS and ODP (the
+  LibreOffice / OpenOffice formats), along with RTF and TXT, were already
+  readable by the engine but were greyed out when you went to select one --
+  so a file you had been sent could not be picked. They open, edit and save
+  back to their own format, and export to PDF like everything else.
+- Pages for the things the editor could already do but did not say anywhere:
+  converting Word, Excel and PowerPoint files to PDF on your device, and
+  opening ODT / ODS / ODP without LibreOffice. Both languages.
+- `/llms-full.txt`: the full text of every page in one file, so an AI assistant
+  answering questions about the editor can read the whole site in one request
+  instead of guessing. Its index, `/llms.txt`, now also states what the editor
+  does _not_ do -- no collaboration, no PDF-to-Word, memory-bound file sizes --
+  because an assistant recommending a tool needs the boundaries too.
+
+- The interface is now available in eight languages — English, 简体中文，
+  日本語，한국어, Deutsch, Español, Português and فارسی (right-to-left) —
+  following your browser language, or `?locale=<code>`.
+- Browser AI agents can drive the editor through WebMCP (Chrome origin trial):
+  the page registers `open_document_url`, `open_document_buffer`,
+  `save_document`, `set_readonly` and `get_document_state` when the browser
+  exposes the API; everything still runs on your device.
+- The editor's own interface (menus, ribbon, dialogs) now follows your
+  browser language for all 45 languages the engine ships (Japanese, Korean,
+  German, Spanish, Portuguese, French, Russian, ...), not just English and
+  Chinese; `?locale=<tag>` still overrides it.
+- The bottom-right Menu now has a light / dark / system switch, so the theme
+  can be changed while a document is open (the editor follows it).
+- A help center (`/help`, `/zh-CN/help`) answering the practical questions:
+  formats, saving and converting, CSV encodings, what the PDF viewer can do,
+  read-only and embedding, offline use, privacy boundaries, error codes,
+  self-hosting; the Embed API reference (`/help/embed-api`) and this changelog
+  (`/changelog`) are published on the site from the same markdown.
+- The editor now follows the site's light/dark theme: a dark site opens a
+  dark editor and switches live with the theme toggle; a theme you pick inside
+  the editor's own settings still wins.
+- New "Open PDF" pages (`/open/pdf`, `/zh-CN/open/pdf`) explaining what the
+  PDF viewer can and cannot do (read, comment and annotate, save back as PDF;
+  no free-text rewriting of an existing PDF), linked from both homepages.
+- PDF files now open in a dedicated PDF viewer/editor.
+- Legacy Word 97 binary `.doc` files now open correctly.
+- Read-only mode can be toggled at runtime (embed API `document:set-readonly`
+  works in both directions without reloading the document).
+- Comments work in the Word editor, including add/update/delete lifecycle
+  callbacks for integrators.
+- Editor errors now surface as a visible notification with the error code
+  instead of failing silently.
+- CSV files in legacy encodings (GBK/GB18030, e.g. Chinese "ANSI" exports
+  from Excel) are detected and decoded correctly instead of showing mojibake.
+
+### Fixed
+
+- Self-hosted (Docker) installs now pick up a new image immediately. The
+  bundled server was caching pages for a day and its JavaScript for a year
+  without ever asking the server again, so pulling a new image could change
+  nothing in the browser -- a fix released weeks earlier was simply not
+  running, while a freshly installed browser on the same machine got it
+  (GitHub #144). Pages and unhashed files now revalidate; only
+  content-addressed files stay cached long-term.
+- When the editor reports "code -82" for a document that failed to open, the
+  message now names the underlying cause instead of the number alone, and a
+  save attempted after such a failure is refused immediately instead of
+  waiting out its timeout.
+- Documents on a phone now use the screen: the right panel, the rulers and the
+  notes pane are folded away on narrow viewports, presentations also fold away
+  the slide thumbnails, and the document starts fitted to the width -- so it
+  opens at a readable size instead of a stamp in the middle of the screen
+  (GitHub #145). The thumbnails come back from the left rail.
+- That layout now follows the viewport instead of being decided when the
+  document opens: a phone held in landscape counts as small too, and rotating
+  the device or resizing the window re-adapts the open document -- including
+  giving the panels back when the window is widened again.
+- The editor no longer stays blank when the browser discards its canvas under
+  memory pressure (seen on Android after repeatedly changing the zoom): it
+  repaints as soon as the canvas is restored.
+- Opening a local document no longer fails with "code -82 / the file could not
+  be opened" when the editor's font system is not up yet: the conversion now
+  waits for it (a fraction of a second, and only when it is actually behind)
+  instead of tripping over it, and, if the open still fails for a
+  reason that is about the editor rather than the file, the document is
+  reopened once automatically. This is what made the same file open in a
+  freshly started browser and fail in one that had been running all day
+  (GitHub #144). When an open really does fail, the error toast now names the
+  underlying reason instead of only the numeric code.
+- Spreadsheets: using Review -> Remove/Resolve comments before clicking into
+  the grid no longer fails silently and leaves undo in a broken state.
+
+- The homepage no longer blocks its first paint on the editor's API loader
+  script (about half a second of LCP); the loader is fetched when you open or
+  create a document.
+- The Chinese landing pages' "open your XLSX / PPTX / CSV" buttons no longer
+  drop you into a blank new Word document; they go to the Chinese homepage
+  where you can pick the file.
+- Opening a document that uses many fonts (typical for Chinese decks) no
+  longer sits on "Loading presentation" for minutes on the hosted site: the
+  editor's font files and the conversion engine are now cached long-term by
+  the browser, document fonts are downloaded in parallel instead of one
+  family at a time, and the unused "default font" preload is skipped. On a
+  real 35-slide deck the first open went from never finishing to about
+  45 s on a cold connection, and a repeat open takes about 3 s.
+
+- Words carrying a phonetic guide (Japanese furigana / Chinese pinyin
+  "ruby" annotations) no longer disappear from a Word document on open and
+  save; the base word is kept. The guide text itself is still dropped
+  (engine limitation).
+- PDF files now actually load in the PDF editor: previously the editor
+  mounted but the document stayed on its loading placeholder (the PDF app
+  expects the page to hand the file over, unlike the other editors), and on
+  the live site the "is this a form?" pre-loader additionally got stuck
+  behind a folder redirect. PDFs open, take annotations and save back.
+- On slow connections the first save no longer fails with "timed out" while
+  the file was still on its way: the editor must first download its ~10 MB
+  conversion engine, which could take longer than the old 60 s limit; the
+  save now waits up to 3 minutes and still fails fast when the document
+  genuinely could not be opened.
+- A new release deployed while you have a document open no longer swaps
+  parts of the editor underneath it: the update now waits until nothing is
+  open (or the next visit), then takes over and refreshes once. Previously
+  the old page could lazy-load pieces of the new build into the running
+  session, a plausible cause of sporadic "An error occurred during the work
+  with the document" dialogs right after deploys.
+- "Excel" files that are really an HTML table (the usual export of web
+  systems, saved as .xls/.xlsx) now open and save as a real workbook instead
+  of failing to load.
+- Firefox: the page no longer raises an unhandled promise rejection from the
+  service-worker update check on load.
+- Presentations no longer log a script error on every open (the editor
+  asked for a theme catalog file the offline package never shipped).
+- Embed API: `document:save` without `targetExt` now exports in the open
+  document's own format instead of always XLSX (a bare save on a .docx or
+  .pptx used to fail with a timeout).
+- A file the editor cannot import (corrupted bytes, an unsupported format
+  behind a familiar extension) now shows an error dialog and a notification
+  and stops the loading spinner, instead of loading forever; a pending save
+  fails immediately with the reason instead of after a 60 s timeout.
+- Saving a document that contains an inserted image no longer freezes the
+  page; the image bytes are correctly included in the saved file.
+- Excel: right-aligned text no longer disappears after editing another cell.
+- Excel: the caret now moves visibly while editing inside a cell.
+- Word: the caret renders exactly at the insertion point (no more offset
+  caret on some documents).
+- Save-as-PDF produces a complete document instead of empty output.
+- Multi-sheet workbooks opened via the embed API save back with all sheets
+  intact.
+
+## [0.0.5] - 2026-07-12
+
+Last release of the previous (v7) engine line. See the
+[GitHub release](https://github.com/ranuts/document/releases/tag/v0.0.5).

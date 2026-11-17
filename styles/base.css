@@ -1,0 +1,186 @@
+@import './assistant.css';
+
+/* No CSS framework here: every design VALUE comes from the ranui token layer
+   (public/ran-tokens.css) and every piece of UI chrome is a real ranui component.
+   Tailwind used to be imported for its preflight plus exactly two utilities
+   (#app's w-full/h-full in editor.html); the preflight rules the editor page
+   actually depended on are spelled out below instead.
+
+   Preflight's `iframe { display: block }` is deliberately NOT one of them: the
+   editor frame is the only iframe here and the vendor already sets
+   `vertical-align: top` on it, so it contributes no baseline descender.
+   Measured, not assumed -- and the E2E case in app-smoke.spec.ts asserts the
+   page fits the viewport, so if that ever stops holding it fails there rather
+   than shipping a scrollbar. */
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+/* Preflight set a sans stack and a line-height on `html`, and nothing else does
+   it for this page: `ran-tokens.css` only DECLARES --ran-font-family, and the
+   rule that applies it lives in public/home.css, which /editor never loads.
+   Without this the whole editor page falls back to the UA default -- Times --
+   which the `font: inherit` below then propagates into the agent panel's
+   composer and native controls, while the ranui components beside them keep
+   rendering Geist (they resolve --ran-skin-font-family inside their shadow
+   DOM). Two typefaces in one panel. Tokens, not preflight's own values, so
+   the page agrees with the components. */
+html {
+  font-family: var(--ran-font-family);
+  line-height: var(--ran-line-height);
+}
+
+/* #app hosts the editor iframe and must fill the viewport (was w-full h-full). */
+#app {
+  width: 100%;
+  height: 100%;
+}
+
+/* Native controls default to the platform's own font; the panels below assume
+   they inherit the page's (ranui) typography.
+
+   They also default to content-box sizing plus a UA padding, and the rules
+   below were written under preflight, which zeroed both: `.agent-launcher`
+   sets width/height 48px and border-radius 50%, so with the UA's 1px 6px
+   padding added outside them it renders as a 60x50 ellipse rather than a
+   circle. Border-box (and a zeroed button padding, since the buttons here
+   size themselves) is what those rules assume. Scoped to the four elements
+   the editor page actually uses rather than made global -- ranui's own
+   controls are custom elements with their own shadow DOM. */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  box-sizing: border-box;
+}
+button {
+  padding: 0;
+}
+
+a {
+  color: unset;
+}
+
+input {
+  outline: unset;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  width: 0px;
+  display: none;
+}
+
+h2 {
+  font-size: 1.5rem;
+}
+
+body.embed-mode #control-panel-container {
+  display: none !important;
+}
+
+/* The landing hero is SEO/GEO content only — never show it inside an embed. */
+body.embed-mode #landing-hero {
+  display: none !important;
+}
+
+/* While the landing hero is active, keep the legacy overlay out of the way
+   (it stays in the DOM as a fallback) and let the page scroll past 100vh.
+   Once a document opens, landing-active is removed and the editor reclaims
+   the fixed full-height #app layout. */
+body.landing-active #control-panel-container {
+  display: none !important;
+}
+
+/* A URL that already names a document (?file / ?src / ?new / ?saved /
+   ?open=local) goes straight into the editor, so the home-state panel is never
+   the answer -- and it must not be visible while the document loads. index.ts
+   sets this before the panel is built; showControlPanel() removes it if we end
+   up back at the home state after all. */
+body.opening-document #control-panel-container {
+  display: none !important;
+}
+body.landing-active,
+body.landing-active #app {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+}
+
+/* Style for r-button webcomponent using ::part.
+   r-button exports parts "button" (container) and "content" (padding/border/
+   typography) — see node_modules/ranui/dist/button-*.js. */
+#control-panel-container r-button[type='text']::part(content) {
+  min-height: max(var(--app-control-page), var(--app-control-height));
+  font-size: var(--ran-text-copy-1);
+  font-weight: 500;
+  padding: var(--ran-space-3) var(--ran-space-6);
+}
+
+@media (max-width: 480px) {
+  #control-panel-container r-button[type='text']::part(content) {
+    font-size: var(--ran-text-copy-1);
+    padding: var(--ran-space-2) var(--ran-space-4);
+  }
+}
+
+/* Full-screen loading overlay (lib/loading.ts). gray-alpha rides the token
+   ladder, so the scrim stays a contrast veil in both themes. */
+.loading-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ran-gray-alpha-500);
+  backdrop-filter: blur(2px);
+}
+.loading-mask r-loading {
+  /* Monochrome, per ranui's design standard: blue is reserved for links and the focus
+     ring; a loading indicator is neither. --ran-color-primary flips with the theme. */
+  color: var(--ran-color-primary);
+  font-size: var(--ran-text-heading-2);
+}
+
+/* Control Panel */
+.control-panel-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+  padding: var(--ran-space-6);
+  box-sizing: border-box;
+}
+
+.control-panel-button-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ran-space-4);
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  max-width: 100%;
+  width: 100%;
+}
+
+.control-panel-button {
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transform: scale(1);
+  transition: transform var(--ran-motion-duration-fast) ease;
+}
+.control-panel-button:hover {
+  transform: scale(1.05);
+}

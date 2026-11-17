@@ -1,0 +1,2872 @@
+/* ── Document assistant ───────────────────────────── */
+/* Dock mode: the editor gives up 360px so the panel sits beside it instead of
+   overlaying the document. DocsAPI REPLACES the #iframe placeholder div with the
+   editor <iframe> (name="frameEditor", no id) inside #app, so target that iframe
+   directly. Narrowing it makes OnlyOffice reflow its content. */
+#app iframe {
+  transition: width var(--ran-motion-duration-base) ease;
+}
+body.agent-docked #app iframe {
+  width: calc(100% - var(--agent-panel-width, 432px)) !important;
+}
+.agent-panel-resizer {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: 1;
+  cursor: col-resize;
+  touch-action: none;
+}
+.agent-panel-resizer:hover,
+.agent-panel-resizer:focus-visible {
+  background: var(--ran-color-border);
+  outline: none;
+}
+.agent-panel-resize-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  cursor: col-resize;
+}
+body.agent-panel-resizing {
+  user-select: none;
+  cursor: col-resize;
+}
+body.agent-panel-resizing #app iframe {
+  transition: none;
+}
+@media (max-width: 480px) {
+  .agent-panel-resizer {
+    display: none;
+  }
+  body.agent-docked #app iframe {
+    width: 100% !important;
+  }
+}
+.agent-panel-hidden {
+  display: none;
+}
+.agent-document-scope {
+  display: inline-flex;
+  max-width: 100%;
+  margin-top: var(--ran-space-2);
+  padding: var(--ran-space-1) var(--ran-space-2);
+  border-radius: var(--ran-radius-sm);
+  background: var(--ran-color-bg-muted);
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+  line-height: 1.2;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.agent-document-scope:empty {
+  display: none;
+}
+.agent-panel-clear:focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 2px;
+}
+.agent-panel-clear {
+  flex: 0 0 var(--ran-size-7);
+  width: var(--ran-size-7);
+  height: var(--ran-size-7);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ran-color-border);
+  border-radius: var(--ran-radius-sm);
+  background: var(--ran-color-bg-elevated);
+  color: var(--ran-color-text-secondary);
+  cursor: pointer;
+}
+.agent-panel-clear:hover {
+  background: var(--ran-color-bg-hover);
+  color: var(--ran-color-text);
+}
+/* Box, border, background, colour and cursor come from the shared
+   `.agent-panel-header button` rule, which outranks this class; only the glyph
+   sizing belongs here. */
+.agent-panel-close {
+  font-size: var(--ran-text-heading-3);
+  line-height: 1;
+}
+.agent-panel-close:hover {
+  color: var(--ran-color-text);
+}
+/* Gear button: toggles the settings block. Sits left of the close button. */
+.agent-panel-settings-toggle:hover {
+  color: var(--ran-color-text);
+}
+/* Collapsed by default; the header gear toggles it. */
+.agent-history-options {
+  min-width: 0;
+  margin: 0;
+  padding-top: var(--ran-space-4);
+  border-top: 1px solid var(--ran-color-border-secondary);
+  font-size: var(--ran-text-label-2);
+  line-height: 1.5;
+}
+.agent-history-management > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  min-height: var(--ran-size-7);
+  padding: var(--ran-space-1) 0;
+  color: var(--ran-color-text-secondary);
+  font-weight: var(--ran-text-label-weight);
+  cursor: pointer;
+  list-style: none;
+}
+.agent-history-management > summary::-webkit-details-marker {
+  display: none;
+}
+.agent-history-management > summary::after {
+  content: '+';
+  font-size: var(--ran-text-copy-1);
+}
+.agent-history-management[open] > summary::after {
+  content: '−';
+}
+.agent-history-management label {
+  margin-top: var(--ran-space-3);
+}
+.agent-history-options label {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ran-space-2);
+}
+.agent-history-save {
+  flex: 0 0 var(--ran-size-1);
+  width: var(--ran-size-1);
+  height: var(--ran-size-1);
+  margin: var(--ran-space-1) 0 0;
+  accent-color: var(--ran-color-primary);
+}
+.agent-history-status {
+  margin: var(--ran-space-2) 0 var(--ran-space-4);
+  color: var(--ran-color-text-secondary);
+  overflow-wrap: anywhere;
+}
+.agent-history-confirmation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ran-space-2);
+}
+.agent-history-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ran-space-4);
+  /* Own 8px of the panel gutter so the visible icon/label columns stay
+     aligned with the checkbox while each button keeps inline padding. */
+  margin-inline-start: calc(-1 * var(--ran-space-2));
+}
+.agent-history-transfer-actions,
+.agent-history-danger-actions {
+  display: grid;
+  justify-items: start;
+  gap: var(--ran-space-2);
+  min-width: 0;
+}
+.agent-history-confirmation {
+  margin-top: var(--ran-space-3);
+}
+.agent-history-confirmation[hidden] {
+  display: none;
+}
+.agent-history-confirmation span {
+  flex-basis: 100%;
+}
+.agent-history-options button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: var(--ran-size-7);
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--ran-space-1) var(--ran-space-3);
+  border: 1px solid var(--ran-color-border);
+  border-radius: var(--ran-radius-sm);
+  background: var(--ran-color-bg-elevated);
+  color: var(--ran-color-text);
+  font: inherit;
+  font-size: var(--ran-text-button-size);
+  font-weight: var(--ran-text-button-weight);
+  line-height: var(--ran-line-height);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.agent-history-options button:enabled:hover {
+  border-color: var(--ran-color-border-hover);
+  background: var(--ran-color-bg-hover);
+}
+.agent-history-options button:enabled:active {
+  border-color: var(--ran-color-border-active);
+  background: var(--ran-color-bg-active);
+}
+/* The pane establishes the region; only each native button owns a surface.
+   A resting control shape must remain visible without pointer discovery. */
+.agent-history-actions button {
+  width: fit-content;
+  min-height: var(--app-control-touch);
+  justify-content: flex-start;
+  gap: var(--ran-space-2);
+  padding: var(--ran-space-3) var(--ran-space-2);
+  border: 0;
+  border-radius: var(--ran-radius-sm);
+  background: var(--ran-color-bg-hover);
+  box-shadow: inset 0 0 0 1px var(--ran-color-border);
+  text-align: start;
+  font-size: var(--ran-text-label-1);
+  font-weight: var(--ran-text-label-weight);
+}
+.agent-history-actions button:enabled:hover {
+  background: var(--ran-color-bg-active);
+}
+.agent-history-actions button:enabled:active {
+  background: color-mix(in srgb, var(--ran-color-bg-active) 96%, var(--ran-color-text));
+}
+.agent-history-actions button svg {
+  flex: 0 0 var(--ran-size-1);
+  width: var(--ran-size-1);
+  height: var(--ran-size-1);
+  color: var(--ran-color-text-secondary);
+}
+.agent-history-action-label {
+  min-width: 0;
+}
+.agent-history-actions button:disabled svg {
+  color: inherit;
+}
+.agent-history-options button:is(.agent-history-delete-current, .agent-history-delete-all):enabled {
+  color: var(--app-danger-hover);
+}
+.agent-history-danger-actions button svg {
+  color: inherit;
+}
+.agent-history-options button:is(.agent-history-delete-current, .agent-history-delete-all):enabled:hover {
+  color: var(--app-danger-active);
+}
+.agent-history-options button:is(.agent-history-delete-current, .agent-history-delete-all):enabled:active {
+  color: var(--app-danger-active);
+}
+.agent-history-options .agent-history-confirm:enabled {
+  color: var(--app-danger-foreground);
+  border-color: var(--app-danger-fill);
+  background: var(--app-danger-fill);
+}
+.agent-history-options .agent-history-confirm:enabled:hover {
+  border-color: var(--app-danger-hover);
+  background: var(--app-danger-hover);
+}
+.agent-history-options .agent-history-confirm:enabled:active {
+  border-color: var(--app-danger-active);
+  background: var(--app-danger-active);
+}
+.agent-history-options button:disabled {
+  color: var(--ran-color-text-disabled);
+  border-color: var(--ran-color-border);
+  background: var(--ran-color-bg-muted);
+  cursor: default;
+}
+.agent-history-options button:focus-visible,
+.agent-history-options input:focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 2px;
+}
+.agent-history-actions button:focus-visible {
+  outline-offset: -2px;
+}
+.agent-panel-key-label {
+  font-size: var(--ran-text-label-3);
+  color: var(--ran-color-text-secondary);
+}
+/* ranui r-input draws its own field — host carries layout only (no border). */
+.agent-panel-key-input,
+.agent-panel-ollama-model {
+  width: 100%;
+  box-sizing: border-box;
+}
+/* The conversation list, input box, and message bubbles now live in the
+   @ranuts/chat-ui ChatView (it injects its own `cui-*` styles). It must flex to
+   fill the panel's remaining height below the header/settings/toolbar. */
+.agent-panel .cui-msg-agent,
+.agent-panel .cui-msg-error,
+.agent-panel .cui-activity {
+  max-width: 72ch;
+}
+.agent-panel .cui-msg-user {
+  max-width: min(88%, 64ch);
+}
+.agent-panel .cui-composer:focus-within {
+  border-color: var(--ran-color-text-secondary);
+  box-shadow: none;
+}
+.agent-panel .cui-message-actions .cui-apply {
+  min-height: var(--ran-size-7);
+  padding: var(--ran-space-1) var(--ran-space-2);
+  border: 1px solid var(--ran-color-border);
+  border-radius: var(--ran-radius-sm);
+  background: var(--ran-color-bg-elevated);
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+  font-weight: var(--ran-text-button-weight);
+}
+.agent-panel .cui-message-actions .cui-apply:hover:not(:disabled) {
+  border-color: var(--ran-color-border-hover);
+  background: var(--ran-color-bg-hover);
+  color: var(--ran-color-text);
+}
+.agent-panel .cui-message-actions .cui-apply[data-state='verified'] {
+  border-color: var(--ran-color-success);
+  color: var(--ran-color-success);
+}
+.agent-panel .cui-message-actions .cui-apply:focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 2px;
+}
+.agent-panel .cui-msg-tool .cui-bubble,
+.agent-panel .cui-send:disabled {
+  background: var(--ran-color-bg-muted);
+  color: var(--ran-color-text-secondary);
+}
+.agent-panel .cui-scroll-bottom {
+  color: var(--ran-color-text-secondary);
+}
+.agent-plan-mode {
+  display: flex;
+  align-items: center;
+  gap: var(--ran-space-1);
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+}
+.agent-writing-task,
+.agent-writing-language {
+  min-width: 0;
+  max-width: 100%;
+  border: 0;
+  padding: var(--ran-space-1) calc(var(--ran-space-1) / 2);
+  background: transparent;
+  color: var(--ran-color-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.agent-plan-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ran-space-2);
+  padding: var(--ran-space-3) 0;
+  margin: var(--ran-space-2) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ran-color-text);
+  max-height: none;
+  overflow: auto;
+  flex-shrink: 0;
+}
+.agent-plan-preview[hidden],
+.agent-writing-task[hidden],
+.agent-writing-language[hidden] {
+  display: none;
+}
+.agent-plan-target,
+.agent-plan-status {
+  font-size: var(--ran-text-label-3);
+  color: var(--ran-color-text-secondary);
+  overflow-wrap: anywhere;
+}
+.agent-plan-before,
+.agent-plan-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  margin: 0;
+}
+.agent-plan-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--ran-space-1) var(--ran-space-2);
+  flex-wrap: wrap;
+}
+.agent-plan-buttons r-button {
+  font-size: var(--ran-text-label-3);
+  --ran-btn-font-size: var(--ran-text-label-3);
+  --ran-btn-padding: var(--ran-space-1) var(--ran-space-2);
+  --ran-btn-font-weight: var(--ran-text-label-weight);
+  --ran-btn-box-shadow: none;
+}
+.agent-panel .agent-plan-buttons r-button::part(content) {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  min-height: var(--ran-size-7);
+  padding: var(--ran-space-1) var(--ran-space-2);
+  font-size: var(--ran-text-label-3);
+  line-height: 1.5;
+  font-weight: 500;
+}
+.agent-panel .cui-msg-error .cui-bubble {
+  background: transparent;
+  border: 0;
+  border-left: 2px solid var(--ran-color-danger);
+  border-radius: 0;
+  padding: calc(var(--ran-space-1) / 2) 0 calc(var(--ran-space-1) / 2) var(--ran-space-3);
+  color: var(--ran-color-text-secondary);
+}
+
+/* r-select draws its own control — host carries layout only. */
+.agent-panel-provider {
+  width: 100%;
+  box-sizing: border-box;
+}
+.agent-panel-note:empty {
+  display: none;
+}
+.agent-panel-link {
+  color: var(--ran-color-link);
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: underline;
+}
+.agent-panel-link:hover,
+.agent-panel-link:focus-visible {
+  /* One step up the blue ladder from --ran-color-link. Not --ran-color-primary-hover:
+     since ranui 0.4 that is the near-black #383838, a light-only literal that would
+     leave the hover state invisible in dark mode. */
+  color: var(--ran-blue-900);
+}
+/* (Review / quote / clear moved into ChatView's `.cui-actions` slot above the
+   input; the old top toolbar is gone.) */
+
+/* ranui renders select dropdowns and popovers as body-level <r-dropdown>
+   portals, which the agent panel (z-index 10000) would otherwise cover. Since
+   ranui 0.5.1 the floating controller writes the layer inline as
+   var(--ran-dropdown-host-z-index, var(--ran-z-dropdown, 1100)), so lift it
+   through that property; a plain z-index rule loses to the inline style. */
+r-dropdown[role='listbox'] {
+  --ran-dropdown-host-z-index: 100000;
+}
+
+/* r-select / r-button below render themselves — host carries layout only. */
+.agent-panel-model {
+  flex: 1;
+  min-width: 0;
+}
+.agent-panel-load {
+  box-shadow: none;
+  width: fit-content;
+  flex-shrink: 0;
+  width: 100%;
+}
+
+/* ranui controls in the model row own their internal appearance. */
+
+/* ranui DESIGN.md §5: motion is a preference, not a given. Everything animated here is
+   decoration on a state that is already visible from the layout change, so honouring the
+   setting costs nothing and removes the vestibular trigger. Kept to this file's own
+   selectors — ranui's components carry their own reduced-motion rules. */
+@media (prefers-reduced-motion: reduce) {
+  .loading-mask {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+.agent-panel-gguf-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ran-space-2, 8px);
+  min-width: 0;
+}
+/* The real file input remains focusable and opens the native picker. */
+.agent-panel-gguf-choose {
+  position: relative;
+  align-self: flex-start;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: var(--ran-space-2) var(--ran-space-3);
+  border: 1px solid var(--ran-color-border, var(--ran-gray-400));
+  border-radius: var(--ran-radius-sm);
+  color: var(--ran-color-text);
+  cursor: pointer;
+}
+.agent-panel-gguf-choose:focus-within {
+  outline: 2px solid var(--ran-color-primary, var(--ran-gray-1000));
+  outline-offset: 2px;
+}
+.agent-panel-gguf-files {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.agent-panel-gguf-filenames {
+  overflow-wrap: anywhere;
+  color: var(--ran-color-text);
+  font-size: var(--ran-text-label-3);
+}
+.agent-panel-gguf-filenames:empty {
+  display: none;
+}
+
+/* Document assistant: conversation, configuration and review are distinct surfaces. */
+/* Every icon-only control in the header shares one target box. They sit in a
+   single row, so unequal boxes read as misalignment rather than as hierarchy
+   (DESIGN.md §11, "Alignment is structure"). Coarse pointers grow them
+   together via --app-control-touch. */
+.agent-panel-header button,
+.agent-panel-quote {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ran-size-7);
+  height: var(--ran-size-7);
+  padding: 0;
+  border: 0;
+  border-radius: var(--ran-radius-sm);
+  background: transparent;
+  color: var(--ran-color-text-secondary);
+  cursor: pointer;
+}
+.agent-panel-header button:hover,
+.agent-panel-quote:hover {
+  background: var(--ran-color-bg-muted);
+  color: var(--ran-color-text);
+}
+.agent-panel-settings-toggle {
+  /* The title owns flex:1, so the gear already sits against the trailing
+     controls; a margin here would fight the close button beside it. */
+  border: none;
+  background: none;
+  font-size: var(--ran-text-copy-1);
+  line-height: 1;
+  cursor: pointer;
+  margin: 0;
+}
+.agent-panel-header button:focus-visible,
+.agent-panel-quote:focus-visible,
+.agent-writing-task:focus-visible,
+.agent-writing-language:focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 2px;
+}
+.agent-panel-review {
+  display: flex;
+  align-items: center;
+  gap: var(--ran-space-1);
+  color: var(--ran-color-text-secondary);
+  cursor: pointer;
+  font-size: var(--ran-text-label-3);
+}
+.agent-panel-note {
+  font-size: var(--ran-text-label-3);
+  color: var(--ran-color-text-secondary);
+  white-space: pre-line;
+  line-height: 1.6;
+}
+.agent-panel .cui-root {
+  --cui-bg: var(--ran-color-bg-elevated);
+  --cui-text: var(--ran-color-text);
+  --cui-muted: var(--ran-color-text-secondary);
+  --cui-border: var(--ran-color-border);
+  --cui-accent: var(--ran-color-primary);
+  --cui-accent-contrast: var(--ran-color-primary-text);
+  --cui-user-bg: var(--ran-color-bg-active);
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  font-family: inherit;
+}
+.agent-panel .cui-actions {
+  gap: var(--ran-space-2);
+}
+.agent-panel-quote {
+  margin-left: auto;
+}
+.agent-plan-heading {
+  font-size: var(--ran-text-label-1);
+  font-weight: var(--ran-text-heading-weight);
+  line-height: 1.5;
+}
+.agent-plan-proposed-label {
+  margin-top: var(--ran-space-1);
+  font-size: var(--ran-text-label-3);
+  font-weight: var(--ran-text-label-weight);
+  color: var(--ran-color-text-secondary);
+}
+.agent-plan-content,
+.agent-plan-before {
+  font-size: var(--ran-text-label-2);
+  line-height: 1.65;
+}
+.agent-plan-content {
+  padding: var(--ran-space-1) 0;
+  background: transparent;
+  border-radius: 0;
+  max-height: 240px;
+  overflow: auto;
+}
+.agent-plan-original {
+  font-size: var(--ran-text-label-3);
+  color: var(--ran-color-text-secondary);
+}
+.agent-plan-original summary,
+.agent-plan-secondary > summary {
+  cursor: pointer;
+  width: fit-content;
+  padding: var(--ran-space-1) 0;
+  font-size: var(--ran-text-label-3);
+  line-height: 1.6;
+  color: var(--ran-color-text-secondary);
+}
+.agent-plan-secondary {
+  border-top: 1px solid var(--ran-color-border);
+  padding-top: var(--ran-space-1);
+}
+.agent-plan-secondary[open] > .agent-plan-buttons {
+  margin-top: var(--ran-space-1);
+}
+.agent-plan-secondary > summary:hover {
+  color: var(--ran-color-text);
+}
+.agent-plan-original .agent-plan-before {
+  max-height: 160px;
+  overflow: auto;
+  margin-top: var(--ran-space-2);
+}
+@media (max-width: 760px) {
+  body.agent-docked #app iframe {
+    width: 100% !important;
+  }
+}
+.agent-model-status:empty {
+  display: none;
+}
+
+/* A writing surface beside the document: quiet chrome, readable conversation,
+   and task choices that prepare a draft instead of sending on the user's behalf. */
+.agent-model-status {
+  overflow-wrap: anywhere;
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+  margin: 0 var(--agent-composer-inset) var(--ran-space-3);
+  padding: 0 0 0 calc(var(--agent-composer-inset) / 2);
+  border-left: 2px solid var(--ran-color-primary);
+  line-height: 1.55;
+}
+.agent-panel .cui-messages {
+  padding: var(--ran-space-6) var(--ran-space-4);
+  gap: var(--ran-space-4);
+  line-height: 1.75;
+}
+/* One block per element: the welcome surface used to declare these twice, and
+   the later copy silently won -- the earlier font-size and the flex row were
+   dead code that still read as intent. */
+.agent-panel .cui-empty {
+  width: 100%;
+  max-width: none;
+  margin: auto 0;
+  box-sizing: border-box;
+  padding: var(--ran-space-6) 0;
+  font-size: var(--ran-text-heading-2);
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 1.25;
+}
+.agent-panel .cui-empty-actions {
+  display: block;
+  margin-top: var(--ran-space-3);
+}
+.agent-welcome-hint {
+  /* The actions row is a block, so a flex-basis here would be inert. */
+  margin: 0 0 var(--ran-space-6);
+  font-size: var(--ran-text-label-2);
+  font-weight: 400;
+  line-height: 1.65;
+  letter-spacing: 0;
+  color: var(--ran-color-text-secondary);
+}
+.agent-panel .cui-empty-actions .agent-configure {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--ran-space-3) / 2);
+  margin-top: 0;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+  font-weight: 400;
+  text-decoration: none;
+}
+.agent-panel .agent-configure::after {
+  content: '→';
+}
+.agent-panel .cui-empty-actions .agent-configure:hover {
+  color: var(--ran-color-text);
+}
+.agent-panel .cui-message-actions {
+  gap: calc(var(--ran-space-4) / 2 + var(--ran-space-1) / 2);
+  margin-top: calc(var(--ran-space-1) / 2);
+}
+.agent-panel .cui-message-actions button {
+  min-height: var(--ran-size-7);
+}
+.agent-panel .cui-input {
+  min-height: 1.65em;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  line-height: 1.65;
+}
+.agent-panel .cui-composer-bar {
+  margin-top: var(--ran-space-2);
+}
+@media (max-width: 480px) {
+  .agent-panel-header button,
+  .agent-panel-quote,
+  .agent-panel-clear {
+    width: var(--app-control-touch);
+    height: var(--app-control-touch);
+    flex-shrink: 0;
+  }
+  .agent-panel-clear {
+    flex-basis: var(--app-control-touch);
+  }
+  .agent-panel .cui-messages {
+    padding: var(--ran-space-6) var(--ran-space-4);
+  }
+  .agent-panel .cui-footer {
+    padding-bottom: max(var(--ran-space-4), env(safe-area-inset-bottom));
+  }
+}
+
+/* Reserve the composer when a keyboard or short window reduces usable height. */
+@container agent-panel (max-height: 600px) {
+  .agent-panel-header {
+    min-height: 48px;
+    padding: var(--ran-space-2) var(--ran-space-4);
+  }
+  .agent-model-status {
+    margin-bottom: calc(var(--ran-space-3) / 2);
+  }
+  .agent-panel-settings {
+    box-sizing: border-box;
+    max-height: min(35%, max(32px, calc(100dvh - 280px)));
+    padding: var(--ran-space-2);
+  }
+  .agent-panel .cui-root {
+    min-height: 124px;
+  }
+  .agent-panel .cui-messages {
+    padding: 0 var(--ran-space-4);
+  }
+  .agent-panel .cui-footer {
+    padding: var(--ran-space-2) var(--ran-space-4);
+    padding-bottom: max(var(--ran-space-2), env(safe-area-inset-bottom));
+  }
+  .agent-panel .cui-composer {
+    padding: calc(var(--ran-space-4) / 2 + var(--ran-space-1) / 2);
+  }
+  .agent-panel .cui-input {
+    min-height: 1.65em;
+    max-height: 160px;
+  }
+  .agent-panel .cui-composer-bar {
+    margin-top: var(--ran-space-2);
+  }
+}
+
+/* A single compact loading surface beside the existing model status. */
+.agent-runtime-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--ran-space-2);
+  padding: var(--ran-space-3) var(--ran-space-4);
+}
+.agent-runtime-row[hidden],
+.agent-runtime-row [hidden] {
+  display: none !important;
+}
+.agent-runtime-row .agent-model-status {
+  display: block;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+.agent-model-progress {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  height: 3px;
+  margin: 0;
+  grid-column: 1 / -1;
+  accent-color: var(--ran-color-primary);
+}
+.agent-runtime-row r-button {
+  justify-self: end;
+}
+.agent-panel .agent-runtime-row r-button::part(content) {
+  min-height: var(--ran-size-7);
+  padding: var(--ran-space-1) var(--ran-space-2);
+  font-size: var(--ran-text-label-2);
+}
+.agent-panel .agent-runtime-row r-button::part(button) {
+  box-shadow: none;
+}
+.agent-device-section .agent-runtime-row {
+  padding: var(--ran-space-3) 0;
+}
+@media (max-height: 600px) {
+  .agent-runtime-row {
+    padding: var(--ran-space-2) var(--ran-space-4);
+  }
+}
+
+/* Optional GPU sources stay together without occupying the settings home. */
+.agent-model-sources[hidden] {
+  display: none;
+}
+.agent-model-sources summary {
+  cursor: pointer;
+  padding: var(--ran-space-1) 0;
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+}
+.agent-model-sources summary:focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 2px;
+}
+.agent-model-sources r-input {
+  display: block;
+  margin-top: var(--ran-space-3);
+}
+
+/* Product surfaces: each view owns the available space. */
+.agent-panel {
+  /* Content, text and navigation have different boxes but named shared rails. */
+  --agent-content-inset: var(--ran-space-4);
+  --agent-title-inset: var(--ran-space-2);
+  --agent-navigation-size: var(--app-control-height);
+  --agent-navigation-inset: calc((var(--agent-navigation-size) - var(--ran-size-1)) / 2);
+  /* Status lines beside the composer (model state, readiness, write
+     destination) line up with the composer's *text*, not its edge: footer
+     padding plus the composer's own padding. Three rules must agree, so the
+     sum is named once here instead of repeated as arithmetic (DESIGN.md §11,
+     "When a value must equal another value, name it"). */
+  --agent-composer-inset: calc(var(--ran-space-4) + var(--ran-space-1));
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  max-width: 100vw;
+  height: 100dvh;
+  container: agent-panel / size;
+  box-sizing: border-box;
+  background: var(--ran-color-bg-elevated);
+  border-left: 1px solid var(--ran-color-border);
+  font-size: var(--ran-text-copy-2);
+  width: min(var(--agent-panel-width, 432px), 100vw);
+  box-shadow: none;
+}
+.agent-panel [hidden] {
+  display: none !important;
+}
+.agent-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--ran-color-border);
+  box-sizing: border-box;
+  min-height: 56px;
+  flex: 0 0 auto;
+  padding: var(--ran-space-2) var(--agent-content-inset);
+  gap: calc(var(--ran-space-1) / 2);
+}
+.agent-panel-header .agent-panel-title {
+  display: block;
+  flex: 0 1 auto;
+  width: auto;
+  justify-content: flex-start;
+  text-align: left;
+  font-family: inherit;
+  font-weight: var(--ran-text-heading-weight);
+  font-size: var(--ran-text-copy-2);
+  letter-spacing: -0.02em;
+  min-width: 0;
+  /* Extend the hit area into the gutter; text stays on the content rail.
+     Trailing free space belongs to layout, never to the title's hover fill. */
+  padding-inline: var(--agent-title-inset);
+  margin-inline-start: calc(-1 * var(--agent-title-inset));
+  margin-inline-end: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ran-color-text);
+  background: transparent;
+}
+.agent-panel-settings {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  flex: 1 1 auto;
+  max-height: none;
+  padding: var(--agent-content-inset);
+  gap: var(--ran-space-4);
+  border-bottom: 0;
+  scrollbar-width: thin;
+}
+.agent-panel-settings-hidden {
+  display: none;
+}
+.agent-panel[data-view='settings'] > .agent-runtime-row,
+.agent-panel[data-view='history'] > .agent-runtime-row {
+  display: none;
+}
+.agent-panel-settings h2 {
+  margin: 0;
+  font-size: var(--ran-text-heading-3);
+  font-weight: 600;
+  letter-spacing: -0.045em;
+  line-height: 1.3;
+}
+.agent-use-card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.agent-use-card h3,
+.agent-use-card summary {
+  font-size: var(--ran-text-copy-2);
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.agent-use-card p {
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+  line-height: 1.65;
+  margin: var(--ran-space-3) 0 var(--ran-space-4);
+}
+.agent-use-card summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ran-space-3);
+  list-style: none;
+  cursor: pointer;
+}
+.agent-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.agent-disclosure > summary::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+}
+.agent-disclosure[open] > summary::after {
+  transform: rotate(225deg);
+}
+.agent-use-card .agent-panel-endpoint {
+  padding: 0;
+  border: 0;
+  margin: 0;
+}
+.agent-disclosure > summary {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  list-style: none;
+  box-sizing: border-box;
+  min-height: var(--ran-size-7);
+  padding: var(--ran-space-1) 0;
+  font-weight: var(--ran-text-label-weight);
+}
+.agent-preferences > :not(summary) {
+  margin-top: var(--ran-space-4);
+}
+.agent-history-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--agent-content-inset);
+}
+.agent-welcome {
+  padding: var(--ran-space-6) var(--agent-content-inset);
+  overflow: auto;
+}
+.agent-welcome h2 {
+  font-size: var(--ran-text-heading-3);
+  line-height: 1.4;
+  letter-spacing: -0.04em;
+  margin: 0 0 var(--ran-space-4);
+}
+.agent-welcome > p {
+  font-size: var(--ran-text-label-2);
+  line-height: 1.85;
+  color: var(--ran-color-text-secondary);
+}
+.agent-enable-row {
+  display: flex;
+  gap: var(--ran-space-4);
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--ran-color-border);
+  padding: calc(var(--ran-space-4) + var(--ran-space-1) / 2) 0 0;
+  margin-top: 0;
+  font-size: var(--ran-text-label-3);
+}
+.agent-enable-switch {
+  --agent-switch-track-width: calc(var(--ran-size-3) * 2);
+  --agent-switch-track-height: var(--ran-size-4);
+  --agent-switch-thumb-size: var(--ran-size-2);
+  --agent-switch-inset: calc((var(--agent-switch-track-height) - var(--agent-switch-thumb-size)) / 2);
+  position: relative;
+  width: calc(var(--ran-size-7) + var(--ran-size-1));
+  height: var(--ran-size-7);
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: var(--ran-radius-full);
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.agent-enable-switch::before {
+  content: '';
+  display: block;
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  inset-inline-start: calc((100% - var(--agent-switch-track-width)) / 2 + var(--agent-switch-inset));
+  translate: 0 -50%;
+  width: var(--agent-switch-thumb-size);
+  height: var(--agent-switch-thumb-size);
+  border-radius: 50%;
+  background: var(--ran-color-bg-elevated);
+  transition: transform var(--ran-motion-duration-base);
+}
+.agent-enable-switch::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  inset-inline-start: 50%;
+  translate: -50% -50%;
+  width: var(--agent-switch-track-width);
+  height: var(--agent-switch-track-height);
+  border-radius: inherit;
+  background: var(--ran-color-text-disabled);
+}
+.agent-enable-switch[aria-checked='true']::after {
+  background: var(--ran-color-primary);
+}
+.agent-enable-switch[aria-checked='true']::before {
+  transform: translateX(
+    calc(var(--agent-switch-track-width) - var(--agent-switch-thumb-size) - var(--agent-switch-inset) * 2)
+  );
+}
+.agent-enable-switch:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.agent-enable-switch:focus-visible,
+.agent-use-card summary:focus-visible,
+.agent-preferences summary:focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 4px;
+}
+.agent-entry-note {
+  font-size: var(--ran-text-label-3);
+  color: var(--ran-color-text-secondary);
+  line-height: 1.8;
+  margin: 0;
+}
+.agent-readiness {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+  order: 3;
+  gap: var(--ran-space-2);
+  padding: 0 var(--agent-composer-inset) var(--ran-space-3);
+  margin: 0;
+  font-size: var(--ran-text-label-3);
+  line-height: 1.6;
+  color: var(--ran-color-text-secondary);
+}
+.agent-readiness[hidden] {
+  display: none;
+}
+.agent-panel .cui-footer {
+  border-top: 0;
+  padding: var(--ran-space-3) var(--ran-space-4) var(--ran-space-4);
+}
+.agent-panel .cui-composer {
+  border-color: var(--ran-color-border);
+  background: var(--ran-color-bg-elevated);
+  border-radius: var(--ran-radius-md);
+  padding: var(--ran-space-3);
+}
+.agent-panel .cui-msg-user .cui-bubble {
+  padding: var(--ran-space-3) var(--ran-space-4);
+  /* Radius comes from the ladder; 3px (radius-sm/2) was a fifth step that
+     existed nowhere else in the product (DESIGN.md §4). */
+  border-radius: var(--ran-radius-md) var(--ran-radius-md) var(--ran-radius-sm) var(--ran-radius-md);
+  background: var(--ran-color-bg-muted);
+}
+.agent-panel .cui-send,
+.agent-panel .cui-stop {
+  border-radius: var(--ran-radius-sm);
+  width: var(--ran-size-7);
+  height: var(--ran-size-7);
+}
+@media (pointer: coarse) {
+  .agent-panel .cui-send,
+  .agent-panel .cui-stop {
+    width: var(--app-control-touch);
+    height: var(--app-control-touch);
+  }
+}
+.agent-panel .agent-document-scope {
+  margin: 0;
+  max-width: 100%;
+}
+@media (max-width: 760px) {
+  .agent-panel {
+    width: 100vw;
+  }
+  .agent-panel-resizer {
+    display: none !important;
+  }
+  body.agent-docked #app iframe {
+    width: 100% !important;
+  }
+}
+@media (max-width: 480px) {
+  .agent-panel-header {
+    padding: var(--ran-space-2) var(--ran-space-4);
+  }
+  /* No per-width button geometry: the shared 32px target stays, and the
+     coarse-pointer block grows every header control to --app-control-touch
+     together. A 34x40 box here made the row ragged against the 44px clear
+     button beside it. */
+  .agent-panel-settings,
+  .agent-history-view {
+    padding: var(--ran-space-4);
+  }
+  .agent-panel-header .agent-panel-title {
+    flex: 0 1 auto;
+    width: auto;
+    font-size: var(--ran-text-copy-2);
+  }
+  .agent-panel .cui-footer {
+    padding: var(--ran-space-3) var(--ran-space-4) max(var(--ran-space-3), env(safe-area-inset-bottom));
+  }
+}
+@container agent-panel (max-height:600px) {
+  .agent-panel-settings {
+    max-height: none;
+    padding: var(--ran-space-4);
+  }
+  .agent-panel-header {
+    min-height: 48px;
+  }
+  .agent-readiness {
+    padding-bottom: calc(var(--ran-space-3) / 2);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-enable-switch::before {
+    transition: none;
+  }
+}
+
+.agent-panel-write-destination {
+  flex: 0 0 auto;
+  order: 4;
+  padding: 0 var(--agent-composer-inset) var(--ran-space-3);
+  font-size: var(--ran-text-label-3);
+  line-height: 1.6;
+  color: var(--ran-color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* Hidden panels must not intercept the editor even after shared surface rules. */
+.agent-panel.agent-panel-hidden {
+  display: none;
+}
+.agent-panel-settings h2:focus {
+  outline: none;
+}
+.agent-quote-remove {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+}
+
+/* Settings share one field rhythm across native and ranui controls. */
+.agent-settings-field,
+.agent-task-model-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--ran-space-2);
+  font-size: var(--ran-text-label-3);
+  line-height: 1.6;
+  color: var(--ran-color-text-secondary);
+}
+.agent-settings-field:has(> [hidden]) {
+  display: none;
+}
+.agent-panel-endpoint {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ran-space-4);
+}
+.agent-panel-settings r-input,
+.agent-panel-settings r-select {
+  width: 100%;
+  min-width: 0;
+  --ran-input-border-radius: var(--ran-radius-sm);
+  --ran-input-min-height: var(--ran-size-7);
+  --ran-input-content-min-height: calc(var(--ran-size-7) - 2px);
+  --ran-input-content-font-size: var(--ran-text-label-2);
+  --ran-input-content-padding: 0 var(--ran-space-3);
+  --ran-select-border-radius: var(--ran-radius-sm);
+  --ran-select-height: var(--ran-size-7);
+  --ran-select-font-size: var(--ran-text-label-2);
+}
+.agent-panel-settings r-button {
+  --ran-btn-padding: 0;
+  --ran-btn-box-shadow: none;
+  --ran-btn-surface-background: transparent;
+}
+.agent-panel-settings r-button::part(content) {
+  box-sizing: border-box;
+  min-height: var(--ran-size-7);
+  display: flex;
+  align-items: center;
+  font-size: var(--ran-text-label-3);
+  padding: var(--ran-space-1) var(--ran-space-3);
+  border-color: transparent;
+  background: transparent;
+  color: var(--ran-btn-color, var(--ran-color-text));
+}
+.agent-panel-settings r-button:not([disabled]):hover::part(content) {
+  background: var(--ran-color-bg-hover);
+}
+.agent-panel-settings r-button:not([disabled]):active::part(content) {
+  background: var(--ran-color-bg-active);
+}
+.agent-panel-settings .agent-panel-load::part(content),
+.agent-panel-settings .agent-panel-endpoint-connect::part(content) {
+  border-color: var(--ran-color-primary);
+  background: var(--ran-color-primary);
+  color: var(--ran-color-primary-text);
+}
+.agent-panel-settings :is(.agent-panel-load, .agent-panel-endpoint-connect):not([disabled]):hover::part(content) {
+  background: var(--ran-color-primary-hover);
+}
+.agent-panel-settings :is(.agent-panel-load, .agent-panel-endpoint-connect):not([disabled]):active::part(content) {
+  background: var(--ran-color-primary-active);
+}
+.agent-panel-settings r-button[disabled]::part(content) {
+  border-color: transparent;
+  color: var(--ran-color-text-disabled);
+  background: transparent;
+}
+.agent-panel-endpoint-connect {
+  align-self: flex-start;
+}
+.agent-panel-endpoint-status:empty {
+  display: none;
+}
+.agent-use-card .agent-model-memory {
+  margin: var(--ran-space-3) 0 0;
+  font-size: var(--ran-text-label-3);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ran-space-3) / 2);
+}
+.agent-model-memory:empty {
+  display: none;
+}
+.agent-panel-local-writing-label {
+  color: var(--ran-color-text-secondary);
+  line-height: 1.75;
+  font-size: var(--ran-text-label-3);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ran-space-2);
+}
+.agent-panel-local-writing {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  margin: var(--ran-space-1) 0 0;
+  accent-color: var(--ran-color-primary);
+}
+.agent-panel-header button[aria-expanded='true']:not(.agent-panel-title) {
+  background: var(--ran-color-bg-muted);
+  color: var(--ran-color-text);
+}
+.agent-panel-settings > .agent-panel-note {
+  margin: calc(-1 * var(--ran-space-2)) 0 0;
+}
+
+/* Compact model settings: one source and one active configuration. */
+.agent-source-picker {
+  width: 100%;
+}
+.agent-model-choice {
+  min-width: 0;
+  flex: 1;
+}
+.agent-model-caption {
+  display: none;
+}
+.agent-model-choice r-select {
+  width: 100%;
+}
+.agent-model-cache {
+  min-width: 0;
+}
+.agent-model-cache > summary {
+  cursor: pointer;
+  min-height: var(--ran-size-7);
+  display: flex;
+  align-items: center;
+  font-size: var(--ran-text-label-2);
+  color: var(--ran-color-text-secondary);
+}
+.agent-model-cache-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ran-space-2);
+}
+.agent-model-cache-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ran-space-2);
+  padding-block: var(--ran-space-2);
+}
+.agent-model-cache-row > span {
+  flex: 1 1 140px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--ran-text-label-2);
+}
+.agent-cache-delete {
+  --ran-btn-color: var(--app-danger-fill);
+}
+.agent-release-memory {
+  align-self: flex-start;
+  margin-top: 0;
+}
+.agent-preferences {
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+}
+.agent-preferences .agent-settings-icon {
+  display: none;
+}
+.agent-preferences > summary {
+  min-height: var(--ran-size-7);
+}
+.agent-preferences[open] > summary {
+  margin-bottom: var(--ran-space-4);
+}
+.agent-panel :is(button, summary, r-select, r-input, r-button):focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 2px;
+}
+.agent-quote-context {
+  min-width: 0;
+  margin-bottom: var(--ran-space-3);
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+}
+.agent-quote-context[hidden] {
+  display: none;
+}
+.agent-selection-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ran-space-2);
+  width: 100%;
+  min-height: 28px;
+  padding: var(--ran-space-1) 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.agent-selection-toggle:hover {
+  color: var(--ran-color-text);
+}
+.agent-selection-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-selection-chevron {
+  flex: 0 0 auto;
+  transition: transform var(--ran-motion-duration-base) cubic-bezier(0.22, 1, 0.36, 1);
+}
+.agent-quote-context[data-open='true'] .agent-selection-chevron {
+  transform: rotate(180deg);
+}
+/* Adapted card resize: intrinsic grid tracks reverse from the current height. */
+.agent-selection-reveal {
+  --resize-dur: var(--ran-motion-duration-base);
+  --resize-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  display: grid;
+  grid-template-rows: 0fr;
+  visibility: hidden;
+  transition:
+    grid-template-rows var(--resize-dur) var(--resize-ease),
+    visibility 0s linear var(--resize-dur);
+  will-change: grid-template-rows;
+}
+.agent-quote-context[data-open='true'] .agent-selection-reveal {
+  grid-template-rows: 1fr;
+  visibility: visible;
+  transition-delay: 0s;
+}
+.agent-selection-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+.agent-quoted-text {
+  min-width: 0;
+  max-height: 160px;
+  margin: 0;
+  padding: var(--ran-space-2) 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font: inherit;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-selection-reveal,
+  .agent-selection-chevron {
+    transition: none !important;
+  }
+}
+
+.agent-panel-model-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--ran-space-3);
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+.agent-model-memory {
+  margin: var(--ran-space-2) 0 0;
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+}
+.agent-service-section {
+  border: 0;
+  padding: 0;
+}
+
+.agent-panel-load,
+.agent-release-memory {
+  box-shadow: none;
+  align-self: flex-start;
+  width: fit-content;
+}
+
+/* One fixed voice toolbar across idle, permission, listening and finishing.
+   Status and cancellation own lanes so no state resizes the composer. */
+.agent-speech {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ran-space-1);
+}
+.agent-speech-mic,
+.agent-speech-cancel,
+.agent-speech-privacy button {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: var(--ran-size-7);
+  height: var(--ran-size-7);
+  padding: 0;
+  border: 0;
+  border-radius: var(--ran-radius-sm);
+  background: transparent;
+  color: var(--ran-color-text-secondary);
+  cursor: pointer;
+}
+.agent-speech-mic:hover:enabled,
+.agent-speech-mic[aria-pressed='true'],
+.agent-speech-cancel:hover:enabled,
+.agent-speech-privacy button:hover:enabled,
+.agent-speech-privacy[open] button {
+  background: var(--ran-color-bg-muted);
+  color: var(--ran-color-text);
+}
+.agent-speech-mic svg:last-child,
+.agent-speech-mic[aria-pressed='true'] svg:first-child {
+  display: none;
+}
+.agent-speech-mic[aria-pressed='true'] svg:last-child {
+  display: block;
+}
+/* One lane for the language label: it yields before it can cover Stop/Send,
+   so it is declared once, with the select's public hooks. */
+.agent-speech-language {
+  flex: 1 1 96px;
+  width: auto;
+  min-width: 0;
+  max-width: 96px;
+  --ran-select-background-color: transparent;
+  --ran-select-border: 1px solid transparent;
+  --ran-select-hover-border: 1px solid transparent;
+  --ran-select-height: var(--ran-size-7);
+  --ran-select-min-height: var(--ran-size-7);
+  --ran-select-font-size: var(--ran-text-label-3);
+  --ran-select-color: var(--ran-color-text-secondary);
+  --ran-select-item-hover-color: var(--ran-color-text);
+  --ran-select-search-focus-color: var(--ran-color-text);
+}
+.agent-speech-feedback {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  height: var(--ran-size-7);
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+  line-height: 1.5;
+}
+.agent-speech-feedback > [role='status'] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* While dictating, the fixed language lane displays the live state instead.
+   Its disabled selector keeps its bounds, and the trailing controls stay put. */
+/* Give live dictation priority over the secondary source picker. */
+.agent-panel .cui-actions:has(.agent-speech[data-feedback='true']) .agent-sources-toggle {
+  display: none;
+}
+.agent-speech[data-feedback='true'] .agent-speech-language {
+  visibility: hidden;
+}
+.agent-speech[data-feedback='true'] .agent-speech-feedback > [role='status'] {
+  position: absolute;
+  inset-inline-start: calc(var(--ran-size-7) + var(--ran-space-1));
+  inset-inline-end: calc(var(--ran-size-7) * 2 + var(--ran-space-1) * 2);
+  height: var(--ran-size-7);
+  line-height: var(--ran-size-7);
+}
+.agent-speech-feedback[hidden],
+.agent-speech-cancel[hidden] {
+  display: flex;
+  visibility: hidden;
+}
+.agent-speech-privacy {
+  flex: 0 0 auto;
+  --ran-popover-host-display: block;
+  --ran-popover-content-padding: var(--ran-space-3);
+}
+/* Match the select portal layer above the assistant panel (see r-dropdown above). */
+.agent-speech-popover {
+  --ran-dropdown-host-z-index: 100000;
+}
+.agent-speech-hint {
+  box-sizing: border-box;
+  width: min(256px, calc(100vw - 64px));
+  margin: 0;
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+  line-height: 1.6;
+}
+.agent-speech button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.agent-speech :is(button, r-select):focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 2px;
+}
+
+.agent-plan-buttons[hidden],
+.agent-plan-preview [hidden] {
+  display: none;
+}
+.agent-plan-preview[data-state='verified'],
+.agent-plan-preview[data-state='sent'],
+.agent-plan-preview[data-state='undone'] {
+  padding: var(--ran-space-2) 0;
+  border: 0;
+  background: transparent;
+}
+.agent-plan-preview[data-state='verified'] .agent-plan-status,
+.agent-plan-preview[data-state='sent'] .agent-plan-status,
+.agent-plan-preview[data-state='undone'] .agent-plan-status {
+  color: var(--ran-color-text);
+  font-size: var(--ran-text-label-2);
+  font-weight: var(--ran-text-label-weight);
+}
+.agent-plan-undo {
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+  line-height: 1.6;
+}
+.agent-plan-comparison {
+  max-height: 280px;
+  overflow: auto;
+  border-radius: 0;
+  background: transparent;
+  padding: var(--ran-space-1) 0;
+}
+.agent-plan-comparison table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ran-text-label-3);
+  line-height: 1.6;
+}
+.agent-plan-comparison caption {
+  text-align: start;
+  padding-bottom: var(--ran-space-2);
+  color: var(--ran-color-text-secondary);
+}
+.agent-plan-comparison th,
+.agent-plan-comparison td {
+  text-align: start;
+  vertical-align: top;
+  border-bottom: 1px solid var(--ran-color-border);
+  padding: calc(var(--ran-space-3) / 2);
+  overflow-wrap: anywhere;
+}
+.agent-plan-comparison code {
+  white-space: pre-wrap;
+}
+.agent-plan-diff,
+.agent-plan-record pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: var(--ran-text-label-2);
+  line-height: 1.7;
+  margin: 0;
+}
+.agent-plan-diff del,
+.agent-plan-diff ins {
+  display: block;
+  padding: var(--ran-space-1) 0 var(--ran-space-1) var(--ran-space-3);
+  margin-block: var(--ran-space-1);
+  border-radius: 0;
+  border-inline-start: 2px solid var(--ran-color-border-hover);
+  text-decoration: none;
+}
+.agent-plan-diff del {
+  background: transparent;
+  color: var(--ran-color-text-secondary);
+}
+.agent-plan-diff ins {
+  background: transparent;
+  color: var(--ran-color-text);
+  font-weight: var(--ran-text-copy-weight);
+}
+.agent-plan-record summary {
+  cursor: pointer;
+  padding: calc(var(--ran-space-3) / 2) 0;
+  font-size: var(--ran-text-label-3);
+}
+.agent-plan-draft {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  border: 1px solid var(--ran-color-border);
+  border-radius: var(--ran-radius-sm);
+  background: var(--ran-color-bg-elevated);
+  color: var(--ran-color-text);
+  font: inherit;
+  line-height: 1.6;
+  padding: calc(var(--ran-space-4) / 2 + var(--ran-space-1) / 2);
+  margin-bottom: var(--ran-space-2);
+}
+.agent-refinement-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ran-space-2);
+  padding: calc(var(--ran-space-3) / 2) 0;
+  font-size: var(--ran-text-label-3);
+  color: var(--ran-color-text-secondary);
+}
+.agent-refinement-context[hidden] {
+  display: none;
+}
+.agent-refinement-context button {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.agent-plan-preview:focus-visible,
+.agent-plan-preview :is(summary, textarea, r-button):focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 2px;
+}
+
+.agent-prepare-action {
+  border: 0;
+  background: transparent;
+  color: var(--ran-color-text);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  min-height: var(--ran-size-7);
+  padding: 0;
+  cursor: pointer;
+}
+.agent-prepare-action[hidden] {
+  display: none;
+}
+.agent-custom-sources h3 {
+  font-size: var(--ran-text-label-2);
+  font-weight: 500;
+  margin: 0 0 var(--ran-space-3);
+}
+
+.agent-model-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ran-space-2);
+}
+
+/* Listening is an actual state, not simulated microphone activity. */
+.agent-speech[data-state='listening'] .agent-speech-mic {
+  color: var(--ran-color-text);
+  background: var(--ran-color-bg-muted);
+}
+.agent-speech-processing svg {
+  display: none !important;
+}
+.agent-speech-processing::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: agent-speech-spin 1s linear infinite;
+}
+@keyframes agent-speech-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-speech-processing::before {
+    animation: none;
+  }
+}
+
+/* Conversation browsing shares one text spine; data management stays secondary. */
+.agent-conversations {
+  min-width: 0;
+  padding-bottom: var(--ran-space-4);
+}
+.agent-history-heading {
+  margin: 0 0 var(--ran-space-4);
+  font-size: var(--ran-text-heading-4);
+  font-weight: var(--ran-text-heading-weight);
+  letter-spacing: var(--ran-text-heading-tracking);
+}
+.agent-history-search-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ran-space-2);
+  box-sizing: border-box;
+  min-height: var(--ran-size-7);
+  padding: var(--ran-space-1) var(--ran-space-2);
+  border: 1px solid var(--ran-color-border);
+  border-radius: var(--ran-radius-sm);
+  color: var(--ran-color-text-secondary);
+  background: var(--ran-color-bg);
+}
+.agent-history-search-row > span {
+  display: flex;
+  flex-shrink: 0;
+}
+.agent-history-search {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ran-color-text);
+  font: inherit;
+  font-size: var(--ran-text-label-2);
+  line-height: var(--ran-line-height);
+}
+.agent-history-search:focus {
+  outline: none;
+}
+.agent-history-search-row:focus-within {
+  border-color: var(--ran-color-primary);
+  box-shadow: 0 0 0 1px var(--ran-color-primary);
+}
+.agent-conversation-list {
+  margin: var(--ran-space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.agent-conversation-group {
+  margin: var(--ran-space-4) 0 var(--ran-space-2);
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+  font-weight: var(--ran-text-label-weight);
+}
+.agent-conversation-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin-block: var(--ran-space-1);
+  margin-inline: calc(-1 * var(--ran-space-3));
+  border-radius: var(--ran-radius-sm);
+}
+/* Hover is transient, the current conversation is persistent state. They must
+   not share a fill, and the persistent one has to be the stronger of the two --
+   otherwise "you are here" reads as "the pointer is here" (DESIGN.md §11). */
+.agent-conversation-row:hover {
+  background: var(--ran-color-bg-hover);
+}
+.agent-conversation-row:has([aria-current='true']) {
+  background: var(--ran-color-bg-active);
+}
+.agent-conversation-open {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--ran-space-1);
+  min-width: 0;
+  padding: var(--ran-space-3);
+  border: 0;
+  border-radius: var(--ran-radius-sm);
+  color: var(--ran-color-text);
+  background: transparent;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.agent-conversation-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ran-text-label-1);
+  font-weight: var(--ran-text-label-weight);
+}
+.agent-conversation-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ran-space-2);
+  font-size: var(--ran-text-label-3);
+  color: var(--ran-color-text-secondary);
+}
+.agent-conversation-current {
+  font-weight: var(--ran-text-label-weight);
+}
+.agent-conversation-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--ran-size-7);
+  height: var(--ran-size-7);
+  margin-inline-end: var(--ran-space-2);
+  padding: 0;
+  border: 0;
+  border-radius: var(--ran-radius-sm);
+  color: var(--ran-color-text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+.agent-conversation-delete:hover {
+  color: var(--ran-color-danger);
+  background: var(--ran-color-bg-active);
+}
+.agent-conversation-open:focus-visible,
+.agent-conversation-delete:focus-visible,
+.agent-history-management > summary:focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 2px;
+}
+.agent-history-empty {
+  margin: var(--ran-space-8) 0;
+  text-align: center;
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-1);
+}
+.agent-history-empty[hidden] {
+  display: none;
+}
+/* Contextual document tasks share the transcript and composer's leading edge. */
+.agent-task-entry {
+  font-weight: 400;
+  letter-spacing: 0;
+  font-size: var(--ran-text-label-2);
+  width: 100%;
+  min-width: 0;
+}
+.agent-task-scope {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ran-color-text-secondary);
+  overflow-wrap: anywhere;
+  font-size: var(--ran-text-label-3);
+  line-height: 1.5;
+}
+.agent-task-list {
+  display: grid;
+  gap: var(--ran-space-1);
+  margin-top: var(--ran-space-3);
+}
+.agent-panel .agent-task-action {
+  display: flex;
+  align-items: center;
+  text-align: start;
+  min-height: var(--ran-size-7);
+  padding: var(--ran-space-2) var(--ran-space-3);
+  border: 1px solid var(--ran-color-border);
+  border-radius: var(--ran-radius-sm);
+  background: var(--ran-color-bg-elevated);
+  color: var(--ran-color-text);
+  font: inherit;
+  cursor: pointer;
+  /* Palette properties must not transition: they also fade when the theme
+     flips, each surface at its own duration while the page snaps (DESIGN.md §5).
+     A repeated hover does not need motion, so the default is none; the hook
+     stays for a host that wants one. */
+  --agent-task-action-transition: none;
+  transition: var(--agent-task-action-transition);
+}
+.agent-panel .agent-task-action:hover {
+  background: var(--ran-color-bg-muted);
+}
+.agent-panel .agent-task-action:focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 3px;
+}
+.agent-task-help,
+.agent-staged-guidance {
+  margin: var(--ran-space-3) 0 0;
+  font-size: var(--ran-text-label-3);
+  line-height: 1.6;
+  color: var(--ran-color-text-secondary);
+  overflow-wrap: anywhere;
+}
+.agent-staged-guidance {
+  margin: 0;
+}
+
+.agent-conversation-snippet {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-2);
+  font-weight: 400;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.agent-conversation-snippet[hidden],
+.agent-conversation-current[hidden],
+.agent-history-more[hidden] {
+  display: none;
+}
+.agent-history-more {
+  display: block;
+  min-height: var(--app-control-height);
+  box-sizing: border-box;
+  margin: var(--ran-space-4) auto 0;
+  padding: var(--ran-space-1) var(--ran-space-3);
+  border: 1px solid var(--ran-color-border);
+  border-radius: var(--ran-radius-sm);
+  background: transparent;
+  color: var(--ran-color-text);
+  font: inherit;
+  font-size: var(--ran-text-label-2);
+  cursor: pointer;
+}
+.agent-history-more:hover {
+  background: var(--ran-color-bg-hover);
+}
+.agent-history-more:focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 2px;
+}
+
+.agent-history-search-status {
+  min-height: 1.5em;
+  margin: var(--ran-space-1) 0 0;
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+  line-height: 1.5;
+}
+.agent-history-search-status + .agent-conversation-list {
+  margin-top: var(--ran-space-1);
+}
+
+/* Pending requests stay outside history and leave space for the composer. */
+.agent-request-queue {
+  min-width: 0;
+  margin-bottom: var(--ran-space-2);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--ran-text-label-3);
+  color: var(--ran-color-text);
+}
+.agent-request-queue[hidden],
+.agent-request-queue [hidden] {
+  display: none;
+}
+.agent-queue-heading,
+.agent-queue-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ran-space-2);
+}
+.agent-queue-heading {
+  justify-content: space-between;
+  padding-inline: var(--ran-space-1);
+}
+.agent-queue-title {
+  color: var(--ran-color-text-secondary);
+}
+.agent-queue-list {
+  max-height: min(28vh, 200px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin: var(--ran-space-1) 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: request;
+}
+.agent-queue-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  counter-increment: request;
+}
+.agent-queue-entry + .agent-queue-entry {
+  border-top: 1px solid var(--ran-color-border);
+}
+.agent-queue-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.agent-request-queue button {
+  max-width: 100%;
+  min-height: var(--ran-size-7);
+  padding: var(--ran-space-1) var(--ran-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--ran-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.agent-request-queue button:hover:enabled {
+  background: var(--ran-color-bg-hover);
+}
+.agent-request-queue .agent-queue-edit {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ran-space-2);
+  text-align: start;
+  min-width: 0;
+}
+.agent-queue-edit::before {
+  content: counter(request) '.';
+  color: var(--ran-color-text-secondary);
+}
+.agent-request-queue .agent-queue-more {
+  min-width: var(--ran-size-7);
+  font-size: var(--ran-text-heading-3);
+}
+.agent-request-queue .agent-queue-resume {
+  color: var(--ran-color-text);
+  font-weight: var(--ran-text-label-weight);
+}
+.agent-request-queue button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.agent-request-queue button:focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: -2px;
+}
+.agent-queue-actions {
+  grid-column: 1 / -1;
+  padding: 0 var(--ran-space-1) var(--ran-space-1);
+}
+.agent-queue-actions button {
+  color: var(--ran-color-text-secondary);
+}
+.agent-queue-actions button:hover:enabled {
+  color: var(--ran-color-text);
+  background: var(--ran-color-bg-hover);
+}
+.agent-queue-state,
+.agent-queue-recovery {
+  grid-column: 1 / -1;
+  padding-inline: var(--ran-space-2);
+  color: var(--ran-color-text-secondary);
+}
+.agent-queue-feedback {
+  display: block;
+  color: var(--ran-color-text-secondary);
+  overflow-wrap: anywhere;
+}
+.agent-queue-feedback:empty {
+  display: none;
+}
+@media (pointer: coarse) {
+  .agent-request-queue button {
+    min-width: var(--app-control-touch);
+    min-height: var(--app-control-touch);
+  }
+}
+
+/* Literal search matches remain readable on selected rows and in either theme. */
+.agent-search-match {
+  color: inherit;
+  background: color-mix(in srgb, var(--ran-color-primary) 18%, transparent);
+  border-radius: var(--ran-radius-sm);
+  font-weight: 600;
+  padding: 0;
+}
+
+/* The composer owns progress while a request is active; the queue keeps its original text. */
+.cui-root[data-activity] .agent-queue-state {
+  display: none;
+}
+
+/* The queue summary stays reachable without exposing every pending draft. */
+.agent-request-queue .agent-queue-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ran-space-2);
+  min-width: 0;
+  padding-inline: 0;
+  text-align: start;
+}
+.agent-queue-toggle::before {
+  content: '›';
+  color: var(--ran-color-text-secondary);
+  transform: rotate(0deg);
+}
+.agent-queue-toggle[aria-expanded='true']::before {
+  transform: rotate(90deg);
+}
+
+/* Sources and saved results share the assistant canvas, never nested cards. */
+.agent-workspace-view,
+.agent-artifacts {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--agent-content-inset);
+}
+.agent-workspace-view[hidden],
+.agent-artifacts[hidden] {
+  display: none;
+}
+.agent-workspace-view h2,
+.agent-artifacts h2 {
+  margin: 0;
+  font-size: var(--ran-text-heading-3);
+}
+.agent-workspace-view h3 {
+  margin: var(--ran-space-6) 0 var(--ran-space-2);
+  font-size: var(--ran-text-label-1);
+  font-weight: var(--ran-text-heading-weight);
+}
+.agent-workspace-view label,
+.agent-artifact-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ran-space-2);
+  margin-block: var(--ran-space-4);
+}
+.agent-workspace-view input:not([type='checkbox']):not([type='radio']):not([type='file']),
+.agent-artifact-editor input,
+.agent-artifact-editor textarea,
+.agent-artifact-editor select {
+  box-sizing: border-box;
+  max-width: 100%;
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  background: transparent;
+  border: 1px solid var(--ran-color-border);
+  border-radius: var(--ran-radius-sm);
+  padding: var(--ran-space-1) var(--ran-space-2);
+  min-height: var(--ran-size-7);
+  font-size: var(--ran-text-label-2);
+}
+.agent-artifact-editor textarea {
+  min-height: 16em;
+  resize: vertical;
+  line-height: 1.6;
+}
+.agent-workspace-view button,
+.agent-artifacts button,
+.agent-sources-toggle,
+.agent-workspace-toggle {
+  box-sizing: border-box;
+  max-width: 100%;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: var(--ran-radius-sm);
+  font: inherit;
+  font-size: var(--ran-text-label-3);
+  line-height: var(--ran-line-height);
+  overflow-wrap: anywhere;
+  padding: var(--ran-space-1) var(--ran-space-2);
+  min-height: var(--ran-size-7);
+  cursor: pointer;
+  text-align: start;
+}
+.agent-panel .cui-composer .agent-sources-toggle {
+  min-height: var(--ran-size-7);
+  padding: var(--ran-space-1) var(--ran-space-2);
+  font-size: var(--ran-text-label-3);
+}
+.agent-workspace-view button:hover:enabled,
+.agent-artifacts button:hover:enabled,
+.agent-view-back:hover:enabled,
+.agent-sources-toggle:hover:enabled,
+.agent-workspace-toggle:hover:enabled {
+  background: var(--ran-color-bg-hover);
+}
+.agent-workspace-view input:focus-visible,
+.agent-artifact-editor select:focus-visible,
+.agent-artifact-workflow input:focus-visible,
+.agent-workspace-view button:focus-visible,
+.agent-artifacts button:focus-visible,
+.agent-sources-toggle:focus-visible,
+.agent-workspace-toggle:focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 2px;
+}
+/* View owners keep navigation callbacks; the chrome shares one token rhythm. */
+.agent-panel .agent-view-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ran-space-2);
+  margin-block-end: var(--ran-space-4);
+  /* The icon viewport returns to the content rail. Its centered hit target
+     occupies a separate leading navigation column, including coarse input. */
+  margin-inline-start: calc(-1 * var(--agent-navigation-inset));
+  min-width: 0;
+}
+.agent-panel .agent-view-header h2 {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--ran-text-heading-3);
+  font-weight: var(--ran-text-heading-weight);
+  letter-spacing: var(--ran-text-heading-tracking);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.agent-settings-hero .agent-view-header {
+  margin-block-end: 0;
+}
+.agent-panel .agent-view-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: var(--agent-navigation-size);
+  height: var(--agent-navigation-size);
+  min-width: var(--agent-navigation-size);
+  min-height: var(--agent-navigation-size);
+  padding: var(--ran-space-2);
+  border: 0;
+  border-radius: var(--ran-radius-sm);
+  color: var(--ran-color-text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+.agent-panel .agent-view-back:focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 0;
+}
+.agent-workspace-view button:active:enabled,
+.agent-artifacts button:active:enabled,
+.agent-view-back:active:enabled {
+  background: var(--ran-color-bg-active);
+}
+.agent-panel :is(.agent-workspace-view, .agent-artifacts, .agent-view-header) button:disabled {
+  color: var(--ran-color-text-disabled);
+  cursor: default;
+  background: transparent;
+}
+.agent-sources-view .agent-source-attach:enabled,
+.agent-artifacts
+  button:is(
+    [data-action='import'],
+    [data-action='saveVersion'],
+    [data-action='saveNew'],
+    [data-action='accept']
+  ):enabled {
+  background: var(--ran-color-primary);
+  border-color: var(--ran-color-primary);
+  color: var(--ran-color-primary-text);
+}
+.agent-sources-view .agent-source-attach:hover:enabled,
+.agent-artifacts
+  button:is(
+    [data-action='import'],
+    [data-action='saveVersion'],
+    [data-action='saveNew'],
+    [data-action='accept']
+  ):hover:enabled {
+  background: var(--ran-color-primary-hover);
+  border-color: var(--ran-color-primary-hover);
+}
+.agent-artifacts
+  button:is(
+    [data-action='import'],
+    [data-action='saveVersion'],
+    [data-action='saveNew'],
+    [data-action='accept']
+  ):active:enabled,
+.agent-sources-view .agent-source-attach:active:enabled {
+  background: var(--ran-color-primary-active);
+  border-color: var(--ran-color-primary-active);
+}
+.agent-source-remove:enabled,
+.agent-artifacts button[data-action='delete']:enabled {
+  color: var(--app-danger-fill);
+}
+.agent-source-remove:hover:enabled,
+.agent-artifacts button[data-action='delete']:hover:enabled {
+  color: var(--app-danger-hover);
+}
+.agent-source-remove:active:enabled,
+.agent-artifacts button[data-action='delete']:active:enabled {
+  color: var(--app-danger-active);
+}
+.agent-artifacts button[data-action='confirmDelete']:enabled {
+  color: var(--app-danger-foreground);
+  background: var(--app-danger-fill);
+}
+.agent-artifacts button[data-action='confirmDelete']:hover:enabled {
+  background: var(--app-danger-hover);
+}
+.agent-artifacts button[data-action='confirmDelete']:active:enabled {
+  background: var(--app-danger-active);
+}
+.agent-artifacts > div > p {
+  margin: 0 0 var(--ran-space-4);
+  font-size: var(--ran-text-label-3);
+  color: var(--ran-color-text-secondary);
+  line-height: 1.6;
+}
+.agent-artifacts-list button {
+  width: 100%;
+  font-size: var(--ran-text-label-2);
+}
+@media (pointer: coarse) {
+  .agent-enable-switch {
+    min-width: var(--app-control-touch);
+    min-height: var(--app-control-touch);
+  }
+  .agent-panel :is(.agent-workspace-view, .agent-artifacts, .agent-history-options, .agent-view-header) button {
+    min-height: var(--app-control-touch);
+    min-width: var(--app-control-touch);
+  }
+  .agent-workspace-view input:not([type='checkbox']):not([type='radio']):not([type='file']),
+  .agent-artifact-editor > select,
+  .agent-artifact-editor > input,
+  .agent-artifact-import-field > input,
+  .agent-artifact-workflow form input,
+  .agent-history-search-row {
+    min-height: var(--app-control-touch);
+  }
+  .agent-panel-settings :is(r-input, r-select) {
+    --ran-input-min-height: var(--app-control-touch);
+    --ran-input-content-min-height: calc(var(--app-control-touch) - 2px);
+    --ran-select-height: var(--app-control-touch);
+  }
+  .agent-panel-settings r-button::part(content),
+  .agent-panel .agent-disclosure > summary,
+  .agent-history-management > summary {
+    min-height: var(--app-control-touch);
+  }
+}
+.agent-source-row,
+.agent-artifact-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ran-space-2);
+  flex-wrap: wrap;
+}
+.agent-source-row span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.agent-source-row {
+  align-items: flex-start;
+  padding-block: var(--ran-space-2);
+}
+.agent-sources-attached:not(:empty) {
+  margin-block-start: var(--ran-space-4);
+}
+.agent-sources-view .agent-source-preview > summary {
+  box-sizing: border-box;
+  min-height: var(--app-control-height);
+  padding-block: var(--ran-space-1);
+}
+.agent-sources-attached:empty {
+  display: none;
+}
+.agent-sources-view > .agent-entry-note,
+.agent-sources-status {
+  margin: 0 0 var(--ran-space-4);
+}
+.agent-sources-summary {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
+}
+.agent-artifact-provenance,
+.agent-artifact-status {
+  color: var(--ran-color-text-secondary);
+  font-size: 0.875em;
+  overflow-wrap: anywhere;
+}
+.agent-sources-status:empty,
+.agent-artifact-status:empty {
+  display: none;
+}
+.agent-artifacts-list {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.agent-artifacts-list:not(:empty) {
+  margin-block-end: var(--ran-space-4);
+}
+.agent-artifact-editor > input {
+  border: 0;
+  border-radius: 0;
+  font-weight: 600;
+  font-size: 1.125em;
+  padding-inline: 0;
+  margin-block: var(--ran-space-3);
+}
+.agent-artifact-editor > select {
+  border: 0;
+  width: auto;
+  max-width: 100%;
+  padding-inline: 0;
+  color: var(--ran-color-text-secondary);
+  margin-block-end: var(--ran-space-2);
+}
+.agent-artifact-editor > textarea {
+  field-sizing: content;
+  min-height: 6em;
+  max-height: 40vh;
+  border: 0;
+  border-radius: 0;
+  padding-inline: 0;
+}
+.agent-artifact-editor > input:focus-visible,
+.agent-artifact-editor > textarea:focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 3px;
+}
+.agent-artifact-import-field {
+  display: grid;
+  gap: var(--ran-space-2);
+  margin-block: var(--ran-space-3);
+  font-size: var(--ran-text-label-3);
+}
+.agent-artifact-import-field textarea {
+  min-height: 8em;
+  max-height: 40vh;
+}
+.agent-artifact-import-field :is(input, textarea):focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 2px;
+}
+.agent-artifact-actions button[data-action='apply'] {
+  color: var(--ran-color-primary);
+  font-weight: 600;
+}
+
+/* A narrow toolbar keeps a real language label when Stop joins Send.
+   Use the select's public spacing hooks rather than losing its text lane. */
+@container agent-panel (max-width: 360px) {
+  /* Keep the title readable when five touch targets no longer fit beside it.
+     A separate row preserves both a text-sized hover area and full targets. */
+  .agent-runtime-panel .agent-panel-header {
+    display: grid;
+    grid-template-columns: repeat(5, var(--app-control-touch));
+    justify-content: space-between;
+  }
+  .agent-runtime-panel .agent-panel-header .agent-panel-title {
+    grid-column: 1 / -1;
+    justify-self: start;
+    max-width: calc(100% + var(--agent-title-inset));
+    margin-inline-end: 0;
+  }
+  .agent-panel .cui-composer-bar,
+  .agent-panel .cui-actions {
+    gap: var(--ran-space-1);
+  }
+  .agent-panel .cui-composer .agent-sources-toggle {
+    padding-inline: var(--ran-space-1);
+  }
+  .agent-speech-language {
+    --ran-select-padding: 0 var(--ran-space-1);
+    --ran-select-item-left: 0;
+    --ran-select-item-right: var(--ran-size-1);
+    --ran-select-icon-inset-inline-end: 0;
+    --ran-select-font-weight: var(--ran-text-copy-weight);
+  }
+}
+.agent-sources-view [hidden] {
+  display: none;
+}
+.agent-sources-view [role='status']:empty {
+  display: none;
+}
+.agent-model-choice[hidden],
+.agent-offline-hint[hidden] {
+  display: none;
+}
+.agent-offline-hint {
+  font-size: var(--ran-text-label-3);
+  color: var(--ran-color-text-secondary);
+  line-height: 1.6;
+}
+
+.agent-result-choice {
+  padding: var(--ran-space-2) 0;
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+}
+.agent-result-choice[hidden] {
+  display: none;
+}
+.agent-result-choice p {
+  margin: 0 0 var(--ran-space-1);
+}
+.agent-result-choice-preview {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.agent-result-choice button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: var(--ran-space-1) var(--ran-space-2);
+  min-height: var(--ran-size-7);
+  cursor: pointer;
+  font: inherit;
+}
+.agent-result-choice button[data-action='replace'] {
+  color: var(--ran-color-text);
+  font-weight: 500;
+}
+.agent-result-choice button:focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 2px;
+}
+
+/* Source disclosure stays flat; citations open captured text without a network read. */
+.agent-source-preview {
+  min-width: 0;
+  flex: 1;
+}
+.agent-source-preview summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.agent-source-preview pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  color: var(--ran-color-text-secondary);
+  max-height: 16rem;
+  overflow: auto;
+  margin: var(--ran-space-2) 0;
+}
+.agent-source-preview small {
+  color: var(--ran-color-text-secondary);
+}
+/* An inline citation marker is superscript-scale, not a button inset: its
+   optical padding has to scale with the glyph, so it is one named local token
+   rather than a spacing step (DESIGN.md §11, optical corrections). */
+.agent-source-citation {
+  --agent-citation-inset: 0.15em;
+  display: inline;
+  border: 0;
+  padding: 0 var(--agent-citation-inset);
+  background: none;
+  color: var(--ran-color-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.agent-source-citation:focus-visible {
+  outline: 2px solid var(--ran-color-primary);
+  outline-offset: 2px;
+}
+.cui-bubble .agent-source-preview pre {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+
+/* Revision is a quiet disclosure on the artifact canvas, not another card. */
+.agent-artifact-workflow {
+  margin-block: var(--ran-space-3);
+  min-width: 0;
+}
+.agent-artifact-workflow form:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ran-space-2);
+  margin-block: var(--ran-space-2);
+}
+.agent-artifact-workflow form input {
+  flex: 1 1 160px;
+  min-width: 0;
+  border-radius: 0;
+  border-width: 0 0 1px;
+  padding-inline: 0;
+}
+.agent-artifact-workflow > p {
+  color: var(--ran-color-text-secondary);
+  font-size: 0.875em;
+  margin-block: var(--ran-space-2);
+  overflow-wrap: anywhere;
+}
+.agent-artifact-workflow > p:empty {
+  display: none;
+}
+.agent-artifact-diff {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 16em;
+  overflow: auto;
+  line-height: 1.6;
+  padding-block: var(--ran-space-2);
+}
+.agent-artifact-diff del {
+  color: var(--ran-color-text-secondary);
+}
+.agent-artifact-diff ins {
+  background: color-mix(in srgb, var(--ran-color-primary) 12%, transparent);
+  text-decoration: none;
+}
+
+.agent-artifact-scope {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--ran-color-text-secondary);
+  font-size: 0.875em;
+}
+
+/* Structured results share the flat local workspace; only the data viewport scrolls. */
+.agent-artifact-data-preview {
+  overflow-x: auto;
+  max-width: 100%;
+  font-size: var(--ran-text-label-3);
+}
+.agent-artifact-data-preview > p {
+  color: var(--ran-color-text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agent-artifact-data-preview table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.agent-artifact-data-preview th,
+.agent-artifact-data-preview td {
+  padding: calc(var(--ran-space-3) / 2) var(--ran-space-2);
+  border-bottom: 1px solid var(--ran-color-border);
+  text-align: start;
+  min-width: 80px;
+  max-width: 220px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.agent-artifact-presentation details > button,
+.agent-artifact-data-preview > button {
+  margin-inline-end: var(--ran-space-2);
+}
+.agent-artifact-presentation summary {
+  color: var(--ran-color-text-secondary);
+  cursor: pointer;
+  padding-block: var(--ran-space-2);
+}
+
+.agent-artifact-editor textarea.agent-artifact-cell {
+  border: 0;
+  border-radius: 0;
+  min-height: 2em;
+  resize: none;
+  max-height: 8em;
+  padding: calc(var(--ran-space-1) / 2);
+  font: inherit;
+}
+.agent-artifact-data-preview > textarea.agent-artifact-cell {
+  min-height: 3em;
+}
+.agent-artifact-editor > details > textarea {
+  font-family: monospace;
+  font-size: var(--ran-text-label-3);
+}
+.agent-artifact-editor > details > summary {
+  cursor: pointer;
+  color: var(--ran-color-text-secondary);
+  padding-block: var(--ran-space-2);
+}
+
+.agent-plan-undo-feedback {
+  display: block;
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.agent-plan-undo-feedback:empty {
+  display: none;
+}
+.agent-task-receipt {
+  margin-block: var(--ran-space-2);
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-label-3);
+  line-height: 1.6;
+}
+.agent-task-receipt summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.agent-task-receipt ul {
+  padding-inline-start: var(--ran-space-4);
+  margin-block: var(--ran-space-2);
+}
+
+/* Expand actual targets, preserving hidden controls and the flat desktop toolbar. */
+@media (pointer: coarse) {
+  .agent-panel :is(.agent-speech-mic, .agent-speech-cancel, .agent-speech-privacy button) {
+    width: var(--app-control-touch);
+    height: var(--app-control-touch);
+  }
+  .agent-panel .agent-speech-language {
+    --ran-select-height: var(--app-control-touch);
+    --ran-select-min-height: var(--app-control-touch);
+  }
+  .agent-panel .agent-plan-buttons r-button::part(content),
+  .agent-panel :is(.agent-selection-toggle, .agent-history-more),
+  .agent-panel .cui-message-actions button {
+    min-height: var(--app-control-touch);
+  }
+  .agent-panel .cui-message-actions .cui-copy {
+    width: var(--app-control-touch);
+    flex-basis: var(--app-control-touch);
+  }
+}
+
+@media (pointer: coarse) {
+  .agent-panel .agent-panel-header button {
+    min-width: var(--app-control-touch);
+    min-height: var(--app-control-touch);
+  }
+  .agent-panel .agent-panel-header button:not(.agent-panel-title) {
+    flex-basis: var(--app-control-touch);
+  }
+  .agent-panel .cui-composer .agent-sources-toggle,
+  .agent-panel .cui-empty-actions .agent-configure {
+    min-height: var(--app-control-touch);
+  }
+  .agent-speech-cancel[hidden] {
+    display: none;
+  }
+  .agent-speech[data-feedback='true'] .agent-speech-feedback > [role='status'] {
+    inset-inline-start: calc(var(--app-control-touch) + var(--ran-space-1));
+    inset-inline-end: calc(var(--app-control-touch) * 2 + var(--ran-space-1) * 2);
+    height: var(--app-control-touch);
+    line-height: var(--app-control-touch);
+  }
+}

@@ -1,0 +1,51 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Tag name for the release (e.g., v1.0.0)"
+        required: true
+        default: "v1.0.0"
+      release_body:
+        description: "Release description"
+        required: true
+        default: "Manual release via GitHub Actions"
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+
+      - name: Build project
+        run: bash bin/build.sh
+
+      - name: Create Single-File HTML
+        run: node bin/bundle_single_html.js
+
+      - name: Create ZIP archive
+        run: |
+          cd dist
+          zip -r ../document-editor.zip .
+          cd ..
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event.inputs.tag_name }}
+          name: Release ${{ github.event.inputs.tag_name }}
+          body: ${{ github.event.inputs.release_body }}
+          files: |
+            document-editor.zip
+            dist/single-file.html
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

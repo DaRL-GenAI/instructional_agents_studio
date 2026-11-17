@@ -1,0 +1,62 @@
+/* Styles for lib/confirm-dialog.ts. Imported by that module rather than kept
+   in a page's stylesheet: the dialog is reusable, and a component whose looks
+   live in someone else's file only works until the second caller. */
+
+/* Narrower than the component's default: a question of two lines in a dialog
+   sized for content is mostly empty dialog. */
+.confirm-dialog::part(dialog) {
+  max-width: 440px;
+}
+
+/* Native footer commands participate in r-modal's public keyboard contract. */
+.confirm-actions button {
+  box-sizing: border-box;
+  min-height: var(--app-control-height);
+  padding: var(--ran-space-1) var(--ran-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--ran-radius-sm);
+  background: var(--confirm-fill, transparent);
+  color: var(--confirm-foreground, var(--ran-color-text-secondary));
+  font: inherit;
+  font-size: var(--ran-text-label-1);
+  line-height: 1.5;
+  cursor: pointer;
+}
+.confirm-actions button:hover:enabled {
+  background: var(--confirm-hover, var(--ran-color-bg-hover));
+}
+.confirm-actions button:active:enabled {
+  background: var(--confirm-active, var(--ran-color-bg-active));
+}
+.confirm-actions button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.confirm-actions button:focus-visible {
+  outline: none;
+  box-shadow: var(--ran-focus-ring);
+}
+.confirm-ok {
+  --confirm-fill: var(--ran-color-primary);
+  --confirm-hover: var(--ran-color-primary-hover);
+  --confirm-active: var(--ran-color-primary-active);
+  --confirm-foreground: var(--ran-color-primary-text);
+}
+.confirm-ok-danger {
+  --confirm-fill: var(--app-danger-fill);
+  --confirm-hover: var(--app-danger-hover);
+  --confirm-active: var(--app-danger-active);
+  --confirm-foreground: var(--app-danger-foreground);
+}
+
+.confirm-body {
+  color: var(--ran-color-text-secondary);
+  font-size: var(--ran-text-copy-2);
+  /* A file name can be long; the sentence around it should still be readable. */
+  max-width: 46ch;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ran-space-2);
+}

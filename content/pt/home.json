@@ -1,0 +1,246 @@
+{
+  "title": "Abrir DOCX, XLSX e PPTX no navegador — visualizador e editor de documentos grátis",
+  "description": "Abra, veja e edite DOCX, XLSX, PPTX e CSV no navegador sem Office ou conta. A edição básica não exige enviar documentos; o uso offline depende dos recursos em cache.",
+  "ogDescription": "Edite Word, Excel e PowerPoint localmente; anote PDF. Sem cadastro nem instalar o Office. IA opcional (Experimental Beta), WebMCP e PWA.",
+  "chip": "Local primeiro · <b>código aberto</b>",
+  "h1": {
+    "plain": "Abra arquivos do Word, Excel e PowerPoint,",
+    "accent": "direto no navegador."
+  },
+  "sub": "Abra, veja e edite DOCX, XLSX, PPTX e CSV no navegador sem Office ou conta. A edição básica não exige enviar documentos; o uso offline depende dos recursos em cache.",
+  "cta": {
+    "open": "Abrir um arquivo",
+    "docx": "Novo Word",
+    "xlsx": "Novo Excel",
+    "pptx": "Novo PowerPoint"
+  },
+  "recent": {
+    "label": "Continuar editando",
+    "note": "Com o salvamento automático ativado, cópias ficam neste navegador por 7 dias após a última edição ou abertura. Exclua-as ou desative o salvamento em Documentos salvos. O navegador pode limpar seu armazenamento; salve também o arquivo.",
+    "all": "Documentos salvos"
+  },
+  "trust": ["Edição local", "sem conta", "Offline com recursos em cache", ".docx .xlsx .pptx .csv"],
+  "docwin": {
+    "file": "report.docx",
+    "badge": "salvo localmente ✓",
+    "selected": "Edição local sem envio obrigatório",
+    "noteAuthor": "Você · agora mesmo",
+    "noteBody": "Edição local sem envio obrigatório",
+    "net": "Edição local"
+  },
+  "nav": [
+    {
+      "href": "/pt/offline-document-editor",
+      "label": "Offline"
+    },
+    {
+      "href": "/pt/no-signup-document-editor",
+      "label": "Sem cadastro"
+    }
+  ],
+  "sections": {
+    "formats": {
+      "eyebrow": "Abrir um arquivo",
+      "h2": "Sem Office instalado? Sem problema.",
+      "rows": [
+        {
+          "href": "/pt/open/docx",
+          "ext": ".docx",
+          "name": "Abrir DOCX",
+          "desc": "Documentos do Word com fontes, tabelas e imagens intactas."
+        },
+        {
+          "href": "/pt/open/xlsx",
+          "ext": ".xlsx",
+          "name": "Abrir XLSX",
+          "desc": "Fórmulas, gráficos e várias planilhas, exibidos por completo."
+        },
+        {
+          "href": "/pt/open/pptx",
+          "ext": ".pptx",
+          "name": "Abrir PPTX",
+          "desc": "Slides com layouts, temas e mídia preservados."
+        },
+        {
+          "href": "/pt/open/pdf",
+          "ext": ".pdf",
+          "name": "Abrir PDF",
+          "desc": "Leia, comente, anote e salve de volta."
+        },
+        {
+          "href": "/pt/open/odt",
+          "ext": ".odt .ods .odp",
+          "name": "Abrir OpenDocument",
+          "desc": "Formatos do LibreOffice — salve de volta como ODT, DOCX ou PDF."
+        },
+        {
+          "href": "/pt/convert/docx-to-pdf",
+          "ext": ".docx → .pdf",
+          "name": "Converter para PDF",
+          "desc": "Word, Excel e PowerPoint viram PDF no seu dispositivo."
+        },
+        {
+          "href": "/pt/convert/xlsx-to-csv",
+          "ext": ".xlsx → .csv",
+          "name": "Converter entre formatos",
+          "desc": "De planilhas para CSV e de volta, sem enviar um byte."
+        }
+      ]
+    },
+    "pillars": {
+      "eyebrow": "O que muda aqui",
+      "h2": "Privacidade por construção, não por promessa",
+      "items": [
+        {
+          "k": "Edição local",
+          "h3": "Edição local sem envio obrigatório",
+          "p": "A abertura, edição e conversão básicas rodam localmente no navegador sem exigir o envio do documento."
+        },
+        {
+          "k": "Sem conta",
+          "h3": "Não há nada para cadastrar",
+          "p": "Sem e-mail, sem muro de login. Abra a página e comece a editar."
+        },
+        {
+          "k": "PWA · offline",
+          "h3": "Offline com recursos em cache",
+          "p": "Recursos de edição em cache funcionam offline; URLs de arquivos remotos precisam de conexão."
+        },
+        {
+          "k": "AGPL-3.0",
+          "h3": "Código aberto e auto-hospedável",
+          "p": "Audite exatamente o que roda, ou hospede a sua própria cópia."
+        }
+      ]
+    },
+    "steps": {
+      "eyebrow": "Processo",
+      "h2": "Como funciona",
+      "items": [
+        {
+          "n": "01",
+          "h3": "Abra um arquivo",
+          "p": "Arraste um DOCX, XLSX, PPTX ou CSV — ou comece em branco.",
+          "loc": "fica no dispositivo"
+        },
+        {
+          "n": "02",
+          "h3": "Edite de verdade",
+          "p": "Formatação completa, tabelas, gráficos e fórmulas no navegador.",
+          "loc": "fica no dispositivo"
+        },
+        {
+          "n": "03",
+          "h3": "Salve de volta",
+          "p": "Salve no seu arquivo ou baixe uma cópia.",
+          "loc": "fica no dispositivo"
+        }
+      ]
+    },
+    "faq": {
+      "eyebrow": "FAQ",
+      "h2": "Perguntas, respondidas",
+      "note": "As respostas mais longas — limites de tamanho, códigos de erro, auto-hospedagem — estão na <a href=\"/pt/help\">ajuda</a>.",
+      "items": [
+        {
+          "q": "Ele salva no meu próprio arquivo ou só baixa uma cópia?",
+          "a": "No Chrome, Edge e outros navegadores com File System Access API, o primeiro salvamento pede um arquivo e os seguintes gravam nele. Outros navegadores baixam uma cópia. Exporte outros formatos em Arquivo → Baixar como. As cópias de recuperação no navegador são independentes do arquivo salvo."
+        },
+        {
+          "q": "Meus arquivos são enviados para algum lugar?",
+          "a": "A abertura, edição e conversão básicas rodam localmente no navegador sem exigir o envio do documento. O assistente de IA está desativado por padrão. Ative-o no editor; você inicia downloads e conexões. O app que incorpora o editor pode receber arquivos exportados e enviá-los conforme sua própria política."
+        },
+        {
+          "q": "Quais formatos posso editar?",
+          "a": "Word (DOCX), Excel (XLSX), PowerPoint (PPTX) e CSV, com um motor WebAssembly no navegador."
+        },
+        {
+          "q": "O que acontece se eu fechar a aba ou recarregar a página?",
+          "a": "Com o salvamento automático ativado, cópias de recuperação ficam na IndexedDB deste navegador por 7 dias após a última edição ou abertura. Fechar a aba não as apaga. Em /history você pode excluir cópias ou desativar o salvamento automático. O navegador pode limpar ou remover seu armazenamento, e edições ainda não salvas podem se perder; a recuperação não substitui salvar o arquivo."
+        },
+        {
+          "q": "Funciona offline?",
+          "a": "A edição offline depende de o navegador manter em cache o app, o motor, o conversor e as fontes e recursos de formato necessários. Uma visita ou a instalação da PWA não garante isso. URLs de arquivos remotos precisam de conexão."
+        },
+        {
+          "q": "Preciso de uma conta?",
+          "a": "Sem conta, sem cadastro, sem e-mail. Abra a página e edite."
+        }
+      ]
+    },
+    "assistant": {
+      "eyebrow": "Assistente de documentos com IA",
+      "h2": "Escreva com clareza. A decisão é sua.",
+      "p": "Selecione um trecho para reescrever, resumir ou traduzir. Revise o resultado antes de adicioná-lo ao documento.",
+      "example": "Encurte este parágrafo e mantenha as datas e os números.",
+      "note": "Desativado por padrão · Só este navegador",
+      "cta": "Como usar",
+      "href": "/pt/ai-document-assistant"
+    }
+  },
+  "foot": {
+    "copy": "© 2026 Document Editor · roda no seu dispositivo",
+    "links": [
+      {
+        "href": "/pt/help",
+        "label": "Ajuda"
+      },
+      {
+        "href": "/pt/changelog",
+        "label": "Novidades"
+      },
+      {
+        "href": "/pt/private-document-editor",
+        "label": "Privacidade"
+      },
+      {
+        "href": "/pt/offline-document-editor",
+        "label": "Editor offline"
+      },
+      {
+        "href": "/pt/no-signup-document-editor",
+        "label": "Sem cadastro"
+      },
+      {
+        "href": "/pt/open/docx",
+        "label": "Abrir DOCX"
+      },
+      {
+        "href": "/pt/open/odt",
+        "label": "ODT"
+      },
+      {
+        "href": "/pt/open/ods",
+        "label": "ODS"
+      },
+      {
+        "href": "/pt/open/odp",
+        "label": "ODP"
+      },
+      {
+        "href": "/pt/convert/docx-to-pdf",
+        "label": "DOCX → PDF"
+      },
+      {
+        "href": "/pt/convert/xlsx-to-csv",
+        "label": "XLSX → CSV"
+      },
+      {
+        "href": "https://github.com/ranuts/document",
+        "label": "GitHub"
+      }
+    ],
+    "license": "AGPL-3.0"
+  },
+  "featureList": [
+    "Abrir e ver DOCX, XLSX, PPTX e CSV sem o Microsoft Office",
+    "Editar arquivos DOCX, XLSX, PPTX e CSV",
+    "Edição local sem envio obrigatório",
+    "Sem conta e sem cadastro",
+    "Abrir documentos a partir de uma URL com ?src= ou ?file=",
+    "Offline com recursos em cache",
+    "Incorporável pela API postMessage",
+    "Grátis e de código aberto (AGPL-3.0)"
+  ],
+  "ogTitle": "Editor de documentos open source para você e agentes de IA"
+}

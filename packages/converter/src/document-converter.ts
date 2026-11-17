@@ -1,0 +1,830 @@
+import { runSpreadsheetWorker } from './spreadsheet-worker';
+import { createObjectURL, isZipContainer, scriptOnLoad } from 'ranuts/utils';
+import type {
+  BinConversionResult,
+  ConversionResult,
+  DocumentType,
+  EmscriptenModule,
+} from '@ranuts/shared/document-types';
+import { BASE_PATH, DOCUMENT_TYPE_MAP, getDocumentExtension } from '@ranuts/shared/document-utils';
+import { extractDocxMediaUrls } from './docx-zip';
+import { MIME_MAP, hasEditorBinSignature, saveFileToDisk } from './file-meta';
+import { canStreamWasm, fetchWasmResponse, x2tInstantiateError } from './x2t-loading';
+import { loadFontsForPdf } from './pdf-fonts';
+import { convertCsvToXlsx, convertHtmlTableToXlsx, loadXlsxLibrary } from './spreadsheet';
+
+// The public surface of @ranuts/converter is this module; the pieces above
+// were split out of it on 2026-09-12 and are re-exported so nothing importing
+// them has to know that.
+export { MIME_MAP, hasEditorBinSignature, isHtmlDocument, isZipContainer, saveFileToDisk } from './file-meta';
+export { canStreamWasm, fetchWasmResponse, x2tInstantiateError } from './x2t-loading';
+export { PDF_FONT_MANIFEST, decodeCatalogFont } from './pdf-fonts';
+export { convertCsvToXlsx, convertHtmlTableToXlsx, loadXlsxLibrary } from './spreadsheet';
+
+// x2t input-format constant for the editor's canvas render stream. When the
+// editor exports via "Print to PDF" (and similar render-based paths) it emits a
+// stream of drawing commands instead of a serialized document, and that stream
+// carries no format signature, so x2t must be told the input format explicitly.
+export const CANVAS_PDF_INPUT_FORMAT = 8196;
+
+// x2t output-format constant for PDF (AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_PDF).
+// Declared explicitly because x2t cannot infer the conversion direction from
+// file extensions alone when the input is a canvas render stream.
+export const PDF_OUTPUT_FORMAT = 513;
+
+export class X2TConverter {
+  private x2tModule: EmscriptenModule | null = null;
+  private isReady = false;
+  private initPromise: Promise<EmscriptenModule> | null = null;
+  private hasScriptLoaded = false;
+  private fontsLoaded = false;
+  /**
+   * A streaming instantiation that failed.
+   *
+   * The hook cannot reject `loadScript()` -- that promise resolved when the
+   * `<script>` loaded, long before the hook runs -- so the failure is parked
+   * here and whoever is waiting on `doInitialize` hears about it at once
+   * instead of sitting out the full `INIT_TIMEOUT`. Sticky on purpose: x2t.js
+   * has already run its `createWasm` on this page and cannot be made to run
+   * another, so the recovery is a fresh page or worker, not a retry.
+   */
+  private wasmInstantiateFailure: Error | null = null;
+  private onWasmInstantiateFailure: ((error: Error) => void) | null = null;
+
+  // Supported file type mapping
+  private readonly DOCUMENT_TYPE_MAP: Record<string, DocumentType> = DOCUMENT_TYPE_MAP;
+
+  private readonly WORKING_DIRS = ['/working', '/working/media', '/working/fonts', '/working/themes'];
+  private readonly SCRIPT_PATH = `${BASE_PATH}wasm/x2t/x2t.js`;
+  private readonly WASM_PATH = `${BASE_PATH}wasm/x2t/x2t.wasm.br`;
+  private readonly INIT_TIMEOUT = 300000;
+
+  /**
+   * Load X2T script file (using ranuts scriptOnLoad utility).
+   *
+   * Where the engine can compile while it downloads, it does: the 42 MB module
+   * then never exists as a buffer at all, which matters because the
+   * alternative holds it at the exact moment WebAssembly is asking the browser
+   * for x2t's own 283 MB heap -- the moment that fails on a machine short of
+   * memory (GitHub #144). Otherwise we fall back to buffering the module and
+   * handing Emscripten the bytes via `Module.wasmBinary` (see
+   * prepareWasmBinary), so x2t.js never fetches the module itself either way.
+   *
+   * HTTPS Pages serves Brotli (6.6 MB, under its 25 MiB-per-file limit).
+   * Docker re-encodes the same URL as gzip to support ordinary HTTP (#267).
+   * Each host declares the matching Content-Encoding, so the browser decodes
+   * it at the network layer and nothing here decompresses anything.
+   *
+   * Kept in step with the same two paths in the vendor-side loader
+   * (public/sdkjs/common/wasm/x2t/x2t_helper.js), which is what the editor
+   * iframe runs; this copy serves consumers of the package that load x2t on
+   * the page itself.
+   */
+  async loadScript(): Promise<void> {
+    if (this.hasScriptLoaded) return;
+
+    try {
+      if (canStreamWasm()) {
+        this.installStreamingInstantiate();
+      } else {
+        await this.prepareWasmBinary();
+      }
+      // scriptOnLoad accepts an array of URLs
+      await scriptOnLoad([this.SCRIPT_PATH]);
+      this.hasScriptLoaded = true;
+      console.log('X2T WASM script loaded successfully');
+    } catch (error) {
+      // Keep the cause in the message, not just in `cause`. What reads this is
+      // a host's open-failure handling (lib/onlyoffice/open-failure.ts
+      // classifies on the message text), and a bare "Failed to load X2T WASM
+      // script" matches none of its environment wordings -- so a CDN 500 or a
+      // refused wasm heap on the buffered path, neither of which is a verdict
+      // on the document, was reported to the user as "the file may be
+      // corrupted" and never retried. The vendor-side loader
+      // (public/sdkjs/common/wasm/x2t/x2t_helper.js) rethrows its cause
+      // untouched; this is the same contract.
+      const cause = error instanceof Error ? error.message : String(error);
+      console.error('Failed to load X2T WASM script', error);
+      throw new Error(`Failed to load X2T WASM script: ${cause}`, { cause: error });
+    }
+  }
+
+  /**
+   * Install emscripten's own `Module.instantiateWasm` hook so the module is
+   * compiled straight off the network.
+   *
+   * The hook must not throw synchronously -- `createWasm()` turns that into
+   * `false`, which is fatal -- so every failure is reported by rejecting, with
+   * the `X2T module` prefix a host's open-failure handling can recognise and
+   * the original wording kept after it. Not retried through the buffered path:
+   * the failure most expected here is the browser refusing x2t's heap, and
+   * asking for another 40 MB on an exhausted renderer only makes it worse.
+   */
+  private installStreamingInstantiate(): void {
+    const globalScope = window as unknown as {
+      Module?: Record<string, unknown> & { instantiateWasm?: unknown };
+    };
+    if (globalScope.Module?.instantiateWasm) return;
+
+    const wasmPath = this.WASM_PATH;
+    const instantiateWasm = (
+      imports: WebAssembly.Imports,
+      successCallback: (instance: WebAssembly.Instance, module: WebAssembly.Module) => void,
+    ): Record<string, never> => {
+      void (async () => {
+        try {
+          const response = await fetchWasmResponse(wasmPath);
+          if (!response.body) throw new Error('x2t WASM response has no body to stream');
+          // Re-wrapped only to state the Content-Type: the body is already the
+          // decoded module, but instantiateStreaming rejects anything not
+          // labelled application/wasm and we would rather not depend on each
+          // host typing a `.wasm` file correctly.
+          const { instance, module } = await WebAssembly.instantiateStreaming(
+            new Response(response.body, { headers: { 'Content-Type': 'application/wasm' } }),
+            imports,
+          );
+          successCallback(instance, module);
+        } catch (error) {
+          console.error('x2t WASM instantiation failed:', error);
+          const failure = x2tInstantiateError(error);
+          // Settle the pending initialize() before the rethrow: nothing else
+          // ever will (onRuntimeInitialized is never going to fire), so without
+          // this the caller waits out INIT_TIMEOUT for a failure already known.
+          this.wasmInstantiateFailure = failure;
+          this.onWasmInstantiateFailure?.(failure);
+          // Still rethrown: an unhandled rejection carrying the `X2T module`
+          // prefix is what a host's open-failure handling reads.
+          throw failure;
+        }
+      })();
+      return {};
+    };
+
+    globalScope.Module = { ...globalScope.Module, instantiateWasm };
+  }
+
+  /**
+   * Fallback for engines without streaming instantiation (see loadScript).
+   *
+   * Buffer the module and stash the bytes on `window.Module.wasmBinary`
+   * *before* x2t.js runs. Emscripten checks
+   * `if (Module['wasmBinary']) wasmBinary = Module['wasmBinary']` and then skips
+   * its own fetch/instantiateStreaming entirely.
+   *
+   * This puts the whole 42 MB in the frame at the moment x2t asks for its
+   * 283 MB heap, which is why it is the fallback and not the default.
+   */
+  private async prepareWasmBinary(): Promise<void> {
+    const globalScope = window as unknown as {
+      Module?: Record<string, unknown> & { wasmBinary?: ArrayBuffer };
+    };
+    if (globalScope.Module?.wasmBinary) return; // already prepared
+
+    // Fetched through fetchWasmResponse so this path survives the same
+    // transient CDN answers the streaming one does. The response body is
+    // already the decoded module: the host declares the matching
+    // Content-Encoding for this URL and the browser undoes it.
+    const response = await fetchWasmResponse(this.WASM_PATH);
+    const wasmBinary = await response.arrayBuffer();
+
+    // Pre-seed the global Module so x2t.js (which reuses an existing global
+    // Module) picks up the binary. Preserve any properties already set.
+    globalScope.Module = { ...globalScope.Module, wasmBinary };
+  }
+
+  /**
+   * Initialize X2T module
+   */
+  async initialize(): Promise<EmscriptenModule> {
+    if (this.isReady && this.x2tModule) {
+      return this.x2tModule;
+    }
+
+    // Prevent duplicate initialization
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+
+    this.initPromise = this.doInitialize();
+    return this.initPromise;
+  }
+
+  private async doInitialize(): Promise<EmscriptenModule> {
+    try {
+      await this.loadScript();
+      return new Promise((resolve, reject) => {
+        const x2t = window.Module;
+        if (!x2t) {
+          reject(new Error('X2T module not found after script loading'));
+          return;
+        }
+
+        // The hook may have failed already, while the script was loading.
+        if (this.wasmInstantiateFailure) {
+          reject(this.wasmInstantiateFailure);
+          return;
+        }
+
+        // Set timeout handling
+        const timeoutId = setTimeout(() => {
+          if (!this.isReady) {
+            reject(new Error(`X2T initialization timeout after ${this.INIT_TIMEOUT}ms`));
+          }
+        }, this.INIT_TIMEOUT);
+
+        // ...or while this promise is pending.
+        this.onWasmInstantiateFailure = (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        };
+
+        x2t.onRuntimeInitialized = () => {
+          try {
+            clearTimeout(timeoutId);
+            this.onWasmInstantiateFailure = null;
+            this.createWorkingDirectories(x2t);
+            this.x2tModule = x2t;
+            this.isReady = true;
+            console.log('X2T module initialized successfully');
+            resolve(x2t);
+          } catch (error) {
+            reject(error);
+          }
+        };
+      });
+    } catch (error) {
+      this.initPromise = null; // Reset to allow retry
+      this.onWasmInstantiateFailure = null;
+      throw error;
+    }
+  }
+
+  /**
+   * The indexed catalog fonts under public/fonts/{index} are raw TTFs whose
+   * first 32 bytes are XOR-obfuscated with this fixed 16-byte key (the same
+   * wire format the editor's own font loader decodes).
+   */
+  /**
+   * Load fonts into WASM FS for PDF rendering. Called once per session;
+   * see ./pdf-fonts.ts for the manifest and why it exists.
+   */
+  private async loadFontsForPdf(): Promise<void> {
+    if (this.fontsLoaded || !this.x2tModule) return;
+    await loadFontsForPdf(this.x2tModule);
+    this.fontsLoaded = true;
+  }
+
+  /**
+   * Create working directories
+   */
+  private createWorkingDirectories(x2t: EmscriptenModule): void {
+    this.WORKING_DIRS.forEach((dir) => {
+      try {
+        x2t.FS.mkdir(dir);
+      } catch (error) {
+        // Directory may already exist, ignore error
+        console.warn(`Directory ${dir} may already exist:`, error);
+      }
+    });
+  }
+
+  /**
+   * Get document type
+   */
+  private getDocumentType(extension: string): DocumentType {
+    const docType = DOCUMENT_TYPE_MAP[extension.toLowerCase()];
+    if (!docType) {
+      throw new Error(`Unsupported file format: ${extension}`);
+    }
+    return docType;
+  }
+
+  /**
+   * Sanitize file name
+   */
+  private sanitizeFileName(input: string): string {
+    if (typeof input !== 'string' || !input.trim()) {
+      return 'file.bin';
+    }
+
+    const parts = input.split('.');
+    const ext = parts.pop() || 'bin';
+    const name = parts.join('.');
+
+    const illegalChars = /[/?<>\\:*|"]/g;
+    // eslint-disable-next-line no-control-regex
+    const controlChars = /[\x00-\x1f\x80-\x9f]/g;
+    const reservedPattern = /^\.+$/;
+    const unsafeChars = /[&'%!"{}[\]]/g;
+
+    let sanitized = name
+      .replace(illegalChars, '')
+      .replace(controlChars, '')
+      .replace(reservedPattern, '')
+      .replace(unsafeChars, '');
+
+    sanitized = sanitized.trim() || 'file';
+    return `${sanitized.slice(0, 200)}.${ext}`; // Limit length
+  }
+
+  /**
+   * Execute document conversion
+   */
+  private executeConversion(paramsPath: string): void {
+    if (!this.x2tModule) {
+      throw new Error('X2T module not initialized');
+    }
+
+    const result = this.x2tModule.ccall('main1', 'number', ['string'], [paramsPath]);
+    if (result !== 0) {
+      // Read the params XML for debugging
+      try {
+        const paramsContent = this.x2tModule.FS.readFile(paramsPath, { encoding: 'binary' });
+        // Convert binary to string for logging
+        if (paramsContent instanceof Uint8Array) {
+          const paramsText = new TextDecoder('utf-8').decode(paramsContent);
+          console.error('Conversion failed. Parameters XML:', paramsText);
+        } else {
+          console.error('Conversion failed. Parameters XML:', paramsContent);
+        }
+      } catch (e) {
+        console.error('Conversion failed. Parameters XML:', e);
+        // Ignore if we can't read the params file
+      }
+      const hints: Record<number, string> = {
+        88: 'The file may be in an unsupported format (.doc binary format), password-protected, or corrupted. Try converting to .docx first.',
+        55: 'DRM-protected or encrypted file cannot be opened.',
+        1: 'Invalid or corrupted file.',
+        80: 'x2t could not recognize the input format. An unsigned editor render stream needs an explicit m_nFormatFrom (see hasEditorBinSignature).',
+      };
+      const hint = hints[result] ? ` (${hints[result]})` : '';
+      throw new Error(`Conversion failed with code: ${result}${hint}`);
+    }
+  }
+
+  /**
+   * Create conversion parameters XML
+   */
+  private createConversionParams(fromPath: string, toPath: string, additionalParams = '', noBase64 = false): string {
+    return `<?xml version="1.0" encoding="utf-8"?>
+<TaskQueueDataConvert xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <m_sFileFrom>${fromPath}</m_sFileFrom>
+  <m_sThemeDir>/working/themes</m_sThemeDir>
+  <m_sFileTo>${toPath}</m_sFileTo>
+  <m_bIsNoBase64>${noBase64}</m_bIsNoBase64>
+  ${additionalParams}
+</TaskQueueDataConvert>`;
+  }
+
+  /**
+   * Write media files into x2t's virtual FS before a bin -> document conversion.
+   *
+   * The bin format (the editor's serialized internal state) references inserted
+   * images by relative path (e.g. "media/image1.png") rather than embedding their
+   * bytes inline. On the open/forward direction, x2t itself populates
+   * /working/media/ as a side effect of unzipping the source docx/xlsx/pptx, and
+   * readMediaFiles() above reads that back out. But an image inserted into an
+   * already-open document (paste, or "Insert > Image > From File" -- both go
+   * through the SDK's writeFile event, see handleWriteFile in
+   * lib/onlyoffice-editor.ts) only ever exists as an in-memory blob: URL on our
+   * side; x2t's WASM sandbox has no access to the browser's Blob URL store, so
+   * without this step the bin -> document conversion has no way to find those
+   * bytes and the image comes out blank in the saved file (GitHub #72). Fetching
+   * each URL and writing it into /working/media/ here gives x2t the same files it
+   * would have found had they been present in the original document.
+   */
+  private async writeMediaFiles(media?: Record<string, string>): Promise<void> {
+    if (!this.x2tModule || !media) return;
+
+    await Promise.all(
+      Object.entries(media).map(async ([key, url]) => {
+        try {
+          const response = await fetch(url);
+          if (!response.ok) return;
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          const relativePath = key.startsWith('media/') ? key : `media/${key}`;
+          this.x2tModule!.FS.writeFile(`/working/${relativePath}`, bytes);
+        } catch (error) {
+          console.warn(`Failed to write media file ${key}:`, error);
+        }
+      }),
+    );
+  }
+
+  /**
+   * Read media files
+   */
+  private async readMediaFiles(): Promise<Record<string, string>> {
+    if (!this.x2tModule) return {};
+
+    const media: Record<string, string> = {};
+
+    try {
+      const files = this.x2tModule.FS.readdir('/working/media/');
+
+      // Use Promise.all to handle async createObjectURL
+      const mediaPromises = files
+        .filter((file) => file !== '.' && file !== '..')
+        .map(async (file) => {
+          try {
+            const fileData = this.x2tModule!.FS.readFile(`/working/media/${file}`, {
+              encoding: 'binary',
+            }) as BlobPart;
+
+            const ext = file.split('.').pop()?.toLowerCase() ?? '';
+            const mime = MIME_MAP[ext] ?? 'application/octet-stream';
+            const blob = new Blob([fileData], { type: mime });
+            const mediaUrl = await createObjectURL(blob);
+            return { key: `media/${file}`, url: mediaUrl };
+          } catch (error) {
+            console.warn(`Failed to read media file ${file}:`, error);
+            return null;
+          }
+        });
+
+      const results = await Promise.all(mediaPromises);
+      results.forEach((result) => {
+        if (result) {
+          media[result.key] = result.url;
+        }
+      });
+    } catch (error) {
+      console.warn('Failed to read media directory:', error);
+    }
+
+    return media;
+  }
+
+  /**
+   * Load xlsx library from local file
+   */
+  /** CSV in, a real XLSX File out; see ./spreadsheet.ts. */
+  async convertCsvToXlsx(csvData: Uint8Array, fileName: string, signal?: AbortSignal): Promise<File> {
+    return convertCsvToXlsx(csvData, fileName, signal);
+  }
+
+  /** An HTML table wearing a spreadsheet extension; see ./spreadsheet.ts. */
+  async convertHtmlTableToXlsx(htmlData: Uint8Array, fileName: string, signal?: AbortSignal): Promise<File> {
+    return convertHtmlTableToXlsx(htmlData, fileName, signal);
+  }
+
+  /**
+   * Convert document to bin format
+   */
+  async convertDocument(file: File): Promise<ConversionResult> {
+    await this.initialize();
+
+    const fileName = file.name;
+    const fileExt = fileName.split('.').pop() || getDocumentExtension(file?.type);
+    const documentType = this.getDocumentType(fileExt);
+
+    try {
+      // Read file content
+      const arrayBuffer = await file.arrayBuffer();
+      const data = new Uint8Array(arrayBuffer);
+
+      // Handle CSV files - x2t may not support them directly, so convert to XLSX first
+      if (fileExt.toLowerCase() === 'csv') {
+        if (data.length === 0) {
+          throw new Error('CSV file is empty');
+        }
+        console.log('CSV file detected. Converting to XLSX format...');
+        console.log('CSV file size:', data.length, 'bytes');
+
+        // Convert CSV to XLSX first
+        try {
+          const xlsxFile = await this.convertCsvToXlsx(data, fileName);
+          console.log('CSV converted to XLSX, now converting with x2t...');
+
+          // Now convert the XLSX file using x2t
+          const xlsxArrayBuffer = await xlsxFile.arrayBuffer();
+          const xlsxData = new Uint8Array(xlsxArrayBuffer);
+
+          // Use the XLSX file for conversion
+          const sanitizedName = this.sanitizeFileName(xlsxFile.name);
+          const inputPath = `/working/${sanitizedName}`;
+          const outputPath = `${inputPath}.bin`;
+
+          // Write XLSX file to virtual file system
+          this.x2tModule!.FS.writeFile(inputPath, xlsxData);
+
+          // Create conversion parameters - no special params needed for XLSX
+          const params = this.createConversionParams(inputPath, outputPath, '');
+          this.x2tModule!.FS.writeFile('/working/params.xml', params);
+
+          // Execute conversion
+          this.executeConversion('/working/params.xml');
+
+          // Read conversion result
+          const result = this.x2tModule!.FS.readFile(outputPath);
+          const media = await this.readMediaFiles();
+
+          // Return original CSV fileName, not the XLSX one
+          return {
+            fileName: this.sanitizeFileName(fileName), // Keep original CSV filename
+            type: documentType,
+            bin: result,
+            media,
+          };
+        } catch (conversionError: any) {
+          // If conversion fails, provide helpful error message
+          throw new Error(
+            `Failed to convert CSV file: ${conversionError?.message || 'Unknown error'}. ` +
+              'Please ensure your CSV file is properly formatted and try again.',
+          );
+        }
+      }
+
+      // For all other file types, use standard conversion
+      const sanitizedName = this.sanitizeFileName(fileName);
+      const inputPath = `/working/${sanitizedName}`;
+      const outputPath = `${inputPath}.bin`;
+
+      // Pre-extract media from PPTX ZIP before x2t conversion.
+      // x2t may convert GIF→PNG in its output; the original ZIP preserves GIF animation.
+      // We merge after conversion, with original ZIP entries winning for same-basename files.
+      let originalPptxMedia: Record<string, string> = {};
+      if (fileExt.toLowerCase() === 'pptx') {
+        try {
+          originalPptxMedia = await extractDocxMediaUrls(data);
+        } catch {
+          // non-fatal; fall back to x2t output only
+        }
+      }
+
+      // Write file to virtual file system
+      this.x2tModule!.FS.writeFile(inputPath, data);
+
+      // Create conversion parameters - no special params needed for non-CSV files
+      const params = this.createConversionParams(inputPath, outputPath, '');
+      this.x2tModule!.FS.writeFile('/working/params.xml', params);
+
+      // Execute conversion
+      this.executeConversion('/working/params.xml');
+
+      // Read conversion result
+      const result = this.x2tModule!.FS.readFile(outputPath);
+      const x2tMedia = await this.readMediaFiles();
+
+      // Merge media: for each x2t output file, if the same basename exists in the
+      // original PPTX ZIP as a GIF, serve the original GIF (preserves animation).
+      const media: Record<string, string> = { ...x2tMedia };
+      if (Object.keys(originalPptxMedia).length > 0) {
+        const gifByBasename: Record<string, string> = {};
+        for (const [key, url] of Object.entries(originalPptxMedia)) {
+          const ext = key.split('.').pop()?.toLowerCase();
+          if (ext === 'gif') {
+            gifByBasename[key.replace(/\.[^.]+$/, '')] = url;
+          }
+        }
+        for (const key of Object.keys(media)) {
+          const basename = key.replace(/\.[^.]+$/, '');
+          if (gifByBasename[basename]) {
+            media[key] = gifByBasename[basename]!;
+          }
+        }
+        for (const [key, url] of Object.entries(originalPptxMedia)) {
+          if (!(key in media)) media[key] = url;
+        }
+      }
+
+      return {
+        fileName: sanitizedName,
+        type: documentType,
+        bin: result,
+        media,
+      };
+    } catch (error) {
+      throw new Error(`Document conversion failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Attempt to convert CSV directly using x2t (may fail)
+   */
+  private async convertCsvDirectly(
+    _file: File,
+    data: Uint8Array,
+    fileName: string,
+    documentType: DocumentType,
+  ): Promise<ConversionResult> {
+    // Handle UTF-8 BOM
+    let fileData = data;
+    const hasBOM = data.length >= 3 && data[0] === 0xef && data[1] === 0xbb && data[2] === 0xbf;
+    if (!hasBOM) {
+      const bom = new Uint8Array([0xef, 0xbb, 0xbf]);
+      fileData = new Uint8Array(bom.length + data.length);
+      fileData.set(bom, 0);
+      fileData.set(data, bom.length);
+    }
+
+    const sanitizedName = this.sanitizeFileName(fileName);
+    const inputPath = `/working/${sanitizedName}`;
+    const outputPath = `${inputPath}.bin`;
+
+    // Write file to virtual file system
+    this.x2tModule!.FS.writeFile(inputPath, fileData);
+
+    // Try with format specification
+    const additionalParams = '<m_nFormatFrom>260</m_nFormatFrom>';
+    const params = this.createConversionParams(inputPath, outputPath, additionalParams);
+    this.x2tModule!.FS.writeFile('/working/params.xml', params);
+
+    // Execute conversion - this will likely fail with error 89
+    this.executeConversion('/working/params.xml');
+
+    // If we get here, conversion succeeded (unlikely for CSV)
+    const result = this.x2tModule!.FS.readFile(outputPath);
+    const media = await this.readMediaFiles();
+
+    return {
+      fileName: sanitizedName,
+      type: documentType,
+      bin: result,
+      media,
+    };
+  }
+
+  /**
+   * Convert bin format to specified document format.
+   */
+  async convertBinToDocument(
+    bin: Uint8Array,
+    originalFileName: string,
+    targetExt = 'DOCX',
+    media?: Record<string, string>,
+  ): Promise<BinConversionResult> {
+    await this.initialize();
+
+    const sanitizedBase = this.sanitizeFileName(originalFileName).replace(/\.[^/.]+$/, '');
+    const binFileName = `${sanitizedBase}.bin`;
+    const outputFileName = `${sanitizedBase}.${targetExt.toLowerCase()}`;
+
+    try {
+      await this.writeMediaFiles(media);
+
+      // The v9 engine's offline save hands us a finished OOXML zip rather than
+      // an editor bin. Same-format saves need no conversion at all; cross-format
+      // ones go through x2t as a real document, with the source extension spelled
+      // out so x2t can infer the conversion direction.
+      if (isZipContainer(bin)) {
+        return await this.convertZipDocument(bin, originalFileName, targetExt);
+      }
+
+      // Handle CSV files specially - need to convert bin -> XLSX -> CSV
+      if (targetExt.toUpperCase() === 'CSV') {
+        // First convert bin to XLSX
+        const xlsxFileName = `${sanitizedBase}.xlsx`;
+        this.x2tModule!.FS.writeFile(`/working/${binFileName}`, bin);
+
+        const params = this.createConversionParams(`/working/${binFileName}`, `/working/${xlsxFileName}`, '');
+
+        this.x2tModule!.FS.writeFile('/working/params.xml', params);
+        this.executeConversion('/working/params.xml');
+
+        // Read XLSX file
+        const xlsxResult = this.x2tModule!.FS.readFile(`/working/${xlsxFileName}`);
+        const xlsxArray = xlsxResult instanceof Uint8Array ? xlsxResult : new Uint8Array(xlsxResult as ArrayBuffer);
+
+        return {
+          fileName: outputFileName,
+          data: await this.xlsxToCsvBytes(xlsxArray),
+        };
+      }
+
+      // For all other file types, use standard conversion
+      // Write bin file
+      this.x2tModule!.FS.writeFile(`/working/${binFileName}`, bin);
+
+      // Create conversion parameters
+      let additionalParams = '';
+      if (targetExt === 'PDF') {
+        await this.loadFontsForPdf();
+        additionalParams = `<m_sFontDir>/working/fonts/</m_sFontDir><m_nFormatTo>${PDF_OUTPUT_FORMAT}</m_nFormatTo>`;
+      }
+
+      // A bin without a DOCY/XLSY/PPTY/VSDY signature is the editor's canvas
+      // render stream ("Print to PDF" and similar), which x2t cannot identify
+      // from the bytes alone -- it fails with exit code 80 unless the input
+      // format is declared explicitly. The stream is also raw binary (unlike
+      // signed editor bins, which are base64-wrapped text), so m_bIsNoBase64
+      // must be true for it. Signed editor bins are left untouched.
+      const isCanvasRenderStream = !hasEditorBinSignature(bin);
+      if (isCanvasRenderStream) {
+        additionalParams += `<m_nFormatFrom>${CANVAS_PDF_INPUT_FORMAT}</m_nFormatFrom>`;
+      }
+
+      const params = this.createConversionParams(
+        `/working/${binFileName}`,
+        `/working/${outputFileName}`,
+        additionalParams,
+        isCanvasRenderStream,
+      );
+
+      this.x2tModule!.FS.writeFile('/working/params.xml', params);
+
+      // Execute conversion
+      this.executeConversion('/working/params.xml');
+
+      // Read generated document
+      const result = this.x2tModule!.FS.readFile(`/working/${outputFileName}`);
+
+      return {
+        fileName: outputFileName,
+        data: result,
+      };
+    } catch (error) {
+      throw new Error(`Bin to document conversion failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Convert XLSX bytes to CSV bytes (UTF-8 with BOM) via SheetJS.
+   */
+  async xlsxToCsvBytes(xlsxArray: Uint8Array, signal?: AbortSignal): Promise<Uint8Array<ArrayBuffer>> {
+    signal?.throwIfAborted();
+    if (typeof Worker !== 'undefined')
+      return new Uint8Array(await runSpreadsheetWorker('xlsx-to-csv', xlsxArray, signal));
+    const XLSX = await loadXlsxLibrary();
+    const workbook = XLSX.read(xlsxArray, { type: 'array' });
+    const firstSheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[firstSheetName];
+    const csvText = XLSX.utils.sheet_to_csv(worksheet);
+    const csvBOM = new Uint8Array([0xef, 0xbb, 0xbf]);
+    const csvTextBytes = new TextEncoder().encode(csvText);
+    const csvArray = new Uint8Array(csvBOM.length + csvTextBytes.length);
+    csvArray.set(csvBOM, 0);
+    csvArray.set(csvTextBytes, csvBOM.length);
+    return csvArray;
+  }
+
+  /**
+   * Convert a finished OOXML document (v9 offline save output) to the target
+   * format. The editor already produced a complete docx/xlsx/pptx zip, so a
+   * same-format save returns the bytes as-is, CSV goes straight to SheetJS,
+   * and everything else is a plain document-to-document x2t conversion.
+   */
+  private async convertZipDocument(
+    bin: Uint8Array,
+    originalFileName: string,
+    targetExt: string,
+  ): Promise<BinConversionResult> {
+    const sanitizedBase = this.sanitizeFileName(originalFileName).replace(/\.[^/.]+$/, '');
+    const nameExt = (originalFileName.split('.').pop() || targetExt).toLowerCase();
+    // The editor opens CSV files as spreadsheets internally, so the zip it
+    // emits for them is an XLSX regardless of the original file's name.
+    const sourceExt = nameExt === 'csv' ? 'xlsx' : nameExt;
+    const outputFileName = `${sanitizedBase}.${targetExt.toLowerCase()}`;
+
+    if (sourceExt === targetExt.toLowerCase()) {
+      return { fileName: outputFileName, data: bin as BlobPart };
+    }
+
+    if (targetExt.toUpperCase() === 'CSV') {
+      return { fileName: outputFileName, data: await this.xlsxToCsvBytes(bin) };
+    }
+
+    const inputPath = `/working/${sanitizedBase}.${sourceExt}`;
+    const outputPath = `/working/${outputFileName}`;
+    this.x2tModule!.FS.writeFile(inputPath, bin);
+
+    let additionalParams = '';
+    if (targetExt === 'PDF') {
+      await this.loadFontsForPdf();
+      additionalParams = `<m_sFontDir>/working/fonts/</m_sFontDir><m_nFormatTo>${PDF_OUTPUT_FORMAT}</m_nFormatTo>`;
+    }
+
+    const params = this.createConversionParams(inputPath, outputPath, additionalParams, true);
+    this.x2tModule!.FS.writeFile('/working/params.xml', params);
+    this.executeConversion('/working/params.xml');
+
+    return { fileName: outputFileName, data: this.x2tModule!.FS.readFile(outputPath) };
+  }
+
+  /**
+   * Convert bin format to specified format and save it locally.
+   */
+  async convertBinToDocumentAndDownload(
+    bin: Uint8Array,
+    originalFileName: string,
+    targetExt = 'DOCX',
+    media?: Record<string, string>,
+  ): Promise<BinConversionResult> {
+    const result = await this.convertBinToDocument(bin, originalFileName, targetExt, media);
+    const data = result.data instanceof Uint8Array ? result.data : new Uint8Array(result.data as ArrayBuffer);
+
+    // TODO: Improve print functionality
+    await saveFileToDisk(data, result.fileName);
+    return result;
+  }
+
+  /**
+   * Destroy instance and clean up resources
+   */
+  destroy(): void {
+    this.x2tModule = null;
+    this.isReady = false;
+    this.initPromise = null;
+    console.log('X2T converter destroyed');
+  }
+}

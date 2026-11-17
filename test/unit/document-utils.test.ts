@@ -1,0 +1,82 @@
+import { describe, expect, it } from 'vitest';
+import {
+  DOCUMENT_TYPE_MAP,
+  getBasePath,
+  getDocumentExtension,
+  getDocumentMimeType,
+  getDocumentType,
+  parseReadonly,
+} from '@ranuts/shared/document-utils';
+
+describe('document utils', () => {
+  it('classifies common document extensions', () => {
+    expect(getDocumentType('docx')).toBe('word');
+    expect(getDocumentType('xlsx')).toBe('cell');
+    expect(getDocumentType('csv')).toBe('cell');
+    expect(getDocumentType('pptx')).toBe('slide');
+  });
+
+  it.each([
+    ['ODT', 'word'],
+    ['rtf', 'word'],
+    ['txt', 'word'],
+    ['ODS', 'cell'],
+    ['odp', 'slide'],
+    ['pdf', 'pdf'],
+    ['unknown', null],
+  ])('classifies supported import format %s for editor and tool routing', (extension, kind) => {
+    expect(getDocumentType(extension)).toBe(kind);
+  });
+
+  it.each(['docx', 'doc', 'odt', 'rtf', 'txt', 'pdf', 'xlsx', 'xls', 'ods', 'csv', 'pptx', 'ppt', 'odp'])(
+    'names %s back from its own MIME type',
+    (extension) => {
+      expect(getDocumentExtension(getDocumentMimeType(extension))).toBe(extension);
+    },
+  );
+
+  it('names no extension for a MIME type outside the document formats', () => {
+    expect(getDocumentExtension('image/png')).toBe('');
+    expect(getDocumentExtension('')).toBe('');
+  });
+
+  it('parses the readonly query value for preview mode', () => {
+    // Truthy forms
+    expect(parseReadonly('true')).toBe(true);
+    expect(parseReadonly('1')).toBe(true);
+    expect(parseReadonly('')).toBe(true); // bare ?readonly
+    // Falsy forms
+    expect(parseReadonly('false')).toBe(false);
+    expect(parseReadonly('0')).toBe(false);
+    expect(parseReadonly(undefined)).toBe(false);
+    expect(parseReadonly('yes')).toBe(false);
+  });
+
+  it('detects GitHub Pages base path', () => {
+    window.history.pushState({}, '', '/document/');
+    expect(getBasePath()).toBe('/document/');
+
+    window.history.pushState({}, '', '/');
+    expect(getBasePath()).toBe('/');
+  });
+
+  it('keeps the supported document type map stable', () => {
+    expect(DOCUMENT_TYPE_MAP).toMatchInlineSnapshot(`
+      {
+        "csv": "cell",
+        "doc": "word",
+        "docx": "word",
+        "odp": "slide",
+        "ods": "cell",
+        "odt": "word",
+        "pdf": "pdf",
+        "ppt": "slide",
+        "pptx": "slide",
+        "rtf": "word",
+        "txt": "word",
+        "xls": "cell",
+        "xlsx": "cell",
+      }
+    `);
+  });
+});

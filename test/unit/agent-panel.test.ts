@@ -1,0 +1,712 @@
+import { t, getLanguage, setLanguage, LanguageCode } from '@ranuts/shared/i18n';
+import * as historyList from '../../lib/agent-plugin/ui/history-list';
+import { ChatView } from '@ranuts/chat-ui';
+import type { EditorApi } from '../../lib/agent-plugin/editor-bridge';
+import { afterEach, expect, it, vi } from 'vitest';
+import { createAgentPanel, setAgentPanelOpen, setAgentPanelEnabled } from '../../lib/agent-plugin/ui/panel';
+import { loadAllLocales } from './lib/locales';
+
+await loadAllLocales();
+HTMLElement.prototype.scrollTo = vi.fn();
+const editorState = vi.hoisted(() => ({ api: null as null | Partial<EditorApi> }));
+vi.mock('@ranuts/agent-core/llm/local', () => ({
+  LocalInferenceProvider: class {
+    preload = async () => {};
+    dispose = async () => {};
+    isReady = () => false;
+  },
+}));
+vi.mock('../../lib/agent-plugin/editor-bridge', () => ({
+  getEditorApi: () => editorState.api,
+  requireEditorApi: () => editorState.api,
+  requireEditorContext: () => ({ api: editorState.api, AscCommon: { changestype_Document_Settings: 42 } }),
+}));
+
+vi.mock('@ranuts/agent-core/llm/webllm', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@ranuts/agent-core/llm/webllm')>()),
+  isWebGPUAvailable: () => true,
+  isModelCached: async () => false,
+  WebLLMProvider: class {
+    preload = async () => {};
+    dispose = async () => {};
+    isReady = () => false;
+  },
+}));
+
+afterEach(() => {
+  localStorage.removeItem('agent-panel-provider');
+  localStorage.removeItem('agent-panel-gguf-url');
+  window.dispatchEvent(new Event('pagehide'));
+  document.body.innerHTML = '';
+  editorState.api = null;
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+it('avoids context reads while closed or disabled and refreshes immediately on reopening', async () => {
+  vi.useFakeTimers();
+  const read = vi.fn(() => 'selected text');
+  editorState.api = {
+    isDocumentLoadComplete: true,
+    isLoadFullApi: true,
+    pluginMethod_GetSelectedText: read,
+    pluginMethod_GetSelectionType: () => 'text',
+  };
+  const panel = createAgentPanel({ background: true });
+  read.mockClear();
+  vi.advanceTimersByTime(3000);
+  expect(read).not.toHaveBeenCalled();
+  setAgentPanelOpen(true);
+  expect(panel.querySelector('.agent-quote-context')?.textContent).toContain('selected text');
+  expect(read).toHaveBeenCalled();
+  setAgentPanelOpen(false);
+  read.mockClear();
+  vi.advanceTimersByTime(3000);
+  expect(read).not.toHaveBeenCalled();
+  await setAgentPanelEnabled(false);
+  setAgentPanelOpen(true);
+  read.mockClear();
+  vi.advanceTimersByTime(3000);
+  expect(read).not.toHaveBeenCalled();
+});
+
+it('keeps background tabs idle and updates the selection chip as soon as the tab resumes', () => {
+  vi.useFakeTimers();
+  let visible = true;
+  vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => (visible ? 'visible' : 'hidden'));
+  let selection = 'before background';
+  const read = vi.fn(() => selection);
+  editorState.api = { isDocumentLoadComplete: true, isLoadFullApi: true, pluginMethod_GetSelectedText: read };
+  const panel = createAgentPanel();
+  visible = false;
+  document.dispatchEvent(new Event('visibilitychange'));
+  read.mockClear();
+  selection = 'after background';
+  vi.advanceTimersByTime(3000);
+  expect(read).not.toHaveBeenCalled();
+  visible = true;
+  document.dispatchEvent(new Event('visibilitychange'));
+  expect(panel.querySelector('.agent-quoted-text')?.textContent).toBe('after background');
+  vi.restoreAllMocks();
+});
+
+it('updates selection chips through SDK callbacks and detaches context subscriptions when closed', () => {
+  vi.useFakeTimers();
+  let selection = 'before selection';
+  const callbacks = new Map<string, (...args: unknown[]) => void>();
+  editorState.api = {
+    isDocumentLoadComplete: true,
+    isLoadFullApi: true,
+    pluginMethod_GetSelectedText: () => selection,
+    asc_registerCallback: (event, callback) => {
+      callbacks.set(event, callback);
+    },
+    asc_unregisterCallback: (event, callback) => {
+      if (callbacks.get(event) === callback) callbacks.delete(event);
+    },
+  };
+  const panel = createAgentPanel();
+  selection = 'after selection';
+  callbacks.get('asc_onSelectionEnd')!();
+  vi.advanceTimersByTime(20);
+  expect(panel.querySelector('.agent-quoted-text')?.textContent).toBe('after selection');
+  setAgentPanelOpen(false);
+  expect(callbacks.has('asc_onSelectionEnd')).toBe(false);
+  selection = 'while closed';
+  setAgentPanelOpen(true);
+  expect(panel.querySelector('.agent-quoted-text')?.textContent).toBe('while closed');
+});
+
+it('does not reattach native review callbacks after a terminal pagehide', () => {
+  const register = vi.fn();
+  editorState.api = {
+    isDocumentLoadComplete: true,
+    isLoadFullApi: true,
+    asc_registerCallback: register,
+    asc_unregisterCallback: vi.fn(),
+  };
+  createAgentPanel();
+  window.dispatchEvent(new PageTransitionEvent('pagehide'));
+  register.mockClear();
+  window.dispatchEvent(new Event('document:content-ready'));
+  expect(register).not.toHaveBeenCalled();
+});
+
+it('offers only browser-local backends and keeps remote credentials out of the product', () => {
+  const panel = createAgentPanel();
+  const mode = panel.querySelector('.agent-writing-task');
+  expect(mode).not.toBeNull();
+  expect((mode as HTMLElement).hidden).toBe(true);
+  expect(panel.querySelector('.agent-composer-tools')).toBeNull();
+  const select = panel.querySelector('.agent-panel-provider') as HTMLElement & { value: string };
+  expect(Array.from(select.querySelectorAll('r-option')).map((option) => option.getAttribute('value'))).toEqual([
+    'webllm',
+    'wllama',
+  ]);
+  expect(panel.querySelector('.agent-panel-key-input')).toBeNull();
+  expect(panel.querySelector('.agent-api-base')).toBeNull();
+  expect(panel.querySelector('.agent-panel-link')).toBeNull();
+});
+
+it('groups conversation switching and creation ahead of the transcript', () => {
+  const panel = createAgentPanel();
+  const bar = panel.querySelector('.agent-conversations')!;
+  expect(bar.querySelector('.agent-history-search')).not.toBeNull();
+  expect(bar.querySelector('.agent-conversation-open')).toBeNull();
+  expect(bar.querySelector('.agent-history-empty')?.textContent).toBe(t('agentHistoryEmpty'));
+  expect(bar.closest('.agent-history-view')?.hasAttribute('hidden')).toBe(true);
+  expect(panel.querySelector('.agent-panel-header .agent-panel-clear')).not.toBeNull();
+  panel.querySelector<HTMLButtonElement>('.agent-history-toggle')!.click();
+  expect(bar.closest('.agent-history-view')?.hasAttribute('hidden')).toBe(false);
+
+  expect(panel.querySelector('.agent-document-scope')).toBeNull();
+});
+
+it('labels provider and model controls in settings', () => {
+  const panel = createAgentPanel();
+  expect(panel.querySelector('.agent-panel-provider')?.getAttribute('aria-label')).toBeTruthy();
+  expect(panel.querySelector('.agent-panel-model')?.getAttribute('aria-label')).toBeTruthy();
+});
+
+it('passes localized result identities to the chat renderer after language changes', async () => {
+  const original = getLanguage();
+  const labels = vi.spyOn(ChatView.prototype, 'setLabels');
+  try {
+    setLanguage(LanguageCode.EN);
+    createAgentPanel();
+    setLanguage(LanguageCode.ZH);
+    await vi.waitFor(() =>
+      expect(labels).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          documentDraft: t('agentDocumentDraft'),
+          incomplete: t('agentIncompleteResponse'),
+        }),
+      ),
+    );
+    setLanguage(LanguageCode.DE);
+    await vi.waitFor(() =>
+      expect(labels).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          documentDraft: t('agentDocumentDraft'),
+          incomplete: t('agentIncompleteResponse'),
+        }),
+      ),
+    );
+  } finally {
+    setLanguage(original);
+    labels.mockRestore();
+  }
+});
+
+it.each([{ isComposing: true }, { keyCode: 229 }])(
+  'keeps settings and its draft open when Escape cancels IME composition (%j)',
+  (composition) => {
+    const panel = createAgentPanel();
+    panel.querySelector<HTMLButtonElement>('.agent-panel-settings-toggle')!.click();
+    const settings = panel.querySelector<HTMLElement>('.agent-panel-settings')!;
+    const field = settings.querySelector<HTMLInputElement>('input:not([type="file"])')!;
+    field.value = '中文草稿';
+    field.focus();
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', ...composition, bubbles: true }));
+    expect(settings.classList.contains('agent-panel-settings-hidden')).toBe(false);
+    expect(document.activeElement).toBe(field);
+    expect(field.value).toBe('中文草稿');
+  },
+);
+it('returns focus to settings control when Escape closes the settings surface', () => {
+  const panel = createAgentPanel();
+  const settingsButton = panel.querySelector<HTMLButtonElement>('.agent-panel-settings-toggle')!;
+  settingsButton.click();
+  const settings = panel.querySelector<HTMLElement>('.agent-panel-settings')!;
+  expect(settings.classList.contains('agent-panel-settings-hidden')).toBe(false);
+  settings.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  expect(settings.classList.contains('agent-panel-settings-hidden')).toBe(true);
+  expect(document.activeElement).toBe(settingsButton);
+});
+
+it('enables review controls when the editor finishes loading after the panel', () => {
+  const panel = createAgentPanel();
+  const checkbox = panel.querySelector('r-checkbox')!;
+  expect(checkbox.hasAttribute('disabled')).toBe(true);
+  editorState.api = {
+    isDocumentLoadComplete: true,
+    isLoadFullApi: true,
+    asc_IsTrackRevisions: () => true,
+    asc_SetGlobalTrackRevisions: () => {},
+    asc_GetGlobalTrackRevisions: () => true,
+    asc_SetLocalTrackRevisions: () => {},
+  };
+  window.dispatchEvent(new Event('document:content-ready'));
+  expect(checkbox.hasAttribute('disabled')).toBe(false);
+  expect(checkbox.getAttribute('checked')).toBe('true');
+});
+
+it('preserves the composer draft when local inference has not been loaded', async () => {
+  const panel = createAgentPanel();
+  const input = panel.querySelector<HTMLTextAreaElement>('.cui-input')!;
+  input.value = '请润色选中的段落';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await Promise.resolve();
+  expect(input.value).toBe('请润色选中的段落');
+});
+
+it('offers an explicit GGUF backend without changing the default provider', () => {
+  const panel = createAgentPanel();
+  const select = panel.querySelector('.agent-panel-provider')!;
+  expect(select.getAttribute('value')).toBe('webllm');
+  expect(select.querySelector('r-option[value="wllama"]')).not.toBeNull();
+  expect(panel.querySelector('.agent-panel-gguf-files')).not.toBeNull();
+});
+
+it('retains local model settings if an invalid remote provider value is injected', () => {
+  const panel = createAgentPanel();
+  const provider = panel.querySelector('.agent-panel-provider') as HTMLElement & { value: string };
+  localStorage.setItem('agent-local-model-url', '/models/saved');
+  provider.value = 'openai';
+  provider.dispatchEvent(new Event('change'));
+  expect(localStorage.getItem('agent-local-model-url')).toBe('/models/saved');
+  expect(localStorage.getItem('agent-panel-provider')).toBe('webllm');
+  localStorage.removeItem('agent-local-model-url');
+  expect(panel.querySelector('.agent-api-model')).toBeNull();
+});
+
+it('shows GGUF settings only for wllama and retains a draft until explicit loading', async () => {
+  const panel = createAgentPanel();
+  const select = panel.querySelector('.agent-panel-provider') as HTMLElement & { value: string };
+  select.value = 'wllama';
+  select.dispatchEvent(new Event('change'));
+  expect((panel.querySelector('.agent-panel-gguf-row') as HTMLElement).style.display).toBe('');
+  expect((panel.querySelector('.agent-panel-model-row') as HTMLElement).style.display).toBe('none');
+  const textarea = panel.querySelector<HTMLTextAreaElement>('.cui-input')!;
+  textarea.value = '我的草稿';
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(textarea.value).toBe('我的草稿');
+  select.value = 'webllm';
+  select.dispatchEvent(new Event('change'));
+  expect((panel.querySelector('.agent-panel-gguf-row') as HTMLElement).style.display).toBe('none');
+});
+
+it('clears a previous URL when local GGUF files are selected', () => {
+  const panel = createAgentPanel();
+  const url = panel.querySelector('.agent-panel-gguf-url') as HTMLElement & { value: string };
+  url.value = 'https://example.com/old.gguf';
+  panel.querySelector('.agent-panel-gguf-files')!.dispatchEvent(new Event('change'));
+  expect(url.value).toBe('');
+});
+
+it('exposes explicit writing tasks and hides them for cloud backends', () => {
+  const panel = createAgentPanel();
+
+  const tasks = panel.querySelector('.agent-writing-task') as HTMLElement & { value: string };
+  const language = panel.querySelector('.agent-writing-language') as HTMLElement;
+  expect(tasks.hidden).toBe(true);
+  expect(panel.querySelector('.agent-composer-tools')).toBeNull();
+  expect([...tasks.querySelectorAll('option')].map((o) => o.getAttribute('value'))).toEqual([
+    'chat',
+    'tools',
+    'rewrite',
+    'summarize',
+    'translate',
+  ]);
+  tasks.value = 'translate';
+  tasks.dispatchEvent(new Event('change'));
+  expect(language.hidden).toBe(true);
+  const provider = panel.querySelector('.agent-panel-provider') as HTMLElement & { value: string };
+  provider.value = 'anthropic';
+  provider.dispatchEvent(new Event('change'));
+  expect(tasks.hidden).toBe(true);
+  expect(panel.querySelector('.agent-composer-tools')).toBeNull();
+  expect(language.hidden).toBe(true);
+});
+
+it('names the review-mode checkbox with its visible localized label', () => {
+  const panel = createAgentPanel();
+  const checkbox = panel.querySelector('.agent-panel-review r-checkbox')!;
+  const label = panel.querySelector('.agent-panel-review span')!.textContent;
+  expect(label).toBeTruthy();
+  expect(checkbox.getAttribute('aria-label')).toBe(label);
+});
+
+it('syncs native tracking changes without writing settings and detaches on pagehide', () => {
+  let enabled = false;
+  const callbacks = new Set<(...args: unknown[]) => void>();
+  const setter = vi.fn();
+  const unregister = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+    if (event === 'asc_onOnTrackRevisionsChange') callbacks.delete(handler);
+  });
+  editorState.api = {
+    isDocumentLoadComplete: true,
+    isLoadFullApi: true,
+    asc_IsTrackRevisions: () => enabled,
+    asc_GetGlobalTrackRevisions: () => enabled,
+    asc_SetGlobalTrackRevisions: setter,
+    asc_SetLocalTrackRevisions: vi.fn(),
+    asc_registerCallback: (event, handler) => {
+      if (event === 'asc_onOnTrackRevisionsChange') callbacks.add(handler);
+    },
+    asc_unregisterCallback: unregister,
+  };
+  const panel = createAgentPanel();
+  const checkbox = panel.querySelector('.agent-panel-review r-checkbox')!;
+  expect(checkbox.getAttribute('checked')).toBe('false');
+  enabled = true;
+  for (const callback of callbacks) callback();
+  expect(checkbox.getAttribute('checked')).toBe('true');
+  expect(setter).not.toHaveBeenCalled();
+  window.dispatchEvent(new Event('pagehide'));
+  expect(unregister).toHaveBeenCalledWith('asc_onOnTrackRevisionsChange', expect.any(Function));
+  expect(callbacks.size).toBe(0);
+});
+
+it.each(['recover', 'external', 'editor', 'close', 'settings'] as const)(
+  'handles an iframe rejecting the initial panel focus without overriding %s intent',
+  async (intent) => {
+    vi.useFakeTimers();
+    const previousPreset = localStorage.getItem('agent-local-preset');
+    localStorage.setItem('agent-local-preset', 'Qwen3-4B-q4f16_1-MLC');
+    const app = document.createElement('div');
+    app.id = 'app';
+    const frame = document.createElement('iframe');
+    app.append(frame);
+    document.body.append(app);
+    const panel = createAgentPanel({ background: true });
+    const input = panel.querySelector<HTMLTextAreaElement>('.cui-input')!;
+    // Native cross-frame focus can reject the first attempt during docking.
+    // Keep the real focus implementation available for a later retry.
+    const focus = vi.spyOn(input, 'focus').mockImplementationOnce(() => {});
+    try {
+      frame.focus();
+      setAgentPanelOpen(true);
+      await Promise.resolve();
+      expect(focus).toHaveBeenCalled();
+      expect(document.activeElement).toBe(frame);
+      let expected: Element = input;
+      if (intent === 'external') {
+        const button = document.createElement('button');
+        document.body.append(button);
+        button.focus();
+        expected = button;
+      } else if (intent === 'editor') {
+        frame.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+        expected = frame;
+      } else if (intent === 'close') {
+        setAgentPanelOpen(false);
+        expected = document.activeElement!;
+      } else if (intent === 'settings') {
+        panel.querySelector<HTMLButtonElement>('.agent-panel-settings-toggle')!.click();
+        expected = document.activeElement!;
+      }
+      await vi.advanceTimersByTimeAsync(40);
+      expect(document.activeElement).toBe(expected);
+    } finally {
+      focus.mockRestore();
+      if (previousPreset === null) localStorage.removeItem('agent-local-preset');
+      else localStorage.setItem('agent-local-preset', previousPreset);
+    }
+  },
+);
+
+it('returns keyboard focus to the document rail when closing a focused panel', async () => {
+  const app = document.createElement('div');
+  app.id = 'app';
+  const frame = document.createElement('iframe');
+  app.append(frame);
+  document.body.append(app);
+  const doc = frame.contentDocument!;
+  doc.body.innerHTML = '<div id="right-menu"><div class="tool-menu-btns"></div></div>';
+  const panel = createAgentPanel();
+  await Promise.resolve();
+  const close = panel.querySelector<HTMLButtonElement>('.agent-panel-close')!;
+  close.focus();
+  close.click();
+  expect(panel.classList.contains('agent-panel-hidden')).toBe(true);
+  expect(doc.activeElement).toBe(doc.querySelector('.agent-sidebar-entry'));
+});
+
+it('keeps an external control focused when the panel is closed programmatically', async () => {
+  const panel = createAgentPanel();
+  await Promise.resolve();
+  const external = document.createElement('button');
+  document.body.append(external);
+  external.focus();
+  panel.querySelector<HTMLButtonElement>('.agent-panel-close')!.click();
+  expect(document.activeElement).toBe(external);
+});
+
+it('falls back to the editor frame when the native rail is unavailable', async () => {
+  const app = document.createElement('div');
+  app.id = 'app';
+  const frame = document.createElement('iframe');
+  app.append(frame);
+  document.body.append(app);
+  const panel = createAgentPanel();
+  await Promise.resolve();
+  const close = panel.querySelector<HTMLButtonElement>('.agent-panel-close')!;
+  close.focus();
+  close.click();
+  expect(document.activeElement).toBe(frame);
+});
+
+function mountDirectScope(kind: 'word' | 'cell' | 'slide'): void {
+  const logic =
+    kind === 'slide'
+      ? { Slides: [], GetSelectedSlides: () => [0] }
+      : { GetSelectionState: () => [0], GetDocPosType: () => 0, GetText: () => 'Selected text' };
+  const model = {
+    selectionRange: { ranges: [{ r1: 0, r2: 0, c1: 0, c2: 0 }], activeCell: { row: 0, col: 0 } },
+    getRange3: () => ({ getValue: () => '1' }),
+  };
+  editorState.api = {
+    isDocumentLoadComplete: true,
+    isLoadFullApi: true,
+    pluginMethod_GetSelectedText: () => (kind === 'word' ? 'Selected text' : ''),
+    asc_IsTrackRevisions: () => false,
+    WordControl: { m_oLogicDocument: logic },
+    ...(kind === 'cell'
+      ? {
+          asc_getActiveRangeStr: () => 'A1',
+          asc_getActiveWorksheetIndex: () => 0,
+          wb: { getWorksheet: () => ({ model }) },
+        }
+      : {}),
+    ...(kind === 'slide' ? { getCurrentPage: () => 0 } : {}),
+  };
+  const frame = document.createElement('iframe');
+  frame.name = 'frameEditor';
+  document.body.append(frame);
+  Object.assign(frame.contentWindow!, { editor: editorState.api, AscCommon: { History: { Index: 0, Points: [] } } });
+}
+
+it('executes an explicit slide command directly in tools mode without a ready model', async () => {
+  const { agentTools } = await import('../../lib/agent-plugin/tools');
+  const execute = vi.spyOn(agentTools.slide_action, 'execute').mockResolvedValue({ verified: true, count: 2, page: 2 });
+  try {
+    mountDirectScope('slide');
+    const panel = createAgentPanel();
+    document.body.append(panel);
+    const mode = panel.querySelector<HTMLSelectElement>('.agent-writing-task')!;
+    mode.value = 'tools';
+    mode.dispatchEvent(new Event('change'));
+    const input = panel.querySelector<HTMLTextAreaElement>('.cui-input')!;
+    input.value = 'Add a slide';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledExactlyOnceWith({ action: 'add' }, expect.any(AbortSignal)));
+    await vi.waitFor(() => expect(panel.querySelector('.cui-activity')?.textContent).toContain(t('agentPlanVerified')));
+  } finally {
+    execute.mockRestore();
+  }
+});
+
+it('remounts viewport tracking when the panel returns from the back-forward cache', () => {
+  const original = Object.getOwnPropertyDescriptor(window, 'visualViewport');
+  const width = Object.getOwnPropertyDescriptor(window, 'innerWidth');
+  const viewport = Object.assign(new EventTarget(), { height: 700, offsetTop: 0, scale: 1 });
+  Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+  try {
+    const panel = createAgentPanel();
+    expect(panel.style.height).toBe('700px');
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+    expect(panel.style.height).toBe('');
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    viewport.height = 400;
+    viewport.dispatchEvent(new Event('resize'));
+    expect(panel.style.height).toBe('400px');
+  } finally {
+    window.dispatchEvent(new PageTransitionEvent('pagehide'));
+    if (original) Object.defineProperty(window, 'visualViewport', original);
+    else Reflect.deleteProperty(window, 'visualViewport');
+    if (width) Object.defineProperty(window, 'innerWidth', width);
+  }
+});
+
+it('restores resizing and the editor AI entry on repeated cached returns without duplicate handles', () => {
+  const frame = document.createElement('iframe');
+  document.body.append(frame);
+  frame.contentDocument!.body.innerHTML = '<div id="right-menu"><div class="tool-menu-btns"></div></div>';
+  const panel = createAgentPanel();
+  for (let cycle = 0; cycle < 2; cycle++) {
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+    expect(panel.querySelector('[role="separator"]')).toBeNull();
+    expect(frame.contentDocument!.querySelector('.agent-sidebar-entry')).toBeNull();
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    expect(panel.querySelectorAll('[role="separator"]')).toHaveLength(1);
+    expect(frame.contentDocument!.querySelectorAll('.agent-sidebar-entry')).toHaveLength(1);
+    const handle = panel.querySelector('[role="separator"]')!;
+    const oldWidth = Number(handle.getAttribute('aria-valuenow'));
+    handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+    expect(Number(handle.getAttribute('aria-valuenow'))).toBeGreaterThan(oldWidth);
+    panel.querySelector<HTMLButtonElement>('.agent-panel-close')!.click();
+    expect(panel.classList.contains('agent-panel-hidden')).toBe(true);
+    frame.contentDocument!.querySelector<HTMLButtonElement>('.agent-sidebar-entry')!.click();
+    expect(panel.classList.contains('agent-panel-hidden')).toBe(false);
+  }
+});
+
+it('refreshes stale loaded guidance after a cached return without claiming model readiness', () => {
+  localStorage.setItem('agent-panel-provider', 'wllama');
+  const panel = createAgentPanel();
+  const note = panel.querySelector<HTMLElement>('.agent-panel-note')!;
+  note.textContent = t('agentModelLoaded');
+  window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+  window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+  expect(note.textContent).toBe(t('agentWllamaHint'));
+});
+
+it('shows selected local model filenames safely and clears them when switching to a URL', () => {
+  localStorage.setItem('agent-panel-provider', 'wllama');
+  const panel = createAgentPanel();
+  const input = panel.querySelector<HTMLInputElement>('.agent-panel-gguf-files')!;
+  const names = panel.querySelector<HTMLElement>('.agent-panel-gguf-filenames');
+  expect(names).not.toBeNull();
+  Object.defineProperty(input, 'files', { configurable: true, value: [new File(['x'], '<model>.gguf')] });
+  input.dispatchEvent(new Event('change'));
+  expect(names!.textContent).toBe('<model>.gguf');
+  expect(names!.querySelector('model')).toBeNull();
+  const url = panel.querySelector<HTMLElement & { value: string }>('.agent-panel-gguf-url')!;
+  url.value = 'https://example.com/model.gguf';
+  url.dispatchEvent(new Event('change'));
+  expect(names!.textContent).toBe('');
+});
+
+it.each([
+  ['sum_range', 'sum A1:A1 into B1'],
+  ['slide_action', 'Add a slide'],
+  ['set_bold', 'bold selected text'],
+] as const)('Stop cancels an explicit %s command before its deferred document write', async (name, command) => {
+  const { agentTools } = await import('../../lib/agent-plugin/tools');
+  let release!: () => void;
+  let wrote = false;
+  const execute = vi.spyOn(agentTools[name], 'execute').mockImplementation(async (_input, signal) => {
+    await new Promise<void>((resolve, reject) => {
+      release = () => {
+        if (!signal?.aborted) wrote = true;
+        resolve();
+      };
+      signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+    return { verified: true } as never;
+  });
+  try {
+    mountDirectScope(name === 'sum_range' ? 'cell' : name === 'slide_action' ? 'slide' : 'word');
+    const panel = createAgentPanel();
+    document.body.append(panel);
+    const mode = panel.querySelector<HTMLSelectElement>('.agent-writing-task')!;
+    mode.value = 'tools';
+    mode.dispatchEvent(new Event('change'));
+    const input = panel.querySelector<HTMLTextAreaElement>('.cui-input')!;
+    input.value = command;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    input.value = 'Next request';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.focus();
+    const stop = panel.querySelector<HTMLButtonElement>('.cui-send-stop')!;
+    stop.click();
+    expect(stop.disabled).toBe(true);
+    expect(panel.querySelector('.cui-status')?.textContent).toBe(t('agentStopping'));
+    expect(input.value).toBe('Next request');
+    expect(document.activeElement).toBe(input);
+    release();
+    await vi.waitFor(() => expect(input.closest('.cui-root')!.querySelector('.cui-send-stop')).toBeNull());
+    expect(wrote).toBe(false);
+    expect(panel.textContent).toContain(t('agentStopped'));
+  } finally {
+    execute.mockRestore();
+  }
+});
+
+it('creates a runtime beside the lightweight off welcome rather than treating it as the runtime', () => {
+  const welcome = document.createElement('aside');
+  welcome.className = 'agent-panel agent-onboarding';
+  document.body.append(welcome);
+  const panel = createAgentPanel({ externalEntry: true, background: true });
+  expect(panel).not.toBe(welcome);
+  expect(panel.querySelector('.cui-input')).not.toBeNull();
+});
+
+it('automatically exposes selected text without changing the draft', () => {
+  editorState.api = {
+    isDocumentLoadComplete: true,
+    isLoadFullApi: true,
+    pluginMethod_GetSelectedText: () => 'Private selected words',
+  };
+  const panel = createAgentPanel();
+  expect(panel.querySelector('.agent-panel-quote')).toBeNull();
+  expect(panel.querySelector('.agent-quoted-text')?.textContent).toBe('Private selected words');
+  expect(panel.querySelector('.agent-composer-tools')).toBeNull();
+});
+
+it('suspends history while closed, hidden or in BFCache and disposes on terminal pagehide', async () => {
+  const original = historyList.createConversationList;
+  let list!: ReturnType<typeof original>;
+  const factory = vi.spyOn(historyList, 'createConversationList').mockImplementation((options) => {
+    list = original(options);
+    vi.spyOn(list, 'setActive');
+    vi.spyOn(list, 'suspend');
+    vi.spyOn(list, 'resume');
+    vi.spyOn(list, 'dispose');
+    return list;
+  });
+  let visible = true;
+  const visibility = vi
+    .spyOn(document, 'visibilityState', 'get')
+    .mockImplementation(() => (visible ? 'visible' : 'hidden'));
+  try {
+    const panel = createAgentPanel();
+    expect(list.setActive).toHaveBeenLastCalledWith(false);
+    panel.querySelector<HTMLButtonElement>('.agent-history-toggle')!.click();
+    expect(list.setActive).toHaveBeenLastCalledWith(true);
+    setAgentPanelOpen(false);
+    expect(list.setActive).toHaveBeenLastCalledWith(false);
+    setAgentPanelOpen(true);
+    expect(list.setActive).toHaveBeenLastCalledWith(true);
+    visible = false;
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(list.setActive).toHaveBeenLastCalledWith(false);
+    visible = true;
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(list.setActive).toHaveBeenLastCalledWith(true);
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+    expect(list.setActive).toHaveBeenLastCalledWith(false);
+    expect(list.dispose).not.toHaveBeenCalled();
+    expect(list.suspend).toHaveBeenCalledOnce();
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    expect(list.resume).toHaveBeenCalledOnce();
+    expect(list.setActive).toHaveBeenLastCalledWith(true);
+    await setAgentPanelEnabled(false);
+    expect(list.setActive).toHaveBeenLastCalledWith(false);
+    window.dispatchEvent(new PageTransitionEvent('pagehide'));
+    expect(list.dispose).toHaveBeenCalledOnce();
+  } finally {
+    factory.mockRestore();
+    visibility.mockRestore();
+  }
+});
+
+it('preserves an expanded selected-text disclosure and its scroller while context notifications update the source', () => {
+  let selection = 'Original selected text';
+  editorState.api = {
+    isDocumentLoadComplete: true,
+    isLoadFullApi: true,
+    pluginMethod_GetSelectedText: () => selection,
+  };
+  const panel = createAgentPanel();
+  const trigger = panel.querySelector<HTMLButtonElement>('.agent-selection-toggle')!;
+  trigger.click();
+  const text = panel.querySelector<HTMLElement>('.agent-quoted-text')!;
+  text.scrollTop = 32;
+  selection = 'Updated selected text with\nline breaks';
+  window.dispatchEvent(new Event('document:content-ready'));
+  expect(panel.querySelector('.agent-quoted-text')).toBe(text);
+  expect(text.textContent).toBe(selection);
+  expect(text.scrollTop).toBe(32);
+  expect(trigger.getAttribute('aria-expanded')).toBe('true');
+  expect(trigger.querySelector('svg')).not.toBeNull();
+  expect(trigger.getAttribute('aria-label')).toContain(String(selection.length));
+});

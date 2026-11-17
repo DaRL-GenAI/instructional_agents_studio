@@ -1,0 +1,352 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  getLanguage,
+  getOnlyOfficeLang,
+  LanguageCode,
+  setLanguage,
+  SHELL_LOCALES,
+  t,
+  withLocale,
+} from '@ranuts/shared/i18n';
+import { loadAllLocales } from './lib/locales';
+
+await loadAllLocales();
+
+describe('i18n', () => {
+  it('carries an explicit English choice into the editor despite a previous Chinese preference', async () => {
+    localStorage.setItem('document-lang', LanguageCode.ZH);
+    document.cookie = 'locale=zh-CN;path=/';
+    window.history.pushState({}, '', withLocale('/editor?new=docx', LanguageCode.EN));
+    try {
+      vi.resetModules();
+      const fresh = await import('@ranuts/shared/i18n');
+      expect(fresh.getLanguage()).toBe(LanguageCode.EN);
+      expect(fresh.getOnlyOfficeLang()).toBe('en');
+    } finally {
+      document.cookie = 'locale=;path=/;max-age=0';
+      window.history.pushState({}, '', '/');
+      localStorage.clear();
+    }
+  });
+
+  it('replaces an existing locale and keeps query values and fragments', () => {
+    const result = new URL(withLocale('/editor?saved=example&locale=zh#section', LanguageCode.EN), location.origin);
+    expect(result.searchParams.getAll('locale')).toEqual(['en']);
+    expect(result.searchParams.get('saved')).toBe('example');
+    expect(result.hash).toBe('#section');
+  });
+
+  it('preserves question marks inside an existing query value', () => {
+    const result = new URL(
+      withLocale('/editor?file=https://example.com/a.docx?v=1#part#2', LanguageCode.EN),
+      location.origin,
+    );
+    expect(result.searchParams.get('file')).toBe('https://example.com/a.docx?v=1');
+    expect(result.hash).toBe('#part#2');
+  });
+  afterEach(() => {
+    setLanguage(LanguageCode.EN);
+  });
+
+  it('uses English by default in the test environment', () => {
+    expect(getLanguage()).toBe(LanguageCode.EN);
+    expect(getOnlyOfficeLang()).toBe('en');
+  });
+
+  it('returns known translations for the active language', () => {
+    expect(t('documentLoaded')).toBe('Document loaded: ');
+
+    setLanguage(LanguageCode.ZH);
+
+    expect(getLanguage()).toBe(LanguageCode.ZH);
+    expect(getOnlyOfficeLang()).toBe('zh-CN');
+    expect(t('documentLoaded')).toBe('文档加载完成：');
+  });
+
+  it('falls back to the key for unknown translations', () => {
+    expect(t('missing.translation.key' as Parameters<typeof t>[0])).toBe('missing.translation.key');
+  });
+
+  it('has non-empty agent-panel translations in both languages', () => {
+    const agentKeys = [
+      'agentTitle',
+      'agentSend',
+      'agentStop',
+      'agentClear',
+      'agentQuote',
+      'agentReviewMode',
+      'agentProviderClaude',
+      'agentProviderOpenAI',
+      'agentProviderLocal',
+      'agentLoadModel',
+      'agentNeedKey',
+      'agentStopped',
+      'agentToolCallPrefix',
+    ] as const;
+    for (const lang of [LanguageCode.EN, LanguageCode.ZH]) {
+      setLanguage(lang);
+      for (const key of agentKeys) {
+        expect(t(key), `${key} (${lang})`).toBeTruthy();
+      }
+    }
+  });
+
+  // GitHub #37/#32 "UI defaults to Chinese, can't switch to English": the module-load-time
+  // language detection reads `?locale=` first (see i18n.ts constructor priority chain).
+  // The singleton is constructed once at import time, so each case needs a fresh module
+  // instance via resetModules + dynamic import rather than the shared `getLanguage()`.
+  describe('locale detection at module init (URL "locale" param)', () => {
+    afterEach(() => {
+      window.history.pushState({}, '', '/');
+      localStorage.clear();
+      document.cookie = 'locale=;path=/;max-age=0';
+      vi.restoreAllMocks();
+    });
+
+    it.each(['url', 'cookie', 'storage', 'browser'] as const)(
+      'uses English when the %s language is unsupported, without inheriting a different language',
+      async (source) => {
+        window.history.pushState({}, '', '/');
+        localStorage.clear();
+        document.cookie = 'locale=;path=/;max-age=0';
+        vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['fa-IR', 'de-DE']);
+        vi.spyOn(navigator, 'language', 'get').mockReturnValue('fa-IR');
+        if (source === 'url') {
+          window.history.pushState({}, '', '/?locale=fa');
+          document.cookie = 'locale=zh-CN;path=/';
+          localStorage.setItem('document-lang', LanguageCode.ZH);
+        } else if (source === 'cookie') {
+          document.cookie = 'locale=fa;path=/';
+          localStorage.setItem('document-lang', LanguageCode.ZH);
+        } else if (source === 'storage') localStorage.setItem('document-lang', 'fa');
+
+        vi.resetModules();
+        const fresh = await import('@ranuts/shared/i18n');
+        expect(fresh.getLanguage()).toBe(LanguageCode.EN);
+        expect(fresh.getOnlyOfficeLang()).toBe('en');
+        expect(fresh.t('agentTitle')).toBe('AI Assistant');
+      },
+    );
+
+    it('uses English when no language preference is available', async () => {
+      localStorage.clear();
+      vi.spyOn(navigator, 'languages', 'get').mockReturnValue([]);
+      vi.spyOn(navigator, 'language', 'get').mockReturnValue('');
+      vi.resetModules();
+      const fresh = await import('@ranuts/shared/i18n');
+      expect(fresh.getLanguage()).toBe(LanguageCode.EN);
+      expect(fresh.getOnlyOfficeLang()).toBe('en');
+    });
+
+    it('uses English shell copy for an editor-only language despite a previous Chinese choice', async () => {
+      window.history.pushState({}, '', '/?locale=fr-FR');
+      document.cookie = 'locale=zh-CN;path=/';
+      localStorage.setItem('document-lang', LanguageCode.ZH);
+      vi.resetModules();
+      const fresh = await import('@ranuts/shared/i18n');
+      expect(fresh.getLanguage()).toBe(LanguageCode.EN);
+      expect(fresh.getOnlyOfficeLang()).toBe('fr');
+    });
+
+    it.each([
+      ['?locale=zh', LanguageCode.ZH],
+      ['?locale=zh-CN', LanguageCode.ZH],
+      ['?locale=en', LanguageCode.EN],
+      ['?locale=en-US', LanguageCode.EN],
+    ])('URL "%s" selects language %s regardless of saved preference', async (search, expected) => {
+      localStorage.setItem('document-lang', expected === LanguageCode.ZH ? LanguageCode.EN : LanguageCode.ZH);
+      window.history.pushState({}, '', `/${search}`);
+
+      vi.resetModules();
+      const { getLanguage: freshGetLanguage } = await import('@ranuts/shared/i18n');
+
+      expect(freshGetLanguage()).toBe(expected);
+    });
+
+    it('falls back to localStorage when the URL has no locale param', async () => {
+      localStorage.setItem('document-lang', LanguageCode.ZH);
+      window.history.pushState({}, '', '/');
+
+      vi.resetModules();
+      const { getLanguage: freshGetLanguage } = await import('@ranuts/shared/i18n');
+
+      expect(freshGetLanguage()).toBe(LanguageCode.ZH);
+    });
+  });
+});
+
+// Editor UI locale passthrough (roadmap direction eight, layer 1): the shell has
+// strings for en / zh only, but the vendored editor ships 45 locales, so the
+// editor follows the visitor's language independently of the shell.
+describe('message placeholders', () => {
+  afterEach(() => {
+    setLanguage(LanguageCode.EN);
+  });
+
+  it('fills {name} from the caller in every locale that has the string', () => {
+    // The out-of-memory message quotes x2t's declared heap, which is read out
+    // of the wasm binary (lib/onlyoffice/wasm-memory.ts). Eight hand-typed
+    // copies of "283" would go stale on the next vendor bump without a single
+    // test noticing.
+    for (const locale of SHELL_LOCALES) {
+      setLanguage(locale);
+      const filled = t('editorErrorOutOfMemory', { mb: 283 });
+      expect(filled, locale).toContain('283');
+      expect(filled, locale).not.toContain('{mb}');
+    }
+  });
+
+  it('leaves the placeholder written out when the caller passes nothing', () => {
+    // Better a visible `{mb}` in one toast than a silently blank number.
+    expect(t('editorErrorOutOfMemory')).toContain('{mb}');
+  });
+
+  it('leaves an unknown name alone rather than blanking it', () => {
+    expect(t('editorErrorOutOfMemory', { other: 1 })).toContain('{mb}');
+  });
+
+  it('no locale hardcodes the heap size any more', () => {
+    for (const locale of SHELL_LOCALES) {
+      setLanguage(locale);
+      expect(t('editorErrorOutOfMemory'), locale).not.toContain('283');
+    }
+  });
+});
+
+describe('editor UI locale (getOnlyOfficeLang) follows the visitor beyond en/zh', () => {
+  afterEach(() => {
+    window.history.pushState({}, '', '/');
+    localStorage.clear();
+  });
+
+  it.each([
+    ['ja', 'ja'],
+    ['ja-JP', 'ja'],
+    ['ko-KR', 'ko'],
+    ['de-DE', 'de'],
+    ['es-419', 'es'],
+    ['pt-BR', 'pt'],
+    ['pt-PT', 'pt-PT'],
+    ['pt', 'pt'],
+    ['zh', 'zh-CN'],
+    ['zh_CN', 'zh-CN'],
+    ['zh-Hans-CN', 'zh-CN'],
+    ['zh-TW', 'zh-TW'],
+    ['zh-Hant-HK', 'zh-TW'],
+    ['sr-Cyrl-RS', 'sr-Cyrl'],
+    ['nb-NO', 'no'],
+    ['en-US', 'en'],
+    ['fa', null], // no Persian locale in the vendor build
+    ['xx', null],
+    ['', null],
+    [null, null],
+  ])('resolveEditorLocale(%j) -> %j', async (tag, expected) => {
+    const { resolveEditorLocale } = await import('@ranuts/shared/i18n');
+    expect(resolveEditorLocale(tag)).toBe(expected);
+  });
+
+  it('every resolvable locale is one the vendor ships (and vice versa)', async () => {
+    const { EDITOR_UI_LOCALES, resolveEditorLocale } = await import('@ranuts/shared/i18n');
+    for (const code of EDITOR_UI_LOCALES) expect(resolveEditorLocale(code)).toBe(code);
+  });
+
+  it('?locale=ja gives a Japanese shell and a Japanese editor', async () => {
+    window.history.pushState({}, '', '/?locale=ja');
+    vi.resetModules();
+    const m = await import('@ranuts/shared/i18n');
+    expect(m.getLanguage()).toBe(LanguageCode.JA);
+    expect(m.getOnlyOfficeLang()).toBe('ja');
+  });
+
+  /**
+   * Persian is the case this rule exists for: the site had a full fa table and
+   * the vendor has no fa locale, so it shipped a Persian page around an English
+   * editor. The table is gone; what is pinned here is that asking for a locale
+   * the site does not have falls back cleanly rather than half-applying.
+   */
+  it('?locale=fa falls back to English, shell and editor alike', async () => {
+    window.history.pushState({}, '', '/?locale=fa');
+    vi.resetModules();
+    const m = await import('@ranuts/shared/i18n');
+    expect(m.getLanguage()).toBe(LanguageCode.EN);
+    expect(m.getOnlyOfficeLang()).toBe('en');
+    expect(m.t('uploadDocument')).toBe('View/Edit Document');
+  });
+
+  it('an unsupported ?locale (fa) falls back to English even with other browser languages', async () => {
+    window.history.pushState({}, '', '/?locale=fa');
+    const spy = vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['fa-IR', 'de-DE', 'en']);
+    try {
+      vi.resetModules();
+      const m = await import('@ranuts/shared/i18n');
+      expect(m.getLanguage()).toBe(LanguageCode.EN);
+      expect(m.getOnlyOfficeLang()).toBe('en');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('an explicit shell choice overrides the browser language for the editor too', async () => {
+    const spy = vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['ja-JP']);
+    try {
+      vi.resetModules();
+      const m = await import('@ranuts/shared/i18n');
+      expect(m.getOnlyOfficeLang()).toBe('ja');
+      m.setLanguage(LanguageCode.ZH);
+      expect(m.getOnlyOfficeLang()).toBe('zh-CN');
+      m.setLanguage(LanguageCode.EN);
+      expect(m.getOnlyOfficeLang()).toBe('en');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe('only the active table is loaded at startup', () => {
+  afterEach(() => {
+    window.history.pushState({}, '', '/');
+    localStorage.clear();
+    vi.doUnmock('../../packages/shared/src/i18n/messages/ja');
+  });
+
+  it('a page opened in Japanese reads Japanese as soon as the module resolves', async () => {
+    window.history.pushState({}, '', '/?locale=ja');
+    vi.resetModules();
+    const m = await import('@ranuts/shared/i18n');
+    expect(m.t('uploadDocument')).not.toBe('View/Edit Document');
+    expect(m.t('uploadDocument')).toBeTruthy();
+  });
+
+  it('switching to a table not loaded yet reads English, then announces the translation', async () => {
+    vi.resetModules();
+    const m = await import('@ranuts/shared/i18n');
+    const announced = new Promise<void>((resolve) => {
+      let calls = 0;
+      const onChange = () => {
+        calls += 1;
+        if (calls === 2) {
+          window.removeEventListener('languagechange', onChange);
+          resolve();
+        }
+      };
+      window.addEventListener('languagechange', onChange);
+    });
+    m.setLanguage(LanguageCode.DE);
+    expect(m.getLanguage()).toBe(LanguageCode.DE);
+    expect(m.t('uploadDocument')).toBe('View/Edit Document');
+    await announced;
+    expect(m.t('uploadDocument')).not.toBe('View/Edit Document');
+  });
+
+  it('a table that cannot be fetched leaves the page starting in English', async () => {
+    vi.doMock('../../packages/shared/src/i18n/messages/ja', () => {
+      throw new Error('chunk failed');
+    });
+    window.history.pushState({}, '', '/?locale=ja');
+    vi.resetModules();
+    const m = await import('@ranuts/shared/i18n');
+    expect(m.getLanguage()).toBe(LanguageCode.JA);
+    expect(m.t('uploadDocument')).toBe('View/Edit Document');
+    await expect(m.loadLocale(LanguageCode.JA)).rejects.toThrow();
+  });
+});

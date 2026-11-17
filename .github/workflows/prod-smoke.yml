@@ -1,0 +1,61 @@
+# Smoke the DEPLOYED site (edit.chaxus.com): the same core E2E suites the PR
+# gate runs against a local build, pointed at production. Catches what only
+# the real deployment can break -- CDN headers, gzip wasm delivery, service
+# worker rollout, stale assets. Manual + daily; red is a page.
+name: Production smoke
+
+on:
+  # After every push to main: wait until the live site serves this commit's
+  # build (Cloudflare Pages deploys from the same push), then smoke it, so a
+  # deploy-only breakage is known within minutes instead of the next morning.
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Site to smoke"
+        default: "https://edit.chaxus.com"
+  schedule:
+    - cron: "47 20 * * *" # 04:47 Asia/Shanghai, after the nightly corpus
+
+concurrency:
+  group: prod-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Core E2E against production
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+        with:
+          browsers: chromium
+
+      # The final build stamps its source revision and served-tree digest. This
+      # covers vendor, SW and static-only commits whose editor JS hash is stable.
+      # Missing/stale identities and transport errors exhaust a bounded wait and
+      # fail the job: smoking the previous deployment would be a false green.
+      - name: Wait for the deploy of this commit
+        if: github.event_name == 'push'
+        env:
+          PROD_URL: ${{ github.event.inputs.url || 'https://edit.chaxus.com' }}
+        run: node bin/wait-for-deploy.mjs "$PROD_URL" "$GITHUB_SHA"
+
+      - name: Smoke production
+        env:
+          PROD_URL: ${{ github.event.inputs.url || 'https://edit.chaxus.com' }}
+        run: pnpm exec playwright test -c playwright.prod.config.ts --reporter=list
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-prod
+          path: playwright-report-prod/
+          retention-days: 14

@@ -1,0 +1,56 @@
+/**
+ * Getting back to a stored snapshot.
+ *
+ * Recovery is offered where the user is not already in the middle of
+ * something -- the landing page's "continue last time" line and the /history
+ * list -- and both of those end here: they hand over a document id, and this
+ * puts its newest bytes back in the editor.
+ *
+ * There used to be a card that made the offer on editor boot as well. It had
+ * to go: /editor never opens empty, so the card always arrived on top of a
+ * document the user had just opened, to talk about a different one.
+ */
+import { openLocalFile } from '../document';
+import { getLatestSnapshot, readDocumentRecord } from './store';
+import type { HistoryDoc } from './types';
+import { readActiveSourceRecord } from '../active-document-source';
+
+/**
+ * Reopen the document from its newest snapshot.
+ *
+ * The bytes go back in through the ordinary local-file path, so everything
+ * downstream -- the editor mount, the store, the autosave session -- behaves
+ * exactly as it does for a file the user picked, with one difference: the
+ * session is told which history row this came from, so editing continues that
+ * row instead of starting a second one for the same document.
+ */
+export async function restoreDocument(doc: HistoryDoc, options?: { readonly?: boolean }): Promise<boolean> {
+  const snapshot = await getLatestSnapshot(doc.id);
+  if (!snapshot) return false;
+  // Records come back from IndexedDB as a whole buffer, never a view into a
+  // larger one, so handing over the buffer avoids copying tens of megabytes.
+  const file = new File([snapshot.bytes.buffer as ArrayBuffer], doc.title);
+  await openLocalFile(file, { historyId: doc.id, ...options });
+  return true;
+}
+
+export async function restoreSavedDocument(id: string, options?: { readonly?: boolean }): Promise<boolean> {
+  const record = await readDocumentRecord(id);
+  if (!record) return false;
+  const source = await readActiveSourceRecord(id);
+  // A disk save can be newer than the last autosave. Its revision boundary
+  // is local to these exact source bytes: another tab's save metadata cannot
+  // accidentally promote this tab's original over an unsaved snapshot.
+  if (
+    record.doc &&
+    !(
+      source?.savedThroughRevision !== undefined &&
+      source.savedThroughRevision >= record.doc.nextRev &&
+      source.historyCreatedAt === record.doc.createdAt
+    )
+  )
+    return restoreDocument(record.doc, options);
+  if (!source) return false;
+  await openLocalFile(source.file, { historyId: id, ...options });
+  return true;
+}

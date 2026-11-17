@@ -1,0 +1,111 @@
+# PR gate against the REAL deployment: Cloudflare Pages (Git integration)
+# builds previews for branches in this repository and reports it as the "Cloudflare
+# Pages" check with the preview URL in its summary. This workflow waits for
+# that deployment and runs the production-smoke suites against the preview,
+# so hosting-level breakage (redirects, headers, CDN, wasm delivery) is caught
+# before the merge instead of on the live site. Required check on main.
+name: Preview smoke
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: preview-smoke-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Preview smoke against Cloudflare Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.event.pull_request.draft == false
+
+    steps:
+      # How long to wait for Cloudflare. The old window was 25 minutes (75 x 20s)
+      # and that is not enough: a preview of this repository was measured taking
+      # 36 minutes from PR push to a concluded check. The job itself gets 60
+      # minutes and the smoke run needs a few, so wait up to 45 and leave the
+      # rest -- a window that expires while Cloudflare is still building reports
+      # a red gate for a deployment that then goes on to succeed, which is the
+      # worst of both outcomes.
+      #
+      # Why it is that slow: the vendored editor is in the repository, so every
+      # preview clones ~616 MiB, checks out ~625 MB and uploads ~697 MB of
+      # output. The build script itself runs in about seven seconds.
+      # Fork heads need a maintainer to mirror the exact SHA into a preview
+      # branch here; waiting longer cannot create a missing deployment. Limit
+      # their missing-check grace window, but let same-repository checks use
+      # the full deployment window: Pages can queue before publishing a check.
+      # Install dependencies and browsers only once there is a preview to test.
+      - name: Wait for the Cloudflare Pages preview of this commit
+        id: preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          WAIT_MINUTES: "45"
+          CHECK_WAIT_MINUTES: "5"
+        run: |
+          ATTEMPTS=$(( WAIT_MINUTES * 3 ))
+          CHECK_ATTEMPTS=$(( CHECK_WAIT_MINUTES * 3 ))
+          SEEN_CHECK=false
+          for i in $(seq 1 "$ATTEMPTS"); do
+            RUN=$(gh api "repos/${{ github.repository }}/commits/$SHA/check-runs" \
+              --jq '.check_runs | map(select(.name=="Cloudflare Pages")) | max_by(.id) | if . == null then empty else {status, conclusion, summary: .output.summary} end')
+            STATUS=$(printf '%s' "$RUN" | jq -r '.status // empty' 2>/dev/null | head -1)
+            if [ -n "$STATUS" ]; then SEEN_CHECK=true; fi
+            if [ "$SEEN_CHECK" = false ] && [ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ] && [ "$i" -ge "$CHECK_ATTEMPTS" ]; then
+              echo "::error::Cloudflare Pages check never appeared for $SHA within $CHECK_WAIT_MINUTES minutes. For a fork PR, a maintainer must push the exact head SHA to a preview branch in this repository, then rerun this workflow. For same-repository PRs, check Pages branch deployment controls and the GitHub integration."
+              exit 1
+            fi
+            if [ "$STATUS" = "completed" ]; then
+              CONCLUSION=$(printf '%s' "$RUN" | jq -r '.conclusion' | head -1)
+              if [ "$CONCLUSION" != "success" ]; then
+                # The Pages-semantics suite uses the same build script, but its
+                # success cannot diagnose a failed provider deployment. Inspect
+                # the actual Pages logs to distinguish clone, build and upload
+                # failures. Pushing again triggers a new Git-integration deploy.
+                echo "::error::Cloudflare Pages preview deployment concluded: $CONCLUSION. Inspect the Pages deployment logs and compare the 'E2E (Cloudflare Pages semantics)' checks to identify the failed stage. For a transient failure, retry in the Pages dashboard or push again to trigger a new deployment. See docs/explorations/2026-08-21-cloudflare-preview-flake.md"
+                exit 1
+              fi
+              URL=$(printf '%s' "$RUN" | jq -r '.summary' | grep -oE 'https://[a-z0-9-]+\.document-[a-z0-9]+\.pages\.dev' | head -1)
+              if [ -z "$URL" ]; then echo "::error::preview URL not found in the check summary"; exit 1; fi
+              echo "preview: $URL"
+              echo "url=$URL" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "waiting for the Cloudflare Pages check ($i/$ATTEMPTS, status=${STATUS:-absent})..."; sleep 20
+          done
+          echo "::error::Cloudflare Pages preview did not finish within $WAIT_MINUTES minutes"; exit 1
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+        with:
+          browsers: chromium
+
+      - name: Verify the deployed preview identity
+        env:
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
+          EXPECTED_REVISION: ${{ github.event.pull_request.head.sha }}
+        run: node bin/wait-for-deploy.mjs "$PREVIEW_URL" "$EXPECTED_REVISION" 120000 2000
+
+      - name: Smoke the preview
+        env:
+          PROD_URL: ${{ steps.preview.outputs.url }}
+        run: pnpm exec playwright test -c playwright.prod.config.ts --reporter=list
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-preview
+          path: playwright-report-prod/
+          retention-days: 7

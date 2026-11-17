@@ -1,0 +1,296 @@
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { Page } from '@playwright/test';
+import { readHistoryDocs } from './lib/history-db';
+import { buildDocx, ooxmlText, zipEntryText } from './lib/ooxml';
+import { expect, test, L0Collector } from './lib/l0';
+
+declare const XLSX: any;
+/**
+ * The whole loss-protection path with the real editor and real x2t behind it:
+ * edit a document, let the tab go away, and get the work back on the next
+ * visit -- through the saved documents list, with the bytes intact.
+ *
+ * The snapshot is triggered by hiding the page rather than by waiting out the
+ * interval. That is not a shortcut around the schedule: visibilitychange is
+ * the branch that matters most in production (it is the last moment that
+ * reliably gets time to run before a tab goes away), and waiting out the
+ * periodic interval in CI to exercise the same export would only buy a slower
+ * suite.
+ */
+const waitForEditorReady = (page: Page) =>
+  page.waitForFunction(
+    () => {
+      return Boolean(window.__ooFrames.readyEditor());
+    },
+    undefined,
+    { timeout: 90_000 },
+  );
+
+async function hidePage(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+}
+
+test.describe('autosave and recovery (real editor)', () => {
+  test.describe.configure({ timeout: 240_000 });
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true });
+    });
+  });
+
+  test('edits survive the tab going away and come back through the saved documents list', async ({ page }) => {
+    const dir = join('test-results', 'autosave-recovery');
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, 'Recovery.docx');
+    writeFileSync(path, buildDocx('original paragraph'));
+
+    await page.goto('/');
+    const chooserPromise = page.waitForEvent('filechooser');
+    await page.locator('#hero-open').click();
+    (await chooserPromise).setFiles(path);
+
+    await waitForEditorReady(page);
+    const sdk = page.frameLocator('iframe[name="frameEditor"]').locator('#editor_sdk');
+    await sdk.waitFor({ state: 'visible', timeout: 30_000 });
+    await sdk.click({ position: { x: 300, y: 200 } });
+    await page.keyboard.press('End');
+    await page.keyboard.type(' never saved to disk', { delay: 60 });
+
+    // The tab goes away without the user ever exporting.
+    await hidePage(page);
+
+    // Inside the shortest interval the scheduler can ever choose
+    // (MIN_SNAPSHOT_INTERVAL_MS, 30 s) on purpose: with a longer window the
+    // periodic tick would eventually take a snapshot too, and the test would
+    // pass whether or not hiding the page did anything -- which is exactly
+    // what it looked like before this bound was tightened.
+    await expect
+      .poll(async () => (await readHistoryDocs(page)).length, { timeout: 25_000, message: 'a snapshot was stored' })
+      .toBe(1);
+    const [stored] = await readHistoryDocs(page);
+    expect(stored.title).toBe('Recovery.docx');
+    expect(stored.size).toBeGreaterThan(0);
+    // Never exported, so the browser holds the only copy of that sentence.
+    expect(stored.savedToDiskAt).toBeUndefined();
+
+    // Coming back the next day and starting something else: yesterday's work
+    // must not interrupt it. There used to be a card here, and it arrived on
+    // top of the document the user had just opened to talk about another one.
+    await page.goto('/editor?new=docx');
+    await waitForEditorReady(page);
+    await page.waitForTimeout(5_000);
+    expect(await page.locator('#recovery-bar').count()).toBe(0);
+
+    // The work is where the site says it keeps it, and one click away.
+    await page.goto('/history');
+    const row = page.locator('.history-open', { hasText: 'Recovery.docx' });
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await row.click();
+    await waitForEditorReady(page);
+    const restoredSdk = page.frameLocator('iframe[name="frameEditor"]').locator('#editor_sdk');
+    await restoredSdk.waitFor({ state: 'visible', timeout: 30_000 });
+    // Ctrl+S goes to whatever has focus, and after a navigation that is the
+    // page, not the editor inside the frame.
+    await restoredSdk.click({ position: { x: 300, y: 200 } });
+
+    // The proof is the bytes: export what was restored and read it back.
+    const downloadPromise = page.waitForEvent('download', { timeout: 120_000 });
+    await page.keyboard.press('Control+s');
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe('Recovery.docx');
+    const bytes = new Uint8Array(readFileSync(await download.path()));
+    const text = ooxmlText((await zipEntryText(bytes, 'word/document.xml')) || '');
+    expect(text).toContain('original paragraph never saved to disk');
+
+    // Saved at last: the offer has nothing left to make.
+    await expect
+      .poll(async () => (await readHistoryDocs(page))[0]?.savedToDiskAt, { timeout: 30_000 })
+      .toBeGreaterThan(0);
+  });
+
+  test('a reload comes back to the same document, not a fresh one', async ({ page }) => {
+    // What the id in the URL buys. Before it, a reload of a blank document
+    // opened a second blank document and the edits could only be found through
+    // the recovery bar; now the address itself names the document.
+    await page.goto('/editor?new=docx');
+    await waitForEditorReady(page);
+    const sdk = page.frameLocator('iframe[name="frameEditor"]').locator('#editor_sdk');
+    await sdk.waitFor({ state: 'visible', timeout: 30_000 });
+    await sdk.click({ position: { x: 300, y: 200 } });
+    await page.keyboard.type('typed before the reload', { delay: 60 });
+
+    // The editor stamped its identity into the address bar on open.
+    const docId = new URL(page.url()).searchParams.get('saved');
+    expect(docId).toBeTruthy();
+
+    await hidePage(page);
+    await expect
+      .poll(async () => (await readHistoryDocs(page)).length, { timeout: 25_000, message: 'a snapshot was stored' })
+      .toBe(1);
+
+    await page.reload();
+    await waitForEditorReady(page);
+    const reloadedSdk = page.frameLocator('iframe[name="frameEditor"]').locator('#editor_sdk');
+    await reloadedSdk.waitFor({ state: 'visible', timeout: 30_000 });
+    // Same document, same row: no second id, no duplicate history entry.
+    expect(new URL(page.url()).searchParams.get('saved')).toBe(docId);
+    expect(await readHistoryDocs(page)).toHaveLength(1);
+
+    await reloadedSdk.click({ position: { x: 300, y: 200 } });
+    const downloadPromise = page.waitForEvent('download', { timeout: 120_000 });
+    await page.keyboard.press('Control+s');
+    const bytes = new Uint8Array(readFileSync(await (await downloadPromise).path()));
+    const text = ooxmlText((await zipEntryText(bytes, 'word/document.xml')) || '');
+    // Case-insensitive: a blank document's autocorrect capitalises the first
+    // letter of the sentence, which is the editor being an editor.
+    expect(text).toMatch(/typed before the reload/i);
+  });
+
+  test('an embedded editor writes nothing to the local history', async ({ page }) => {
+    // The document on screen belongs to the host page. Keeping a copy of it in
+    // this origin's storage would be us retaining someone else's user's file.
+    await page.goto('/embed-demo.html');
+    await expect(page.locator('#status')).toHaveText('ready', { timeout: 60_000 });
+
+    await page.evaluate(async () => {
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['embedded', 1]]), 'Sheet1');
+      const data = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      await post('document:open-buffer', {
+        fileName: 'embedded.xlsx',
+        buffer: new Uint8Array(data).buffer,
+        readonly: false,
+      });
+      await post('document:save', {});
+    });
+
+    // Hide the editor frame itself: that is the branch a snapshot would come
+    // through if the embed check were missing.
+    for (const frame of page.frames()) {
+      await frame
+        .evaluate(() => {
+          Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+          document.dispatchEvent(new Event('visibilitychange'));
+        })
+        .catch(() => {
+          /* cross-origin frames are not ours to poke */
+        });
+    }
+    await page.waitForTimeout(3_000);
+
+    expect(await readHistoryDocs(page)).toHaveLength(0);
+  });
+});
+
+test.describe('saved bytes and copied tab source recovery (real editor)', () => {
+  test.describe.configure({ timeout: 240_000 });
+
+  const dirty = (page: Page) =>
+    page.evaluate(() => !window.dispatchEvent(new Event('beforeunload', { cancelable: true })));
+
+  async function openOriginal(page: Page, autosave: boolean): Promise<void> {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true });
+    });
+    await page.goto('/');
+    await page.evaluate((enabled) => localStorage.setItem('document-autosave-enabled', String(enabled)), autosave);
+    const chooser = page.waitForEvent('filechooser');
+    await page.locator('#hero-open').click();
+    await (
+      await chooser
+    ).setFiles({
+      name: 'SavedSource.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      buffer: Buffer.from(buildDocx('original local paragraph')),
+    });
+    await waitForEditorReady(page);
+    await page
+      .frameLocator('iframe[name="frameEditor"]')
+      .locator('#editor_sdk')
+      .click({ position: { x: 300, y: 200 } });
+  }
+
+  async function exportCurrentText(page: Page): Promise<string> {
+    await page
+      .frameLocator('iframe[name="frameEditor"]')
+      .locator('#editor_sdk')
+      .click({ position: { x: 300, y: 200 } });
+    const downloading = page.waitForEvent('download', { timeout: 120_000 });
+    await page.keyboard.press('Control+s');
+    const bytes = new Uint8Array(readFileSync(await (await downloading).path()));
+    // This is the ordinary completion signal: reload as soon as the app clears
+    // its unsaved warning, without polling the source database for hidden work.
+    await expect.poll(() => dirty(page), { timeout: 30_000 }).toBe(false);
+    return ooxmlText((await zipEntryText(bytes, 'word/document.xml')) || '');
+  }
+
+  for (const previousSnapshot of [false, true]) {
+    test(`disk save survives immediate reload ${previousSnapshot ? 'after an older snapshot' : 'without any snapshot'}`, async ({
+      page,
+    }) => {
+      await openOriginal(page, previousSnapshot);
+      if (previousSnapshot) {
+        await page.keyboard.press('End');
+        await page.keyboard.type(' autosaved A', { delay: 30 });
+        await hidePage(page);
+        await expect.poll(async () => (await readHistoryDocs(page)).length, { timeout: 25_000 }).toBe(1);
+        await page.evaluate(() =>
+          Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true }),
+        );
+      }
+      await page.keyboard.press('End');
+      await page.keyboard.type(' latest disk version B', { delay: 30 });
+      expect(await exportCurrentText(page)).toContain('latest disk version B');
+      const savedUrl = page.url();
+      // The second reload also exercises the ordinary open path remembering
+      // the recovered File again, which must retain its saved precedence.
+      for (let reload = 0; reload < 2; reload++) {
+        await page.reload();
+        await waitForEditorReady(page);
+        expect(page.url()).toBe(savedUrl);
+        const text = await exportCurrentText(page);
+        expect(text).toContain('original local paragraph');
+        expect(text).toContain('latest disk version B');
+      }
+      expect(await readHistoryDocs(page)).toHaveLength(previousSnapshot ? 1 : 0);
+    });
+  }
+
+  test('a copied tab can reopen and close without deleting the original tab reload source', async ({
+    page,
+  }, testInfo) => {
+    await openOriginal(page, false);
+    const savedUrl = page.url();
+    const inheritedPointer = await page.evaluate(() => sessionStorage.getItem('document-active-source'));
+    expect(inheritedPointer).toBeTruthy();
+    // A same-origin opener gives the popup a real browser copy of this tab's
+    // sessionStorage. An independent context.newPage would miss the defect.
+    const opening = page.waitForEvent('popup');
+    await page.evaluate(() => {
+      window.open('about:blank');
+    });
+    const copy = await opening;
+    const copyL0 = new L0Collector(copy);
+    await copyL0.attach();
+    try {
+      expect(await copy.evaluate(() => sessionStorage.getItem('document-active-source'))).toBe(inheritedPointer);
+      await copy.goto(savedUrl);
+      await waitForEditorReady(copy);
+      expect(await copy.evaluate(() => sessionStorage.getItem('document-active-source'))).not.toBe(inheritedPointer);
+      expect(await page.evaluate(() => sessionStorage.getItem('document-active-source'))).toBe(inheritedPointer);
+      await copyL0.assertClean(testInfo);
+    } finally {
+      await copy.close();
+    }
+    await page.reload();
+    await waitForEditorReady(page);
+    expect(page.url()).toBe(savedUrl);
+    expect(await exportCurrentText(page)).toContain('original local paragraph');
+    expect(await readHistoryDocs(page)).toHaveLength(0);
+  });
+});

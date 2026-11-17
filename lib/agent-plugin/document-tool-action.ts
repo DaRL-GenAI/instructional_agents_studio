@@ -1,0 +1,463 @@
+import { takeCompletedPaste, type CompletedPaste } from './completed-paste';
+import { textToHtml, wordContent } from './word-content';
+import { getPdfDocument } from './pdf-tools';
+import { readWordBodyText } from './word-text-read';
+import { buildSeries, type SeriesInput } from './fill-series';
+import type { DocumentContext } from './document-context';
+import { captureDocumentContext } from './document-context';
+import type { DocumentToolPlan } from './document-tool-plan';
+import { parseDocumentToolPlan } from './document-tool-plan';
+import { requireEditorApi, getEditorApi, type EditorApi } from './editor-bridge';
+import { getReadonlyMode } from '../onlyoffice/readonly';
+import { agentTools } from './tools';
+import { parseOfficeRange } from './office-tools';
+import { assertReviewSelection, captureReviewCharacters, matchesTextEdit } from './verify-text-edit';
+import { readSlideTextSelection, type SlideTextShape } from './slide-text-read';
+import { reviewCells, type ChangeReview } from './ui/change-review';
+
+export interface DocumentToolTarget {
+  readonly context: DocumentContext;
+  readonly label: string;
+  readonly selectedText: string;
+  readonly reviewText?: string;
+  /** Synchronously promote the original lightweight scope before any write planning awaits. */
+  prepareWrite?(): DocumentToolTarget;
+  getReview?(plan: DocumentToolPlan): ChangeReview | undefined;
+  locate?(plan: DocumentToolPlan): void;
+  isCurrent(write?: boolean): boolean;
+  assertSupported?(plan: DocumentToolPlan): void;
+  verify?(plan: DocumentToolPlan): Promise<boolean | undefined>;
+  captureAfterOperation?(plan: DocumentToolPlan): DocumentToolTarget;
+}
+interface History {
+  Index: number;
+  Points: Array<{ Items: unknown[] }>;
+}
+interface SheetModel {
+  selectionRange: {
+    ranges: Array<{ c1: number; c2: number; r1: number; r2: number }>;
+    activeCell: { col: number; row: number };
+  };
+  getRange3(
+    r1: number,
+    c1: number,
+    r2: number,
+    c2: number,
+  ): {
+    getValue(): string;
+    getFormula?(): string;
+    getNumberValue?(): number | null;
+    getValueData?(): { value: { type: number } } | null;
+  };
+}
+interface ScopeApi extends EditorApi {
+  isViewMode?: boolean;
+  WordControl?: {
+    m_oLogicDocument?: {
+      Slides?: unknown[];
+      GetSelectedSlides?(): number[];
+      GetSelectionState?(): unknown;
+      GetText?(): string;
+      GetDocPosType?(): number;
+      GetCurrentController?(): {
+        selectedObjects?: unknown[];
+        getTargetDocContent?():
+          | (NonNullable<ReturnType<NonNullable<SlideTextShape['getDocContent']>>> & { GetSelectionState?(): unknown })
+          | undefined;
+      };
+    };
+  };
+  getCurrentPage?(): number;
+  goToPage?(page: number): void;
+  asc_getActiveWorksheetIndex?(): number;
+  asc_getWorksheetId?(index: number): string;
+  wb?: { getWorksheet(): { model: SheetModel }; scrollToCell?(row: number, column: number): void };
+}
+const interactions = new WeakMap<Document, { revision: number }>();
+function interaction(doc: Document): { revision: number } {
+  let state = interactions.get(doc);
+  if (!state) {
+    state = { revision: 0 };
+    interactions.set(doc, state);
+    const observed = state;
+    for (const event of ['pointerdown', 'keydown', 'paste', 'cut', 'drop'])
+      doc.addEventListener(event, () => observed.revision++, true);
+  }
+  return state;
+}
+
+/** Bind document identity, version and selection before invoking a model. */
+export function captureDocumentToolTarget(): DocumentToolTarget {
+  return captureTarget(true);
+}
+
+/** Identity, history and selection only; no whole-body or review-character reads. */
+export function captureDocumentToolScope(): DocumentToolTarget {
+  return captureTarget(false);
+}
+
+function captureTarget(full: boolean): DocumentToolTarget {
+  const api = requireEditorApi() as ScopeApi;
+  if (!api.isDocumentLoadComplete || !api.isLoadFullApi) throw new Error('Editor is still loading');
+  const context = captureDocumentContext();
+  if (!context) throw new Error('Editor is still loading');
+  const frame = [...document.querySelectorAll<HTMLIFrameElement>('iframe')].find((element) => {
+    try {
+      const win = element.contentWindow as unknown as { editor?: unknown; Asc?: { editor?: unknown } };
+      return (win?.editor ?? win?.Asc?.editor) === api;
+    } catch {
+      return false;
+    }
+  });
+  if (!frame?.contentWindow || !frame.contentDocument) throw new Error('Editor frame is unavailable');
+  const win = frame.contentWindow as unknown as { AscCommon?: { History?: History } };
+  const pdf = context.kind === 'pdf' ? getPdfDocument(api) : undefined;
+  const history = pdf?.History ?? win.AscCommon?.History;
+  const historyIndex = history?.Index;
+  const points = history?.Points?.map((point) => ({ point, length: point.Items.length }));
+  const tracked = Number.isInteger(historyIndex) && !!points;
+  const logic = api.WordControl?.m_oLogicDocument;
+  const capturedSlide =
+    context.kind === 'slide' && Number.isInteger(context.page) && context.page! > 0
+      ? logic?.Slides?.[context.page! - 1]
+      : undefined;
+  const controller = context.kind === 'slide' ? logic?.GetCurrentController?.() : undefined;
+  const selectedObjects = controller?.selectedObjects?.slice();
+  const selectedContent = controller?.getTargetDocContent?.();
+  const model = context.kind === 'cell' ? api.wb?.getWorksheet().model : undefined;
+  const state = interaction(frame.contentDocument),
+    revision = state.revision;
+  const position = () => {
+    if (context.kind === 'pdf')
+      return JSON.stringify([
+        api.getCurrentPage?.(),
+        (api.DocumentRenderer as { file?: { Selection?: unknown } })?.file?.Selection,
+      ]);
+    if (context.kind === 'slide') {
+      const selection = selectedContent?.GetSelectionState?.();
+      if (selectedContent && selection == null) return undefined;
+      return JSON.stringify([api.getCurrentPage?.(), logic?.GetSelectedSlides?.(), selection]);
+    }
+    if (context.kind === 'cell')
+      return JSON.stringify([
+        api.asc_getActiveWorksheetIndex?.(),
+        model?.selectionRange.ranges.map(({ c1, c2, r1, r2 }) => [c1, c2, r1, r2]),
+        model?.selectionRange.activeCell.col,
+        model?.selectionRange.activeCell.row,
+      ]);
+    return JSON.stringify(logic?.GetSelectionState?.());
+  };
+  const capturedPosition = position();
+  const selectedText =
+    context.kind === 'word'
+      ? api.pluginMethod_GetSelectedText({ TabSymbol: '\t', Numbering: false }).replace(/\r\n/g, '\n')
+      : context.kind === 'slide'
+        ? (readSlideTextSelection({ getDocContent: () => selectedContent })?.selectedText ?? '')
+        : '';
+  const beforeText =
+    full && context.kind === 'word' && logic?.GetDocPosType?.() === 0 ? readWordBodyText(logic) : undefined;
+  const currentReviewMode = () =>
+    context.kind === 'word' && typeof api.asc_IsTrackRevisions === 'function' && api.asc_IsTrackRevisions();
+  const reviewMode = currentReviewMode();
+  const readonly = getReadonlyMode();
+  const viewMode = api.isViewMode;
+  const beforeReview = full && reviewMode ? captureReviewCharacters(logic) : undefined;
+  const sameDocument = () =>
+    frame.isConnected &&
+    getEditorApi() === api &&
+    api.WordControl?.m_oLogicDocument === logic &&
+    (!pdf || getPdfDocument(api) === pdf) &&
+    (!model || api.wb?.getWorksheet().model === model);
+  const sameSlideSelection = () =>
+    context.kind !== 'slide' ||
+    (logic?.GetCurrentController?.() === controller &&
+      controller?.getTargetDocContent?.() === selectedContent &&
+      (selectedObjects === undefined
+        ? controller?.selectedObjects === undefined
+        : controller?.selectedObjects?.length === selectedObjects.length &&
+          selectedObjects.every((shape, index) => controller.selectedObjects![index] === shape)));
+  const isCurrent = (write = true) => {
+    try {
+      if (
+        !sameDocument() ||
+        !sameSlideSelection() ||
+        state.revision !== revision ||
+        position() !== capturedPosition ||
+        currentReviewMode() !== reviewMode
+      )
+        return false;
+      if (!full && (write || getReadonlyMode() !== readonly || api.isViewMode !== viewMode)) return false;
+      if (write && (getReadonlyMode() || api.isViewMode || !tracked || capturedPosition === undefined)) return false;
+      if (!history) return !write;
+      return (
+        (pdf ? pdf.History === history : win.AscCommon?.History === history) &&
+        history.Index === historyIndex &&
+        history.Points.length === points!.length &&
+        points!.every(({ point, length }, index) => history.Points[index] === point && point.Items.length === length)
+      );
+    } catch {
+      return false;
+    }
+  };
+  const verify = async (plan: DocumentToolPlan): Promise<boolean | undefined> => {
+    if (plan.readOnly) return undefined;
+    if (plan.tool === 'clear_document')
+      return sameDocument() && state.revision === revision && readWordBodyText(logic)?.trim() === '';
+    if (plan.tool === 'fill_series' && model) {
+      if (!sameDocument() || state.revision !== revision) return false;
+      const series = buildSeries(plan.input as unknown as SeriesInput);
+      const range = parseOfficeRange(series.range);
+      return series.values.every(([value], index) => {
+        const stored = model.getRange3(range.r1 + index, range.c1, range.r1 + index, range.c1);
+        return stored.getValueData?.()?.value.type === 0 && stored.getNumberValue?.() === value;
+      });
+    }
+    if (plan.tool === 'set_review_mode') return sameDocument() && api.asc_IsTrackRevisions() === plan.input.enabled;
+    const textEdit = ['insert_text', 'replace_selection'].includes(plan.tool) && typeof beforeText === 'string';
+    const cellEdit = plan.tool === 'set_cell' && !!model;
+    if (!textEdit && !cellEdit) return undefined;
+    for (let attempt = 0; attempt < 31; attempt++) {
+      if (!sameDocument() || state.revision !== revision) return false;
+      const afterText = textEdit ? readWordBodyText(logic) : undefined;
+      if (
+        textEdit &&
+        typeof afterText === 'string' &&
+        (!reviewMode || beforeReview !== undefined) &&
+        matchesTextEdit(
+          beforeText!,
+          afterText!,
+          selectedText,
+          plan.tool === 'insert_text'
+            ? wordContent(String(plan.input.text), plan.input.format as 'plain' | 'markdown' | undefined).text
+            : String(plan.input.text),
+          reviewMode ? { before: beforeReview!, after: captureReviewCharacters(logic) ?? [] } : undefined,
+        )
+      )
+        return true;
+      if (cellEdit) {
+        const cell = parseOfficeRange(String(plan.input.cell));
+        const stored = model!.getRange3(cell.r1, cell.c1, cell.r2, cell.c2);
+        if (stored.getValue() === plan.input.value) return true;
+        // Auto entry parses numbers; native storage normalizes 001, 1.0 and -0.
+        // Literal text must retain every character and never use numeric equivalence.
+        const value = String(plan.input.value);
+        if (
+          plan.input.valueType !== 'text' &&
+          /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value) &&
+          Number.isFinite(Number(value)) &&
+          stored.getValueData?.()?.value.type === 0 &&
+          stored.getNumberValue?.() === Number(value)
+        )
+          return true;
+      }
+      if (attempt < 30) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return false;
+  };
+  return Object.freeze({
+    context: Object.freeze(context),
+    label:
+      context.kind === 'slide'
+        ? `PPT · ${context.page ?? ''}`
+        : context.kind === 'cell'
+          ? `Excel · ${context.sheet ?? ''} ${context.range ?? ''}`
+          : context.kind === 'pdf'
+            ? `PDF · ${context.page ?? ''}`
+            : 'DOCX',
+    selectedText: full ? selectedText : selectedText.slice(0, 8000),
+    ...(!full
+      ? {
+          prepareWrite: () => {
+            if (!isCurrent(false)) throw new Error('agentPlanExpired');
+            return captureDocumentToolTarget();
+          },
+        }
+      : {}),
+    ...(context.kind === 'cell' && typeof api.wb?.scrollToCell === 'function'
+      ? {
+          locate: (plan: DocumentToolPlan) => {
+            if (!sameDocument()) throw new Error('agentPlanExpired');
+            const destination =
+              plan.tool === 'fill_series'
+                ? buildSeries(plan.input as unknown as SeriesInput).range
+                : String(plan.input.target ?? plan.input.cell ?? plan.input.range ?? context.range);
+            const bounds = parseOfficeRange(destination);
+            // Native viewport movement does not select or modify the range.
+            api.wb!.scrollToCell!(bounds.r1, bounds.c1);
+          },
+        }
+      : {}),
+    ...(capturedSlide && typeof api.goToPage === 'function'
+      ? {
+          locate: () => {
+            const page = logic?.Slides?.indexOf(capturedSlide) ?? -1;
+            if (!sameDocument() || page < 0) throw new Error('agentPlanExpired');
+            api.goToPage!(page);
+          },
+        }
+      : {}),
+    reviewText: beforeText,
+    getReview: (plan: DocumentToolPlan): ChangeReview | undefined => {
+      if (!isCurrent(false)) return undefined;
+      if (model && ['set_cell', 'fill_series'].includes(plan.tool)) {
+        const series = plan.tool === 'fill_series' ? buildSeries(plan.input as unknown as SeriesInput) : undefined;
+        return reviewCells(series?.range ?? String(plan.input.cell), series?.values ?? [[plan.input.value]], (r, c) => {
+          const cell = model.getRange3(r, c, r, c);
+          return { value: cell.getValue(), formula: cell.getFormula?.() };
+        });
+      }
+      if (plan.tool === 'clear_document' && beforeText !== undefined)
+        return { kind: 'text', before: beforeText, after: '' };
+      if (typeof plan.input.text === 'string') {
+        const additive = ['add_comment', 'add_slide_text', 'add_pdf_comment'].includes(plan.tool);
+        return {
+          kind: 'text',
+          before: additive ? '' : selectedText,
+          after:
+            plan.tool === 'insert_text'
+              ? wordContent(plan.input.text, plan.input.format as 'plain' | 'markdown' | undefined).text
+              : plan.input.text,
+          ...(additive && selectedText ? { anchor: selectedText } : {}),
+        };
+      }
+      return undefined;
+    },
+    assertSupported: (plan: DocumentToolPlan) => {
+      if (
+        context.kind === 'word' &&
+        logic?.GetDocPosType?.() === 0 &&
+        ['insert_text', 'replace_selection'].includes(plan.tool) &&
+        beforeText === undefined
+      )
+        throw new Error('Document change could not be verified');
+      if (
+        reviewMode &&
+        plan.tool === 'insert_text' &&
+        plan.input.format === 'markdown' &&
+        wordContent(String(plan.input.text), 'markdown').html !== textToHtml(String(plan.input.text))
+      )
+        throw new Error('agentWordFormattingReviewUnsupported');
+      if (reviewMode && ['insert_text', 'replace_selection'].includes(plan.tool))
+        assertReviewSelection(beforeReview, selectedText);
+    },
+    isCurrent,
+    verify,
+    captureAfterOperation: (plan: DocumentToolPlan) => {
+      if (
+        !sameDocument() ||
+        state.revision !== revision ||
+        (plan.tool !== 'set_review_mode' && currentReviewMode() !== reviewMode) ||
+        (!plan.readOnly && (getReadonlyMode() || api.isViewMode))
+      )
+        throw new Error('agentPlanExpired');
+      return full ? captureDocumentToolTarget() : captureDocumentToolScope();
+    },
+  });
+}
+
+/** Confirmation is consumed before execution, including failed API calls. */
+export class DocumentToolAction {
+  readonly plan: DocumentToolPlan;
+  readonly review?: ChangeReview;
+  private consumed = false;
+  private receipt?: CompletedPaste;
+  get undo(): (() => boolean) | undefined {
+    return this.receipt?.available() ? () => this.receipt!.undo() : undefined;
+  }
+  dispose(): void {
+    this.receipt?.dispose();
+    this.receipt = undefined;
+  }
+
+  private output: unknown;
+  private continuation?: DocumentToolTarget;
+  get continuationTarget(): DocumentToolTarget | undefined {
+    return this.continuation;
+  }
+  get result(): unknown {
+    return this.output;
+  }
+  get locate(): (() => void) | undefined {
+    if (!this.target.locate) return undefined;
+    return () => {
+      const owner = this.consumed ? this.continuation : this.target;
+      if (!owner) throw new Error('This proposal has expired. Generate a new proposal.');
+      owner.locate?.(this.plan);
+    };
+  }
+  constructor(
+    readonly target: DocumentToolTarget,
+    plan: DocumentToolPlan,
+  ) {
+    this.plan = parseDocumentToolPlan(JSON.stringify({ tool: plan.tool, input: plan.input }), target.context);
+    this.review =
+      target.getReview?.(this.plan) ??
+      (typeof this.plan.input.text === 'string'
+        ? {
+            kind: 'text',
+            before: ['add_comment', 'add_slide_text', 'add_pdf_comment'].includes(this.plan.tool)
+              ? ''
+              : target.selectedText,
+            after: this.plan.input.text,
+            ...(['add_comment', 'add_slide_text', 'add_pdf_comment'].includes(this.plan.tool) && target.selectedText
+              ? { anchor: target.selectedText }
+              : {}),
+          }
+        : undefined);
+  }
+  revise(text: string): DocumentToolAction {
+    if (!this.isCurrent()) throw new Error('This proposal has expired. Generate a new proposal.');
+    if (
+      !['insert_text', 'replace_selection', 'add_slide_text', 'add_comment', 'add_pdf_comment'].includes(this.plan.tool)
+    )
+      throw new Error('This operation cannot be edited as text');
+    const replacement = new DocumentToolAction(this.target, {
+      ...this.plan,
+      input: { ...this.plan.input, text },
+    });
+    this.cancel();
+    return replacement;
+  }
+  isCurrent(): boolean {
+    return !this.consumed && this.target.isCurrent(!this.plan.readOnly);
+  }
+  cancel(): void {
+    this.dispose();
+    this.consumed = true;
+  }
+  async apply(signal?: AbortSignal): Promise<'sent' | 'verified'> {
+    signal?.throwIfAborted();
+    if (!this.isCurrent()) throw new Error('This proposal has expired. Generate a new proposal.');
+    this.target.assertSupported?.(this.plan);
+    this.consumed = true;
+    this.output = await agentTools[this.plan.tool].execute(this.plan.input, signal);
+    this.receipt = takeCompletedPaste(this.output);
+    let verified: boolean | undefined;
+    try {
+      verified = await this.target.verify?.(this.plan);
+      signal?.throwIfAborted();
+    } catch (error) {
+      this.dispose();
+      throw error;
+    }
+    signal?.throwIfAborted();
+    if (verified === false) {
+      this.dispose();
+      throw new Error('The change could not be verified. Check the document and use Undo if needed.');
+    }
+    if (
+      verified === true ||
+      (this.output && typeof this.output === 'object' && 'verified' in this.output && this.output.verified === true)
+    ) {
+      try {
+        this.continuation = this.target.captureAfterOperation?.(this.plan);
+      } catch (error) {
+        this.dispose();
+        throw error;
+      }
+      return 'verified';
+    }
+    this.dispose();
+    return 'sent';
+  }
+}
