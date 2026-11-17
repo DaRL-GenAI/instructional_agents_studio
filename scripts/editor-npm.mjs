@@ -32,7 +32,7 @@ const pkg = {
   name: 'instructional-agents-editor', version,
   description: 'The slides and documents editor of Instructional Agents (a trimmed ONLYOFFICE web build from ranuts/document), served by the local app at /editor/.',
   license: 'AGPL-3.0-only',
-  ...(local ? { private: true } : { repository: { type: 'git', url: source }, gitHead: commit }),
+  ...(local ? { private: true } : { repository: { type: 'git', url: `git+${source.replace(/\/tree\/.*$/, '').replace(/\.git$/, '')}.git` }, gitHead: commit }),
   files: ['dist', 'LICENSE', 'NOTICE', 'README.md'],
 };
 fs.writeFileSync(path.join(out, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');

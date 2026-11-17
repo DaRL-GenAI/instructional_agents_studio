@@ -190,7 +190,8 @@ put next to the app; it is served from this computer at `/editor/`, works offlin
 `IA_EDITOR_DIR` points at another build. Only if the package is missing does the app fall back to the hosted editor
 https://edit.chaxus.com (`doctor` reports which one is used). To make the package: `node scripts/trim-editor.mjs
 <editor dist> <out>` trims an ONLYOFFICE web build, `node scripts/editor-npm.mjs <out> --version X.Y.Z --source <fork
-URL> --commit <sha>` wraps it (publish it before the app version that depends on it).
+URL> --commit <sha>` wraps it (publish it before the app version that depends on it). The editor's source (the
+ranuts/document fork it is built from) is the `editor-src` branch of this repository.
 
 **Windows.** Claude Code and Codex are found as installed by their installers or `npm install -g` (`claude.cmd`,
 `codex.cmd`, `claude.exe`); Google Drive for desktop is found on its own drive letter (`G:\My Drive`), OneDrive and

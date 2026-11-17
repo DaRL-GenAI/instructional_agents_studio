@@ -21,10 +21,10 @@ embeds the ONLYOFFICE document editors:
 
 Both are licensed under the GNU Affero General Public License version 3 (AGPL-3.0) with the additional terms
 permitted by its Section 7. The build Instructional Agents distributes is a modified version of ranuts/document
-(branch studio-embed: an embedding API for opening, saving and running macros from the host page, and a build
-that keeps only the presentation and document editors). Its complete corresponding source code is published in
-its own repository, a fork of ranuts/document, and every editor release asset names the commit it was built
-from. The editor package carries its own LICENSE and NOTICE files, which apply to it.
+(an embedding API for opening, saving and running macros from the host page, and a build that keeps only the
+presentation and document editors). Its complete corresponding source code is published on the editor-src branch
+of this repository (https://github.com/DaRL-GenAI/instructional_agents_studio/tree/editor-src), and the editor
+package names the commit it was built from (its README and the gitHead field of its package.json). The editor package carries its own LICENSE and NOTICE files, which apply to it.
 
 Instructional Agents talks to the editor only through its postMessage interface from a separate page; it does not
 link to or include editor code. The MIT license of this package does not apply to the editor.
