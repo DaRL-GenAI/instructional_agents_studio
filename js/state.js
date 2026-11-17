@@ -34,6 +34,7 @@ export const DEFAULT_SETTINGS = {
   agentEnvKey: false,      // local app: pass ANTHROPIC_API_KEY from the environment to Claude Code instead of its own sign-in
   editorUrl: 'https://edit.chaxus.com', // presentation editor (ONLYOFFICE document-editor build, runs in the browser)
   theme: 'system',
+  textSize: 'large',       // normal | large | larger: the whole interface (rem-based) scales with it
   rememberKey: false,
   language: 'en',
 };
@@ -79,7 +80,9 @@ export function setApiKey(key, remember) {
 export function applyTheme() {
   const t = account.settings.theme;
   if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+  document.documentElement.style.fontSize = TEXT_SIZES[account.settings.textSize] || TEXT_SIZES.large;
 }
+export const TEXT_SIZES = { normal: '16px', large: '18px', larger: '20px' };
 
 // ---------------------------------------------------------------- registry
 export async function listProjects() {

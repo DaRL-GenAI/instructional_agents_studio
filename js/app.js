@@ -1,7 +1,7 @@
 // app.js — app shell, routing and the shared view context.
 import { el, icon, button, toast, badge, dot, fmtInt, $ } from './ui.js';
 import { parse, href, go, onRoute } from './router.js';
-import { account, loadAccount, listProjects, getProject, ProjectStore, MODULES, moduleProgress, projectTotals } from './state.js';
+import { account, loadAccount, saveAccount, listProjects, getProject, ProjectStore, MODULES, moduleProgress, projectTotals } from './state.js';
 import { Pipeline } from './pipeline.js';
 import { buildZip, download } from './export.js';
 import { deckBlob, migrateLegacyDeck, commitDeck } from './pptxdeck.js';
@@ -149,6 +149,9 @@ function renderNav() {
   }
   nav.append(el('div', { class: 'nav-group' }, 'You'));
   nav.append(el('a', { class: 'nav-item', href: href('account', 'settings'), 'aria-current': r.name === 'account' ? 'page' : null }, icon('user'), 'Account', !account.apiKey ? el('span', { class: 'count', title: 'No API key' }, dot('stale')) : null));
+  // text size, always in reach (older eyes, small screens): A A A
+  nav.append(el('div', { class: 'text-size', role: 'group', 'aria-label': 'Text size' }, el('span', {}, 'Text size'),
+    ...[['normal', 'A', 'Normal text'], ['large', 'A', 'Large text'], ['larger', 'A', 'Extra large text']].map(([k, l, t], i) => el('button', { type: 'button', class: `ts ts-${i}`, title: t, 'aria-label': t, 'aria-pressed': String((account.settings.textSize || 'large') === k), onClick: async () => { account.settings.textSize = k; await saveAccount(); render(); } }, l))));
   nav.append(el('div', { class: 'nav-foot' }, LOCAL ? 'Local app of ' : 'Browser edition of ', el('a', { href: 'https://github.com/DaRL-GenAI/instructional_agents' }, 'instructional_agents'), LOCAL ? '. Each course is a folder on this computer.' : '. Data stays in this browser.'));
 }
 

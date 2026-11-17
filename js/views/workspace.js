@@ -18,6 +18,7 @@ import { commitDeck, deckManifest } from '../pptxdeck.js';
 import { commitDoc, docManifest, convertToWord, convertToMarkdown, CONVERTIBLE } from '../docstage.js';
 import { download } from '../export.js';
 import { AgentPanel } from '../agent/panel.js';
+import { AgentDock } from '../agent/terminal.js';
 import { openImport, filesFromDrop, hasFiles } from '../import/dialog.js';
 import { outOfDate, upstreamChanges } from '../linkage.js';
 import { api } from '../fs/api.js';
@@ -47,7 +48,7 @@ export function mount(ctx, host) {
   if (!ws) { ws = new Workspace(ctx); host.replaceChildren(ws.root); }
   else if (ws.root.parentNode !== host) host.replaceChildren(ws.root);
   ws.ctx = ctx; ws.update();
-  if (queued) { const id = queued; queued = null; const w = ws; setTimeout(() => { w.togglePanel(true); w.agentPanel.derive(id); }, 300); }
+  if (queued) { const id = queued; queued = null; const w = ws; setTimeout(() => { w.togglePanel(true); w.agentDock?.show('builtin'); w.agentPanel.derive(id); }, 300); }
   return ws;
 }
 export const dirtyCount = () => ws ? [...ws.tabs.values()].filter(t => t.dirty).length : 0;
@@ -95,8 +96,8 @@ class Workspace {
       this.agentBody);
     this.status = el('footer', { class: 'ws-status', role: 'status', 'aria-live': 'polite' });
     const splitL = this.splitter('side', 260, 160, 520, this.side, 1);
-    this.splitR = this.splitter('agent', 340, 240, 640, this.agent, -1);
-    this.splitB = this.splitter('agentH', 260, 140, 640, this.agent, -1, true);
+    this.splitR = this.splitter('agent', 540, 260, 1000, this.agent, -1);
+    this.splitB = this.splitter('agentH', 340, 160, 800, this.agent, -1, true);
     this.body = el('div', { class: 'ws-body' }, this.activity, this.side, splitL, this.editor, this.splitR, this.agent);
     this.root = el('div', { class: 'ws' }, this.body, this.status);
     this.setDock(this.dock, true);
@@ -134,10 +135,17 @@ class Workspace {
     for (const b of this.activity.querySelectorAll('[data-view]')) b.setAttribute('aria-pressed', String(!this.side.hidden && b.dataset.view === this.view));
     this.renderSide();
   }
+  /** The built-in assistant (inside the dock in the local app). */
+  get agentPanel() { return this.agentDock ? this.agentDock.builtin : this._agentPanel; }
+  set agentPanel(v) { this._agentPanel = v; }
   togglePanel(on = !this.panelOpen) {
     this.panelOpen = on; setPref('panel', on); this.agent.hidden = !on; this.splitR.hidden = this.splitB.hidden = !on; this.panelBtn.setAttribute('aria-pressed', String(on));
-    if (on && !this.agentPanel) { this.agentPanel = new AgentPanel(this); this.agentBody.replaceChildren(this.agentPanel.el); }
-    if (on) this.agentPanel.refreshContext();
+    if (on && !this.agentDock && !this._agentPanel) {
+      // local app: Claude Code and Codex in their own terminals beside the built-in assistant
+      if (LOCAL) { this.agentDock = new AgentDock(this, () => new AgentPanel(this, { builtinOnly: true })); this.agentBody.replaceChildren(this.agentDock.el); }
+      else { this.agentPanel = new AgentPanel(this); this.agentBody.replaceChildren(this.agentPanel.el); }
+    }
+    if (on) this.agentDock ? this.agentDock.pane()?.refreshContext?.() : this.agentPanel.refreshContext();
   }
   /** The agent panel at the right of the editor, or below it. */
   setDock(d, first = false) {
@@ -156,7 +164,7 @@ class Workspace {
     if (this.view === 'files') this.renderTree();
     this.renderStatus();
   }
-  destroy() { this.agentPanel?.destroy(); for (const t of this.tabs.values()) t.destroy(); this.tabs.clear(); for (const off of this.offs) off(); removeEventListener('keydown', this._key); this.root.remove(); }
+  destroy() { this.agentDock?.destroy(); this._agentPanel?.destroy(); for (const t of this.tabs.values()) t.destroy(); this.tabs.clear(); for (const off of this.offs) off(); removeEventListener('keydown', this._key); this.root.remove(); }
 
   // ---------------------------------------------------------------- data
   async refresh() {
@@ -514,6 +522,9 @@ class Workspace {
   /** Open the agent panel on the current file and selection, input focused (a tab's Ask button, Ctrl/⌘+K). */
   async askAgent(prefill = null) {
     this.togglePanel(true);
+    // Claude Code or Codex open in the panel: the file (or the prepared request) is typed into its terminal
+    const pane = this.agentDock && this.agentDock.current !== 'builtin' ? this.agentDock.pane() : null;
+    if (pane) { await pane.show(); return prefill ? pane.prefill(prefill) : pane.addOpenFile(); }
     if (prefill) return this.agentPanel.prefill(prefill);
     return this.agentPanel.focusAsk();
   }

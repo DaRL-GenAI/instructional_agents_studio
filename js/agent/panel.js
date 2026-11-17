@@ -54,9 +54,13 @@ function browserChats(pid) {
 
 export class AgentPanel {
   /** ws: the Workspace (its source, tabs, context, locks and previews). */
-  constructor(ws) {
-    this.ws = ws; this.pid = ws.id; this.chats = LOCAL ? localChats(this.pid) : browserChats(this.pid);
-    this.agent = pref('agent', 'builtin'); this.available = { builtin: true, claude: false, codex: false };
+  /** builtinOnly: the local app shows Claude Code and Codex in their own terminals (terminal.js); this panel is then the
+   *  built-in assistant only. */
+  constructor(ws, { builtinOnly = false } = {}) {
+    this.ws = ws; this.pid = ws.id; this.builtinOnly = builtinOnly;
+    const chats = LOCAL ? localChats(this.pid) : browserChats(this.pid);
+    this.chats = builtinOnly ? { ...chats, list: async () => (await chats.list()).filter(x => x.agent === 'builtin') } : chats;
+    this.agent = builtinOnly ? 'builtin' : pref('agent', 'builtin'); this.available = { builtin: true, claude: false, codex: false };
     this.session = null; this.list = []; this.running = null; this.review = null; this.chips = []; this.auto = null; this.autoOff = null; this.login = null; this.signedIn = {};
     this.build();
     this.off = LOCAL ? onServerEvent(ev => this.onEvent(ev)) : () => {};
@@ -65,7 +69,7 @@ export class AgentPanel {
   get ctx() { return this.ws.ctx; }
 
   build() {
-    this.picker = el('select', { class: 'select sm', 'aria-label': 'Agent', onChange: e => this.setAgent(e.target.value) });
+    this.picker = el('select', { class: 'select sm', 'aria-label': 'Agent', hidden: this.builtinOnly, onChange: e => this.setAgent(e.target.value) });
     this.chatSel = el('select', { class: 'select sm ag-chats', 'aria-label': 'Chat', onChange: e => this.openChat(e.target.value) });
     this.stopBtn = button({ icon: 'x', label: 'Stop', size: 'sm', variant: 'danger', onClick: () => this.stop(), attrs: { hidden: true } });
     this.head = el('div', { class: 'ag-head' }, this.picker, this.chatSel,

@@ -23,6 +23,7 @@ import * as jobs from './agents/jobs.mjs';
 import * as sessions from './agents/sessions.mjs';
 import * as tex from './tex.mjs';
 import { isInside } from './platform.mjs';
+import * as terminal from './terminal.mjs';
 
 export const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PKG = JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8'));
@@ -57,7 +58,9 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
   }));
   server.on('upgrade', (req, sock, head) => {
     const bad = guard.checkHost(req) || guard.checkOrigin(req, { api: true }) || (!guard.authed(req) && [401, 'Unauthorized']);
-    if (bad || new URL(req.url, 'http://x').pathname !== '/ws') { sock.write(`HTTP/1.1 ${bad ? bad[0] : 404} ${bad ? bad[1] : 'Not Found'}\r\nConnection: close\r\n\r\n`); return sock.destroy(); }
+    const wp = new URL(req.url, 'http://x').pathname; const tm = wp.match(/^\/ws\/term\/([0-9a-f]{12})$/); const term = tm && terminal.get(tm[1]);
+    if (bad || (wp !== '/ws' && !term)) { sock.write(`HTTP/1.1 ${bad ? bad[0] : 404} ${bad ? bad[1] : 'Not Found'}\r\nConnection: close\r\n\r\n`); return sock.destroy(); }
+    if (term) return wss.handleUpgrade(req, sock, head, ws => term.attach(ws));
     wss.handleUpgrade(req, sock, head, ws => { clients.add(ws); ws.on('close', () => clients.delete(ws)); ws.send(JSON.stringify({ type: 'hello', version: PKG.version })); });
   });
 
@@ -233,6 +236,13 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
       return send(res, 200, await projects.fileOp(g[1], s => { const added = files.writeSources(s.dir, list); return { added, message: files.sourcesMessage(added), result: { paths: added } }; }));
     }
     if ((g = p.match(/^\/api\/projects\/([\w-]+)\/agent(\/.*)?$/))) return agentApi(req, res, g[1], g[2] || '', m);
+    // the agents' own terminals (terminal.mjs): list, open, close
+    if ((g = p.match(/^\/api\/projects\/([\w-]+)\/terminals(?:\/([0-9a-f]{12}))?$/))) {
+      const s = projects.state(g[1]);
+      if (!g[2] && m === 'GET') return send(res, 200, { terminals: terminal.list(s.id), available: { ...agents.health().agents, shell: true }, unavailable: terminal.unavailable() });
+      if (!g[2] && m === 'POST') { const b = await body(req); return send(res, 200, terminal.open({ project: s.id, dir: s.dir, program: b.program, cols: b.cols, rows: b.rows })); }
+      if (g[2] && m === 'DELETE') { const t = terminal.get(g[2]); if (!t || t.project !== s.id) throw new HttpError(404, 'No such terminal'); t.close(); return send(res, 204); }
+    }
     if ((g = p.match(/^\/api\/projects\/([\w-]+)\/tree$/)) && m === 'GET') { const s = projects.state(g[1]); return send(res, 200, { entries: files.tree(s.dir), managed: [...files.managed(s.dir)] }); }
     if ((g = p.match(/^\/api\/projects\/([\w-]+)\/search$/)) && m === 'GET') return send(res, 200, { matches: files.search(projects.state(g[1]).dir, url.searchParams.get('q')) });
     if ((g = p.match(/^\/api\/projects\/([\w-]+)\/vcs$/)) && m === 'GET') return send(res, 200, await vcs.summary(projects.state(g[1]).dir));
@@ -318,7 +328,7 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
   if (!quiet) console.log(`Instructional Agents ${PKG.version} on ${origin}${editor ? ` (editor: ${editor.dir})` : ' (editor: https://edit.chaxus.com)'}`);
   return {
     server, port: bound, origin, token, url: startUrl, projects, editor,
-    async close() { agents.cancel('server stopped'); jobs.cancelAll('server stopped'); login.cancel('server stopped'); for (const c of clients) c.terminate(); wss.close(); await projects.close(); await new Promise(r => server.close(r)); },
+    async close() { terminal.closeAll(); agents.cancel('server stopped'); jobs.cancelAll('server stopped'); login.cancel('server stopped'); for (const c of clients) c.terminate(); wss.close(); await projects.close(); await new Promise(r => server.close(r)); },
   };
 }
 

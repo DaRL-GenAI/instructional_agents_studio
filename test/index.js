@@ -16,3 +16,4 @@ import './agentsignin.test.mjs';
 import './cloudfolders.test.mjs';
 import './platform.test.mjs';
 import './newuser.test.mjs';
+import './terminal.test.mjs';

@@ -25,9 +25,12 @@ const COPY = {
   'pptxgen.bundle.js': 'pptxgenjs/dist/pptxgen.bundle.js', 'mp4-muxer.js': 'mp4-muxer/build/mp4-muxer.mjs',
   'jszip.min.js': 'jszip/dist/jszip.min.js', 'marked.min.js': 'marked/marked.min.js',
   'pdf.min.js': 'pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': 'pdfjs-dist/build/pdf.worker.min.js',
+  'xterm.js': '@xterm/xterm/lib/xterm.js', 'xterm-addon-fit.js': '@xterm/addon-fit/lib/addon-fit.js',
 };
 fs.mkdirSync(path.join(root, 'js/vendor/lib'), { recursive: true });
 for (const [name, from] of Object.entries(COPY)) {
   fs.copyFileSync(path.join(root, 'node_modules', from), path.join(root, 'js/vendor/lib', name));
   console.log(`js/vendor/lib/${name} ${(fs.statSync(path.join(root, 'js/vendor/lib', name)).size / 1024).toFixed(0)} KB`);
 }
+fs.copyFileSync(path.join(root, 'node_modules/@xterm/xterm/css/xterm.css'), path.join(root, 'css/xterm.css'));
+console.log('css/xterm.css');
