@@ -1,6 +1,6 @@
 {
   "name": "instructional-agents",
-  "version": "0.1.1",
+  "version": "0.1.0",
   "description": "Instructional Agents Studio as a local app: each course is a folder (a git repository) edited in the browser, with Claude Code, Codex or a built-in agent.",
   "keywords": [
     "education",
@@ -49,6 +49,7 @@
     "ws": "^8.22.1"
   },
   "optionalDependencies": {
+    "instructional-agents-editor": "0.1.0",
     "node-pty": "1.1.0"
   },
   "devDependencies": {

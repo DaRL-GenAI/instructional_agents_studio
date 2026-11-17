@@ -2,9 +2,9 @@ Instructional Agents Studio
 Copyright (c) DaRL Lab, Arizona State University, and contributors.
 Licensed under the MIT License (see LICENSE).
 
-This package does not contain the slides / documents editor. The app downloads it on its first start (or with
-`instructional-agents editor install`) from the GitHub release editor-v<version> of this repository into
-~/.cache/instructional-agents/editor/<version>/; IA_EDITOR_DIR can name another build.
+This package does not contain the slides / documents editor. The editor is the separate npm package
+instructional-agents-editor (an optional dependency, installed with this one), or a build named by IA_EDITOR_DIR,
+or one installed with `instructional-agents editor install` into ~/.cache/instructional-agents/editor/<version>/.
 The local app serves it to the browser at /editor/. Without it, the app uses the hosted editor at
 https://edit.chaxus.com.
 
@@ -23,9 +23,8 @@ Both are licensed under the GNU Affero General Public License version 3 (AGPL-3.
 permitted by its Section 7. The build Instructional Agents distributes is a modified version of ranuts/document
 (an embedding API for opening, saving and running macros from the host page, and a build that keeps only the
 presentation and document editors). Its complete corresponding source code is published on the editor-src branch
-of this repository (https://github.com/DaRL-GenAI/instructional_agents_studio/tree/editor-src), and each editor
-release names the commit it was built from (build-identity.json in the archive). The editor carries its own LICENSE
-and NOTICE files, which apply to it.
+of this repository (https://github.com/DaRL-GenAI/instructional_agents_studio/tree/editor-src), and the editor
+package names the commit it was built from (its README and the gitHead field of its package.json). The editor package carries its own LICENSE and NOTICE files, which apply to it.
 
 Instructional Agents talks to the editor only through its postMessage interface from a separate page; it does not
 link to or include editor code. The MIT license of this package does not apply to the editor.

@@ -184,15 +184,14 @@ The server listens on 127.0.0.1 only; the address it opens carries a one-time to
 cookie, and requests from any other origin (including other ports on localhost) are refused. Settings live in
 `~/.config/instructional-agents/` (Windows: `%APPDATA%\instructional-agents\`).
 
-**The editor is downloaded on the first start.** The slides and Word editor (an ONLYOFFICE web build, AGPL-3.0, about
-90 MB, so not part of this MIT npm package) is downloaded once from the GitHub release `editor-v<version>` into the
-cache, checked against its sha-256, and served from this computer at `/editor/`; after that it works offline.
-`instructional-agents editor install` downloads it again; `IA_EDITOR_DIR` points at another build. Without it (no
-network on the first start) the app falls back to the hosted editor https://edit.chaxus.com (`doctor` reports which
-one is used). To make a new editor release: `node scripts/trim-editor.mjs <editor dist> <out> --pack` trims an
-ONLYOFFICE web build into `<out>.tar.gz`; attach it to a release `editor-vX.Y.Z` and set `RELEASE` in
-`server/editor-pkg.mjs`. The editor's source (the ranuts/document fork it is built from) is the `editor-src` branch of
-this repository.
+**The editor is installed with the app.** The slides and Word editor (an ONLYOFFICE web build) comes as the npm
+package `instructional-agents-editor` (AGPL-3.0, a separate package from this MIT one), which `npx` / `npm install`
+put next to the app; it is served from this computer at `/editor/`, works offline and needs no download at run time.
+`IA_EDITOR_DIR` points at another build. Only if the package is missing does the app fall back to the hosted editor
+https://edit.chaxus.com (`doctor` reports which one is used). To make the package: `node scripts/trim-editor.mjs
+<editor dist> <out>` trims an ONLYOFFICE web build, `node scripts/editor-npm.mjs <out> --version X.Y.Z --source <fork
+URL> --commit <sha>` wraps it (publish it before the app version that depends on it). The editor's source (the
+ranuts/document fork it is built from) is the `editor-src` branch of this repository.
 
 **Windows.** Claude Code and Codex are found as installed by their installers or `npm install -g` (`claude.cmd`,
 `codex.cmd`, `claude.exe`); Google Drive for desktop is found on its own drive letter (`G:\My Drive`), OneDrive and
