@@ -36,18 +36,41 @@ Install one of these (or both) if you want an AI assistant to edit your slides a
 
 ## 2. Start the app
 
-### Step 1: Type this line in the terminal and press Enter
+There is nothing to double-click: the Studio is started from the terminal, and it opens in your web browser (Chrome, Edge, Safari or Firefox). Do the same every time you want to use it.
+
+### Step 1: Open a terminal
+
+Windows: press the Windows key, type "cmd" and open **Command Prompt**. Mac: press <kbd>⌘</kbd> + Space, type "Terminal" and press Return.
+
+### Step 2: Type this line and press Enter
 
 ```
 npx instructional-agents
 ```
 
-The first time, it asks `Ok to proceed? (y)`. Type `y` and press Enter. After a minute or two of downloading, your browser opens the Studio by itself.
+The first time, it asks `Ok to proceed? (y)`. Type `y` and press Enter, then wait a minute or two while it downloads. Later starts take a few seconds.
 
-> **Please do not close this terminal window.** If it is closed, the Studio stops. When you are done, press <kbd>Ctrl</kbd> + <kbd>C</kbd> in this window to quit.
-> Next time, type the same line again. If the Studio is already running, the line only opens the page again.
+When it is ready, the terminal shows something like this:
 
-### Step 2 (optional): Check the installation
+```
+Instructional Agents 0.1.1 on http://127.0.0.1:8790 (editor: ...)
+
+  Open http://127.0.0.1:8790/?token=Xy3...#/projects
+  (keep this window open while you use the app; Ctrl+C stops it)
+```
+
+### Step 3: The Studio opens in your browser
+
+Your browser opens a new tab with the Studio by itself (the page in the screenshot at the end of this section).
+
+If no tab opens, open it yourself: copy the whole address after **Open** (it starts with `http://127.0.0.1:8790/?token=`) and paste it into your browser's address bar. On a Mac, you can also hold <kbd>⌘</kbd> and click the address in the terminal.
+
+The address contains a one-time password (the part after `token=`). Use the address from this start; an address from an earlier start, or a bookmark, shows "this tab needs its access link".
+
+> **Please do not close the terminal window.** If it is closed, the Studio stops. When you are done, press <kbd>Ctrl</kbd> + <kbd>C</kbd> in that window to quit, then close the browser tab.
+> **Next time**, open a terminal and type `npx instructional-agents` again. If the Studio is still running, the line just opens the page again.
+
+### Step 4 (optional): Check the installation
 
 Type `npx instructional-agents doctor` to see which parts are installed. A line that starts with `ok` is fine:
 
