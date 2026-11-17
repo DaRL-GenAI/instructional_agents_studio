@@ -39,11 +39,15 @@ const fileIcon = p => { const e = extOf(p); return ICON[e] || ICON[MEDIA[e]] || 
 const BADGE = { generated: ['G', 'Generated'], edited: ['E', 'Edited'], imported: ['I', 'Imported'], source: ['S', 'Source material: read-only for agents'], stale: ['!', 'Out of date: something it was made from changed'], running: ['…', 'Running'], error: ['×', 'Last run failed'] };
 
 /** The Workspace element for the open project (built on first use). */
+let queued = null;
+/** Run a built-in agent action (agent/derive.js) once the Workspace is open: other pages start one this way. */
+export function queueAction(id) { queued = id; }
 export function mount(ctx, host) {
   if (ws && ws.id !== ctx.store.id) { ws.destroy(); ws = null; }
   if (!ws) { ws = new Workspace(ctx); host.replaceChildren(ws.root); }
   else if (ws.root.parentNode !== host) host.replaceChildren(ws.root);
   ws.ctx = ctx; ws.update();
+  if (queued) { const id = queued; queued = null; const w = ws; setTimeout(() => { w.togglePanel(true); w.agentPanel.derive(id); }, 300); }
   return ws;
 }
 export const dirtyCount = () => ws ? [...ws.tabs.values()].filter(t => t.dirty).length : 0;

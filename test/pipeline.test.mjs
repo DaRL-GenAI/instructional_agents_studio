@@ -29,3 +29,16 @@ test('a second empty reply still fails clearly', async () => {
   await assert.rejects(pipe.runChaptersExtraction());
   assert.equal(calls.length, 2); assert.equal(p.chaptersStage.status, 'error');
 });
+
+test('re-extracting chapters keeps chapters that hold material (imported slides) under a title the new list does not use', async () => {
+  const { p, pipe } = pipelineWith(['[{"title":"agents","description":"a"},{"title":"Tools","description":"t"}]']);
+  p.chapters = [
+    { id: 'ch1', title: 'Agents', description: '', stages: { homework: { ...emptyStage(), status: 'done', output: 'HW' } } },
+    { id: 'ch2', title: 'lec - linear regression', description: '', stages: { slides: { ...emptyStage(), status: 'done', output: '{"format":"pptx","sha":"x"}' } } },
+    { id: 'ch3', title: 'Old empty', description: '', stages: {} },
+  ];
+  await pipe.runChaptersExtraction();
+  assert.deepEqual(p.chapters.map(c => c.title), ['agents', 'Tools', 'lec - linear regression']);
+  assert.equal(p.chapters[0].id, 'ch1', 'matched without regard to case'); assert.equal(p.chapters[0].stages.homework.output, 'HW');
+  assert.ok(p.audit.some(e => /kept 1 chapter/.test(e.note || '')));
+});

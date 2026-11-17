@@ -60,7 +60,7 @@ export class AgentPanel {
     this.session = null; this.list = []; this.running = null; this.review = null; this.chips = []; this.auto = null; this.autoOff = null; this.login = null; this.signedIn = {};
     this.build();
     this.off = LOCAL ? onServerEvent(ev => this.onEvent(ev)) : () => {};
-    this.init();
+    this.ready = this.init(); // actions started right away (another page's button) wait for it
   }
   get ctx() { return this.ws.ctx; }
 
@@ -202,7 +202,7 @@ export class AgentPanel {
   /** Derive actions for the open stage file (slides → outline / script, syllabus → objectives / chapters). */
   renderActions() {
     const t = this.ws.activeTab(); const owner = t?.path ? this.ws.ownerInfo(t.path) : null;
-    const ids = this.running ? [] : deriveActions(owner);
+    const ids = this.running ? [] : deriveActions(owner, this.ctx.store?.project);
     this.actions.replaceChildren(...ids.map(id => button({ label: DERIVE[id].label, size: 'sm', variant: 'ghost', title: DERIVE[id].title, onClick: () => this.derive(id) })));
     this.actions.hidden = !ids.length;
   }
@@ -361,7 +361,8 @@ export class AgentPanel {
   }
   /** Draft an upstream stage from the open file (one model call), then review it like any change. */
   async derive(id) {
-    const t = this.ws.activeTab(); const owner = t?.path ? this.ws.ownerInfo(t.path) : null; if (!owner) return;
+    await this.ready?.catch(() => {});
+    const t = this.ws.activeTab(); const owner = t?.path ? this.ws.ownerInfo(t.path) : null; if (!owner && id !== 'design') return;
     const store = this.ctx.store;
     if (!store.apiKey) return toast('Add an API key under Account → Settings', 'error');
     if (this.running) return;
@@ -370,14 +371,14 @@ export class AgentPanel {
     try {
       if (!this.session || this.session.agent !== 'builtin') { this.session = await this.chats.create('builtin'); this.agent = 'builtin'; setPref(`last.${this.pid}`, this.session.id); this.session.messages ||= []; }
     } catch (e) { return toast(e.message, 'error'); }
-    const s = this.session; const context = [{ path: t.path, label: baseName(t.path) }]; this.lastContext = context;
+    const s = this.session; const context = t?.path ? [{ path: t.path, label: baseName(t.path) }] : []; this.lastContext = context;
     s.messages.push({ role: 'user', text: DERIVE[id].title, context, at: new Date().toISOString() });
     this.running = { session: s.id, steps: [], text: '', agent: 'builtin', scope: [] };
     this.renderAll(); this.renderRunning();
     const ac = this.builtinAbort = new AbortController();
     const msg = { role: 'assistant', agent: 'builtin', text: '', steps: [], at: null };
     try {
-      const r = await runDerive(id, { owner: { ...owner, path: t.path }, store, llm: new LLMClient({ ...store.settings, apiKey: store.apiKey }), model: store.settings.model, signal: ac.signal,
+      const r = await runDerive(id, { owner: owner ? { ...owner, path: t.path } : null, store, llm: new LLMClient({ ...store.settings, apiKey: store.apiKey }), model: store.settings.model, signal: ac.signal,
         onStep: st => { this.running.steps.push(st); this.renderRunning(); },
         log: res => store.log({ type: 'llm_call', where: 'workspace', stage: `Agent (${DERIVE[id].label.toLowerCase()})`, agent: 'builtin', model: res.model, status: 'done', tokens: res.usage?.total_tokens, ms: res.durationMs }) });
       Object.assign(msg, { text: r.summary, steps: this.running.steps.slice(), changes: [...r.overlay.keys()].map(p => ({ path: p })) });

@@ -163,7 +163,11 @@ export class Pipeline {
       const chapters = toArray(extractJson(text, 'array')).filter(c => c && c.title).map(c => ({ title: String(c.title), description: String(c.description || '') }));
       if (!chapters.length) throw new Error('The model returned no chapters.');
       const old = p.chapters;
-      p.chapters = chapters.map(c => { const prev = old.find(o => o.title === c.title); return { id: prev?.id || 'ch' + Math.random().toString(36).slice(2, 10), title: c.title, description: c.description, stages: prev?.stages || {} }; });
+      const norm = t => String(t || '').trim().toLowerCase(); const taken = new Set();
+      p.chapters = chapters.map(c => { const prev = old.find(o => !taken.has(o.id) && norm(o.title) === norm(c.title)); if (prev) taken.add(prev.id); return { id: prev?.id || 'ch' + Math.random().toString(36).slice(2, 10), title: c.title, description: c.description, stages: prev?.stages || {} }; });
+      // chapters with material (imported slides, generated work) that the new list does not name are kept, not dropped
+      const kept = old.filter(o => !taken.has(o.id) && Object.values(o.stages || {}).some(st => st?.output));
+      if (kept.length) { p.chapters.push(...kept); this.store.log({ type: 'edit', stage: 'Chapter extraction', where: 'course', note: `kept ${kept.length} chapter${kept.length > 1 ? 's' : ''} with material the new list does not name: ${kept.map(k => k.title).join('; ')}` }); }
       this.store.applyResult(stage, 'Chapter extraction', { output: JSON.stringify(chapters, null, 2), usage, durationMs: Math.round(performance.now() - t0), transcript, prompt, inputHash: this.inputHash(inputs), provenance: inputs.map(i => ({ label: i.label, hash: sha1Short(i.text) })) }, 'course');
     } catch (e) { stage.status = 'error'; stage.error = String(e.message || e); stage.transcript = transcript; this.store.save(); throw e; }
     finally { this.live = null; this.onLive(); }

@@ -3,12 +3,21 @@ import { el, button, badge, dot, input, textarea, notice, empty, icon, toast, co
 import { FOUNDATION, CHAPTER_STAGES } from '../prompts.js';
 import { stageDetail, stageStatus, transcriptView } from './stage.js';
 import { href, go } from '../router.js';
+import { deckChapters, DERIVE } from '../agent/derive.js';
+import { queueAction } from './workspace.js';
+import { LOCAL } from '../fs/api.js';
 
 export function render(ctx) {
   const { store, pipe } = ctx; const p = store.project; const sel = ctx.route.a || FOUNDATION[0].id;
   const page = el('div', { class: 'page wide' });
   page.append(el('div', { class: 'page-head' }, el('div', {}, el('h1', {}, 'Course design'), el('p', {}, 'Six deliberations from the ADDIE model, run in order. Each one reads the deliverables before it, then the syllabus is split into chapters.')),
     el('div', { class: 'btn-row' }, button({ label: `Run all six (${(store.settings.deliberation === 'full' ? 3 : 1) * 6} calls)`, icon: 'fast-forward', variant: 'primary', disabled: !!ctx.busy, onClick: () => runAll(ctx) }))));
+
+  // a course that starts from slides it already has: the design can be rebuilt from them (reviewed in the Workspace)
+  const decks = deckChapters(p);
+  if (LOCAL && decks.length && !p.foundation.syllabus?.output) page.append(el('div', { class: 'notice info', style: 'display:flex;align-items:center;gap:12px;margin-bottom:16px' },
+    el('span', { style: 'flex:1' }, `This course has ${decks.length} slide deck${decks.length > 1 ? 's' : ''} and no syllabus yet. Rebuild the chapter order, syllabus and learning objectives from the slides, review them, then run the remaining deliberations.`),
+    button({ label: DERIVE.design.label, icon: 'compass', variant: 'primary', size: 'sm', disabled: !!ctx.busy, onClick: () => { if (!ctx.requireKey()) return; queueAction('design'); go('p', p.id, 'workspace'); } })));
 
   const rail = el('div', { class: 'rail' }, el('div', { class: 'panel' }, el('div', { class: 'rail-head' }, 'Deliberations'), ...FOUNDATION.map((f, i) => { const st = stageStatus(pipe, p.foundation[f.id], pipe.foundationInputs(f.id)); return el('button', { class: 'rail-item', 'aria-current': String(sel === f.id), onClick: () => go('p', p.id, 'design', f.id) }, el('span', { class: 'n' }, i + 1), el('span', { class: 't' }, f.name), dot(st)); }),
     el('div', { class: 'rail-head', style: 'margin-top:8px' }, 'Chapters'), el('button', { class: 'rail-item', 'aria-current': String(sel === 'chapters'), onClick: () => go('p', p.id, 'design', 'chapters') }, icon('list', 'sm'), el('span', { class: 't' }, `Chapter list (${p.chapters.length})`), dot(stageStatus(pipe, p.chaptersStage)))));
@@ -41,6 +50,13 @@ function chaptersView(ctx) {
   box.append(el('div', { class: 'stage-head' }, el('div', {}, el('h2', {}, 'Chapters'), el('p', { class: 'muted', style: 'font-size:var(--fs-2);margin-top:4px' }, 'The Syllabus Processor agent splits the syllabus into chapters. Edit freely; each chapter then gets slides, assessments and a video.')), el('div', { class: 'meta-col' }, badge(stageStatus(pipe, stage)))));
   if (stage.error) box.append(el('div', { style: 'margin-top:12px' }, notice('error', stage.error)));
   const ui = ctx.ui['chapters'] ||= {};
+  // topics the slides did not cover (the syllabus rebuilt from them lists them): one click makes each a chapter to generate
+  const gaps = possibleAdditions(p.foundation.syllabus?.output).filter(g => !p.chapters.some(ch => ch.title.trim().toLowerCase() === g.title.toLowerCase()));
+  if (gaps.length) box.append(el('div', { class: 'panel', style: 'margin-top:12px;padding:12px 16px' },
+    el('div', { class: 'label', style: 'margin-bottom:6px' }, 'Not covered by your slides (from the syllabus)'),
+    ...gaps.map(g => el('div', { style: 'display:flex;gap:12px;align-items:flex-start;padding:6px 0' },
+      el('div', { style: 'flex:1' }, el('b', {}, g.title), g.why ? el('div', { class: 'meta' }, g.why) : null),
+      button({ label: 'Add as chapter', icon: 'plus', size: 'sm', onClick: () => { store.addChapter({ title: g.title, description: g.why }); store.log({ type: 'edit', stage: 'Chapter list', where: 'course', note: `chapter added from the syllabus: ${g.title}` }); store.save(); toast(`Added “${g.title}”. Generate its outline and slides under Slides.`, 'ok'); ctx.render(); } })))));
   const extract = feedback => ctx.guarded('Extracting chapters', async () => { if (!ctx.requireKey()) return; await pipe.runChaptersExtraction({ feedback }); toast(`${store.project.chapters.length} chapters extracted`, 'ok'); });
   box.append(el('div', { class: 'stage-actions' },
     button({ label: stage.status === 'done' ? 'Re-extract from syllabus' : 'Extract chapters from syllabus', icon: 'play', variant: 'primary', disabled: !!ctx.busy || !hasSyllabus, onClick: () => extract() }),
@@ -68,4 +84,10 @@ function chaptersView(ctx) {
   });
   box.append(list);
   return box;
+}
+
+/** "## Possible additions" in a syllabus rebuilt from slides (agent/derive.js): [{ title, why }]. */
+export function possibleAdditions(syllabus) {
+  const m = String(syllabus || '').match(/^##+\s*Possible additions[^\n]*\n([\s\S]*?)(?=^#|$(?![\s\S]))/m); if (!m) return [];
+  return [...m[1].matchAll(/^\s*[-*]\s+\*\*(.+?)\*\*\s*(?::\s*(.*))?$/gm)].map(x => ({ title: x[1].trim(), why: (x[2] || '').trim() }));
 }
