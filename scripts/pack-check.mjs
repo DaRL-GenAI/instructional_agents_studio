@@ -6,8 +6,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-const [pack] = JSON.parse(execFileSync(npm, ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+// Windows: npm is npm.cmd, which Node starts only through a shell (fixed arguments, nothing to quote)
+const win = process.platform === 'win32';
+const [pack] = JSON.parse(execFileSync(win ? 'npm.cmd' : 'npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], shell: win }));
 const files = pack.files.map(f => f.path);
 const MAX_PACKED = 5 * 1024 * 1024, MAX_UNPACKED = 12 * 1024 * 1024;
 const ALLOWED = /^(package\.json|README\.md|LICENSE|NOTICE|index\.html|bin\/cli\.mjs|server\/.+\.mjs|js\/.+\.js|css\/.+\.css|assets\/.+\.(svg|png|jpg|webp))$/;
