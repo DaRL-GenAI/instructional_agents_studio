@@ -250,3 +250,14 @@ window.addEventListener('message', (event) => {
 | iframe → parent | `document:dirty-changed`    | Unsaved-changes flag flipped (`{ dirty }`)      |
 | iframe → parent | `document:state`            | Current state response                          |
 | iframe → parent | `document:error`            | Operation failed                                |
+
+## Studio additions (branch `studio-embed`)
+
+| Message | Payload | Reply |
+| --- | --- | --- |
+| `document:run-macro` | `{ code, args?, readonly? }` — a function body called as `(Api, args)` with the Document Builder API in the editor frame; one undo step, or outside history when `readonly` | `document:macro-result { result, dirty }` (JSON-cloned return value) |
+| `document:save` | `targetExt: 'PDF'` (or any other format) | `document:saved`; exporting to another format no longer clears `dirty` |
+
+`document:run-macro` is refused unless the page was opened with `?embedOrigin=`; the code runs with the editor origin's privileges.
+
+Event `document:exported { file, fileName, mimeType, size, regularSave, dirty }`: in embed mode the editor's own download / Ctrl+S is handed to the host instead of being dropped. `regularSave` is true for the document's own format (the save point is committed first, so `dirty` is current).

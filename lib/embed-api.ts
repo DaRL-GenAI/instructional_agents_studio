@@ -6,6 +6,8 @@ import { handleDocumentOperation, loadEditorApi } from './converter';
 import { openDocumentFromUrl } from './document';
 import { getReadonlyMode, requestSaveDocument, setReadonlyMode } from './onlyoffice-editor';
 import { captureSavePoint, commitSavePoint } from './onlyoffice/save-point';
+import { setEmbedExportListener } from './onlyoffice/save-stream';
+import { getEditorContext } from './agent-plugin/editor-bridge';
 import { hasUnsavedChanges, markDocumentSaved, onUnsavedChangesChange } from './unsaved-guard';
 
 type EmbedMessageType =
@@ -15,6 +17,7 @@ type EmbedMessageType =
   | 'document:open-buffer'
   | 'document:set-readonly'
   | 'document:save'
+  | 'document:run-macro'
   | 'document:get-state';
 
 type EmbedMessage = {
@@ -207,13 +210,16 @@ async function handleMessage(event: MessageEvent): Promise<void> {
         // Taken before the export starts: edits made while it runs are not in
         // the bytes the host receives, so they must keep the document dirty.
         const savePoint = captureSavePoint();
-        const file = await requestSaveDocument(payload.targetExt || defaultExt, {
+        const file = await requestSaveDocument(String(payload.targetExt || defaultExt).toUpperCase(), {
           returnOriginalOnTimeout,
         });
         // The host now holds the edited bytes. A timeout fallback may have
         // handed it the original file instead, which saves nothing -- the
         // request cannot tell the two apart, so that mode never clears the flag.
-        if (!returnOriginalOnTimeout && commitSavePoint(savePoint)) {
+        const targetExt = String(payload.targetExt || defaultExt).toUpperCase();
+        const regularSave = targetExt === currentExt || targetExt === LEGACY_TARGET[currentExt];
+        // An export to another format (PDF frames, images) saves nothing editable.
+        if (regularSave && !returnOriginalOnTimeout && commitSavePoint(savePoint)) {
           markDocumentSaved();
         }
         postToParent(
@@ -227,6 +233,12 @@ async function handleMessage(event: MessageEvent): Promise<void> {
           },
           message.id,
         );
+        break;
+      }
+
+      case 'document:run-macro': {
+        const result = await runMacro(payload);
+        postToParent('document:macro-result', { result, dirty: hasUnsavedChanges() }, message.id);
         break;
       }
 
@@ -252,6 +264,49 @@ async function handleMessage(event: MessageEvent): Promise<void> {
   }
 }
 
+/**
+ * Run Document Builder code (`payload.code`, a function body receiving `Api` and
+ * `args`) inside the editor frame as one undoable step (`payload.readonly`: a
+ * query, run outside history so it never dirties the document). Only for hosts pinned
+ * with ?embedOrigin=: the code runs with this origin's privileges.
+ */
+async function runMacro(payload: Record<string, any>): Promise<unknown> {
+  if (!getQueryValue('embedOrigin')) throw new Error('document:run-macro requires ?embedOrigin=');
+  const query = Boolean(payload.readonly);
+  if (!query && getReadonlyMode()) throw new Error('Document is read-only');
+  if (typeof payload.code !== 'string' || !payload.code.trim()) throw new Error('document:run-macro requires code');
+  const context = getEditorContext();
+  const frame = document.querySelector<HTMLIFrameElement>('iframe[name="frameEditor"]')?.contentWindow as
+    | (Window & { Function: FunctionConstructor; AscBuilder?: Record<string, { Api?: unknown }> })
+    | null;
+  const api = context?.api as Record<string, any> | undefined;
+  if (!context || !frame) throw new Error('No editor is mounted');
+  if (!api?.isDocumentLoadComplete) throw new Error('Editor is still loading');
+  const builder = context.presentationBuilder ?? frame.AscBuilder?.Word?.Api ?? frame.AscBuilder?.Cell?.Api;
+  if (!builder) throw new Error('Document Builder API is unavailable');
+  const history = query ? undefined : (context.AscCommon?.History as Record<string, any> | undefined);
+  const logic = api.WordControl?.m_oLogicDocument;
+  // Compiled in the frame's realm so Builder objects and errors match its globals.
+  const fn = new frame.Function('Api', 'args', payload.code);
+  history?.startGroupPoints?.();
+  try {
+    let result = fn(builder, payload.args ?? null);
+    if (result && typeof result.then === 'function') result = await result;
+    if (!query) {
+      history?.endGroupPoints?.();
+      logic?.Recalculate?.({ Drawings: { All: true, Map: {} } });
+      logic?.Document_UpdateInterfaceState?.();
+    }
+    return result === undefined ? null : JSON.parse(JSON.stringify(result));
+  } catch (error) {
+    if (!query) {
+      history?.cancelGroupPoints?.();
+      logic?.Recalculate?.({ Drawings: { All: true, Map: {} } });
+    }
+    throw error;
+  }
+}
+
 export function initEmbedApi(): void {
   if (initialized) {
     return;
@@ -269,6 +324,16 @@ export function initEmbedApi(): void {
   document.body.classList.add('embed-mode');
   // Pushed, not polled: the host needs it to decide when to save (a tab
   // switch, an idle timer) without exporting documents nobody touched.
+  setEmbedExportListener((file, regularSave) => {
+    postToParent('document:exported', {
+      file,
+      fileName: file.name,
+      mimeType: file.type,
+      size: file.size,
+      regularSave,
+      dirty: hasUnsavedChanges(),
+    });
+  });
   onUnsavedChangesChange((dirty) => {
     postToParent('document:dirty-changed', { dirty });
   });

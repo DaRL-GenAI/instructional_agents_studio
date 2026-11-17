@@ -209,6 +209,13 @@ export function installSaveStreamTracking(win: Window): boolean {
   return true;
 }
 
+type EmbedExportListener = (file: File, regularSave: boolean) => void;
+let embedExportListener: EmbedExportListener | null = null;
+/** Embed mode: receive files the user downloads or saves from inside the editor. */
+export function setEmbedExportListener(listener: EmbedExportListener | null): void {
+  embedExportListener = listener;
+}
+
 function routeSavedFile(file: File, state: ReturnType<typeof standaloneExportState>): void {
   if (!state.isCurrent()) return;
   if (state.request) {
@@ -220,17 +227,24 @@ function routeSavedFile(file: File, state: ReturnType<typeof standaloneExportSta
     return;
   }
 
-  if (isEmbedMode()) {
-    console.warn('Local save is disabled in iframe embed mode. Use document:save from the parent page.');
-    return;
-  }
-
   // Only ordinary saves reuse the linked document destination. Other formats
   // use independent export pickers and must not suppress each other's output.
   const sourceExt = getFileExtension(state.source.fileName);
   const savedExt = getFileExtension(file.name);
   const normalizedExt = ({ DOC: 'DOCX', XLS: 'XLSX', PPT: 'PPTX' } as Record<string, string>)[sourceExt];
   const regularSave = savedExt === sourceExt || savedExt === normalizedExt;
+
+  if (isEmbedMode()) {
+    // The host owns storage in embed mode: hand it the bytes of an in-editor
+    // download / Ctrl+S instead of writing to this origin's disk.
+    if (!embedExportListener) {
+      console.warn('Local save is disabled in iframe embed mode. Use document:save from the parent page.');
+      return;
+    }
+    if (regularSave && commitSavePoint(state.point)) markDocumentSaved();
+    embedExportListener(file, regularSave);
+    return;
+  }
 
   const reachedDisk = async (): Promise<void> => {
     // Reaching the user's disk is the only thing that clears the unsaved-changes
