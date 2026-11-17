@@ -95,6 +95,9 @@ bundle or a single standalone HTML file — both work offline. The project ZIP c
 
 The same Studio runs as a local app in which every course is a folder on your computer and a git repository.
 
+**New here?** The [step-by-step user guide](https://github.com/DaRL-GenAI/instructional_agents_studio/blob/main/docs/user-guide.md) walks through installing, importing existing slides,
+rebuilding the course outline, editing with Claude Code or Codex, and undoing changes, with screenshots.
+
 **Install.** Node.js 20.19 or newer, on macOS, Linux or Windows (PowerShell or Command Prompt). No global install is needed:
 
 ```bash
