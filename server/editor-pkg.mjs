@@ -1,7 +1,7 @@
 // editor-pkg.mjs — the presentation/document editor (an ONLYOFFICE web build) served at /editor/. Found in
-// IA_EDITOR_DIR, in the npm package instructional-agents-editor (installed with the app as an optional dependency),
-// or in the cache (~/.cache/instructional-agents/editor/<version>/) after `instructional-agents editor install`.
-// Without one the app falls back to the hosted editor (https://edit.chaxus.com).
+// IA_EDITOR_DIR, in the npm package instructional-agents-editor if one is installed next to the app, or in the cache
+// (~/.cache/instructional-agents/editor/<version>/), where the app downloads the release asset below on its first start
+// (or `instructional-agents editor install`). Without one the app falls back to the hosted editor (https://edit.chaxus.com).
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -11,9 +11,10 @@ import { Readable, Writable } from 'node:stream';
 import { createRequire } from 'node:module';
 import { cacheDir } from './config.mjs';
 
-// The release asset: set when an editor package is published (tar.gz or tar.br of the trimmed build, see
-// scripts/trim-editor.mjs). Overridable with IA_EDITOR_URL / IA_EDITOR_SHA256 / IA_EDITOR_VERSION.
-export const EDITOR = { version: process.env.IA_EDITOR_VERSION || 'dev', url: process.env.IA_EDITOR_URL || '', sha256: process.env.IA_EDITOR_SHA256 || '' };
+// The release asset: the trimmed build as tar.gz (scripts/trim-editor.mjs --pack), attached to the GitHub release
+// editor-v<version>; its source is the editor-src branch (NOTICE). Overridable with IA_EDITOR_URL / _SHA256 / _VERSION.
+const RELEASE = { version: '0.1.1', url: 'https://github.com/DaRL-GenAI/instructional_agents_studio/releases/download/editor-v0.1.1/editor-trim.tar.gz', sha256: '5b28c55bde3aa32a410396ccb7e50208e576041ed77a8f587b7b47781cc11f44' };
+export const EDITOR = { version: process.env.IA_EDITOR_VERSION || RELEASE.version, url: process.env.IA_EDITOR_URL ?? RELEASE.url, sha256: process.env.IA_EDITOR_SHA256 || RELEASE.sha256 };
 const MARK = '.ia-editor.json';
 const looksLikeEditor = d => !!d && fs.existsSync(path.join(d, 'editor.html')) && fs.existsSync(path.join(d, 'sdkjs'));
 
@@ -47,7 +48,10 @@ export async function installEditor({ url = EDITOR.url, sha256 = EDITOR.sha256, 
   log(`downloading ${url}`);
   const r = await fetch(url, { redirect: 'follow' }); if (!r.ok) throw new Error(`Download failed: HTTP ${r.status}`);
   const hash = crypto.createHash('sha256'); const file = fs.createWriteStream(tmp);
-  await pipeline(Readable.fromWeb(r.body), async function* (src) { for await (const c of src) { hash.update(c); yield c; } }, file);
+  const total = Number(r.headers.get('content-length')) || 0; let got0 = 0, shown = 0;
+  await pipeline(Readable.fromWeb(r.body), async function* (src) {
+    for await (const c of src) { hash.update(c); got0 += c.length; const pct = total ? Math.floor(got0 / total * 10) * 10 : 0; if (pct > shown) { shown = pct; log(`${pct}% (${Math.round(got0 / 1e6)} of ${Math.round(total / 1e6)} MB)`); } yield c; }
+  }, file);
   const got = hash.digest('hex'); if (got !== sha256.toLowerCase()) { fs.rmSync(tmp, { force: true }); throw new Error(`Checksum mismatch: got ${got}`); }
   const staging = `${out}.partial`; fs.rmSync(staging, { recursive: true, force: true }); fs.mkdirSync(staging, { recursive: true });
   const unzip = /\.br$/.test(new URL(url).pathname) ? zlib.createBrotliDecompress() : zlib.createGunzip();

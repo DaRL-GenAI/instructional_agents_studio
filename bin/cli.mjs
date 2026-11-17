@@ -5,7 +5,7 @@
 //                                                     --allow-host: also accept https://H, e.g. a private tunnel)
 //   instructional-agents doctor                           check Node, the agent CLIs, LaTeX and the editor
 //   instructional-agents import <project.json> [dir]      turn a project exported from the browser edition into a folder
-//   instructional-agents editor install --url U --sha256 H [--version V]
+//   instructional-agents editor install [--url U --sha256 H --version V]   download the editor again (done on first start)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -42,6 +42,7 @@ async function start(dir) {
       return;
     }
   }
+  await ensureEditor();
   const { startServer } = await import('../server/http.mjs');
   const app = await startServer({ dir: dir ? path.resolve(dir) : null, port: Number(opt('--port', process.env.IA_PORT || 8790)), allowHosts: [opt('--allow-host', ''), ...String(process.env.IA_ALLOW_HOSTS || '').split(',')].filter(Boolean) });
   console.log(`\n  Open ${app.url}\n  (keep this window open while you use the app; Ctrl+C stops it)\n`);
@@ -72,7 +73,7 @@ async function doctor() {
   const { findTex } = await import('../server/tex.mjs'); const tex = findTex();
   row('LaTeX', !!tex, tex ? `${tex.engine} (${tex.bin})` : 'tectonic or latexmk not found: needed to compile .tex files (or set IA_TECTONIC)');
   const ed = findEditor();
-  row('Editor', !!ed, ed ? `${ed.version}, ${ed.source} (${ed.dir})` : 'not installed (the optional package instructional-agents-editor is missing: reinstall the app, or set IA_EDITOR_DIR to an editor build); slides open in the hosted editor https://edit.chaxus.com meanwhile (agent edits in place need the local one)', true);
+  row('Editor', !!ed, ed ? `${ed.version}, ${ed.source} (${ed.dir})` : 'not installed (it is downloaded on the first start; or run: instructional-agents editor install); slides open in the hosted editor https://edit.chaxus.com meanwhile (agent edits in place need the local one)', true);
   row('git', true, 'built in (isomorphic-git)');
   console.log(rows.map(r => `  ${r[0].padEnd(7)} ${r[1].padEnd(12)} ${r[2]}`).join('\n'));
   console.log(`\n  config: ${configDir()}\n  new projects: ${projectsRoot()}`);
@@ -95,8 +96,20 @@ async function importCmd(file, dir) {
   console.log(`  open it: instructional-agents ${JSON.stringify(r.dir)}`);
 }
 
+// The slides and Word editor (about 90 MB) is not in the npm package: downloaded once, on the first start, into the
+// cache. Without a network the app still starts; slides then open in the hosted editor until the next start.
+async function ensureEditor() {
+  if ('IA_EDITOR_DIR' in process.env) return; // a chosen build, or none (tests)
+  const { findEditor, installEditor, EDITOR } = await import('../server/editor-pkg.mjs');
+  const ed = findEditor();
+  if (!EDITOR.url || (ed && !(ed.source === 'cache' && ed.version !== EDITOR.version))) return;
+  console.log(`\n  ${ed ? 'Updating' : 'First start: downloading'} the slides and Word editor (about 90 MB, only once). Please wait…`);
+  try { await installEditor({ log: m => console.log(`    ${m}`) }); console.log('  Editor ready.'); }
+  catch (e) { console.log(`  Could not download the editor (${e.message}).\n  Slides and Word files open in the online editor for now; it is downloaded again on the next start.`); }
+}
+
 async function editorInstall() {
-  const { installEditor } = await import('../server/editor-pkg.mjs');
-  const ed = await installEditor({ url: opt('--url'), sha256: opt('--sha256'), version: opt('--version', 'dev'), log: m => console.log(`  ${m}`) });
+  const { installEditor, EDITOR } = await import('../server/editor-pkg.mjs');
+  const ed = await installEditor({ url: opt('--url', EDITOR.url), sha256: opt('--sha256', EDITOR.sha256), version: opt('--version', EDITOR.version), log: m => console.log(`  ${m}`) });
   console.log(ed ? `  ready: ${ed.dir}` : '  installed, but not found afterwards');
 }
