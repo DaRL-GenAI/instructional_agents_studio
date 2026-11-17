@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ia-smoke-')));
+const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ia-smoke-')));
 const env = { ...process.env, IA_CONFIG_DIR: path.join(tmp, 'config'), IA_PROJECTS_ROOT: path.join(tmp, 'courses'), IA_EDITOR_DIR: '' };
 const chromeArg = process.argv.indexOf('--chrome');
 const step = m => console.log(`• ${m}`);

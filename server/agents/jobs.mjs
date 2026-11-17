@@ -5,6 +5,7 @@
 // Nothing reaches the project until the browser applies the accepted changes (http.mjs → /agent/apply).
 import { scratchDir } from '../localstate.mjs';
 import { spawn } from 'node:child_process';
+import * as platform from '../platform.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { sha256, resolveInside, sourcesOf } from '../workspace.mjs';
@@ -104,9 +105,12 @@ export async function run({ id, root, session, message, context = [], scope = []
   fs.writeFileSync(metaFile(root, session), JSON.stringify({ base, startedAt: r.startedAt, agent: s.agent }));
   const resume = s.cli?.[s.agent] || null;
   sessions.update(root, session, x => { x.messages.push({ role: 'user', text: String(message).slice(0, 20000), context: context.slice(0, 20), at: r.startedAt }); });
-  const cmd = panelCommand(s.agent, bin, panelPrompt({ message, context, resumed: !!resume }), dir, resume);
+  const cmd = panelCommand(s.agent, bin, dir, resume);
   // own process group (cancel stops everything it started); git must not climb out of the copy into the project's repository
-  const child = r.child = spawnFn(cmd[0], cmd.slice(1), { cwd: dir, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: agentEnv({ GIT_CEILING_DIRECTORIES: path.dirname(dir) }) });
+  let child;
+  try { child = r.child = platform.spawn(cmd[0], cmd.slice(1), { spawnFn, cwd: dir, stdio: ['pipe', 'pipe', 'pipe'], env: agentEnv({ GIT_CEILING_DIRECTORIES: path.dirname(dir) }) }); }
+  catch (e) { running.delete(id); throw Object.assign(new Error(`Could not start ${s.agent === 'claude' ? 'Claude Code' : 'Codex'}: ${e.message}`), { status: 500 }); }
+  child.stdin?.on('error', () => {}); child.stdin?.end(panelPrompt({ message, context, resumed: !!resume }));
   const timer = setTimeout(() => cancel(id, 'timed out after 20 minutes'), JOB_TIMEOUT_MS);
   emit({ type: 'start', session, agent: s.agent, scope });
   const steps = []; let text = '', error = null, cliSession = null, buf = '', stderr = '';
@@ -142,7 +146,7 @@ export async function run({ id, root, session, message, context = [], scope = []
 export function cancel(id, reason = true) {
   const r = running.get(id); if (!r?.child) return false;
   r.cancelled = reason;
-  try { process.kill(-r.child.pid, 'SIGTERM'); } catch { try { r.child.kill('SIGTERM'); } catch { /* gone */ } }
+  platform.stop(r.child);
   return true;
 }
 export function cancelAll(reason) { for (const id of running.keys()) cancel(id, reason); }

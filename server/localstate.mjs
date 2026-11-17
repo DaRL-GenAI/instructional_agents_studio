@@ -9,7 +9,15 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import * as config from './config.mjs';
 
-const inside = (p, root) => p === root || p.startsWith(root + path.sep);
+import { isInside as inside } from './platform.mjs';
+
+/** Google Drive for desktop on Windows: a drive of its own (G:, or another letter) holding "My Drive". */
+export function windowsDriveRoots() {
+  if (process.platform !== 'win32') return [];
+  const out = [];
+  for (const l of 'DEFGHIJKLMNOPQRSTUVWXYZ') { const r = `${l}:\\`; try { if (fs.existsSync(path.join(r, 'My Drive')) || fs.existsSync(path.join(r, 'Shared drives'))) out.push(r); } catch { /* no such drive */ } }
+  return out;
+}
 
 /** The sync service a folder belongs to ('Google Drive', 'iCloud Drive', …), or null. IA_CLOUD_DIRS adds folders
  *  (a mount of rclone, Insync, … on Linux). */
@@ -22,7 +30,9 @@ export function cloudOf(dir) {
     return /^GoogleDrive/i.test(top) ? 'Google Drive' : /^Dropbox/i.test(top) ? 'Dropbox' : /^OneDrive/i.test(top) ? 'OneDrive' : /^Box/i.test(top) ? 'Box' : 'a synced folder';
   }
   if (inside(dir, path.join(home, 'Library', 'Mobile Documents'))) return 'iCloud Drive';
-  if (['Google Drive', 'My Drive'].some(n => inside(dir, path.join(home, n))) || inside(dir, '/Volumes/GoogleDrive')) return 'Google Drive';
+  if (['Google Drive', 'My Drive'].some(n => inside(dir, path.join(home, n))) || inside(dir, '/Volumes/GoogleDrive') || windowsDriveRoots().some(r => inside(dir, r))) return 'Google Drive';
+  if (inside(dir, path.join(home, 'iCloudDrive'))) return 'iCloud Drive';
+  for (const k of ['OneDrive', 'OneDriveCommercial', 'OneDriveConsumer']) if (process.env[k] && inside(dir, path.resolve(process.env[k]))) return 'OneDrive';
   if (inside(dir, path.join(home, 'Dropbox'))) return 'Dropbox';
   if (path.relative(home, dir).split(path.sep)[0].startsWith('OneDrive')) return 'OneDrive';
   return null;
@@ -39,7 +49,10 @@ export function places() {
     add(`Google Drive${who}`, path.join(cs, n, 'My Drive')); add(`Shared drives${who}`, path.join(cs, n, 'Shared drives'));
   }
   add('Google Drive', path.join(home, 'My Drive')); add('Google Drive', path.join(home, 'Google Drive')); add('Google Drive', '/Volumes/GoogleDrive/My Drive');
+  for (const r of windowsDriveRoots()) { add('Google Drive', path.join(r, 'My Drive')); add('Shared drives', path.join(r, 'Shared drives')); }
   add('iCloud Drive', path.join(home, 'Library', 'Mobile Documents', 'com~apple~CloudDocs'));
+  add('iCloud Drive', path.join(home, 'iCloudDrive'));
+  for (const k of ['OneDriveCommercial', 'OneDriveConsumer', 'OneDrive']) if (process.env[k]) add(path.basename(process.env[k]).replace(/^OneDrive - /, 'OneDrive · '), path.resolve(process.env[k]));
   for (const n of ents) { const k = n.match(/^(Dropbox|OneDrive|Box)/i)?.[1]; if (k) add(n.replace('-', ' · '), path.join(cs, n)); }
   add('Dropbox', path.join(home, 'Dropbox'));
   return out;

@@ -2,13 +2,15 @@ Instructional Agents Studio
 Copyright (c) DaRL Lab, Arizona State University, and contributors.
 Licensed under the MIT License (see LICENSE).
 
-This package does not contain the slides / documents editor. The local app downloads it on first use into
-~/.cache/instructional-agents/editor/<version>/ (or uses a build named by IA_EDITOR_DIR), checks its SHA-256,
-and serves it to the browser at /editor/. Without it, the app uses the hosted editor at https://edit.chaxus.com.
+This package does not contain the slides / documents editor. The editor is the separate npm package
+instructional-agents-editor (an optional dependency, installed with this one), or a build named by IA_EDITOR_DIR,
+or one installed with `instructional-agents editor install` into ~/.cache/instructional-agents/editor/<version>/.
+The local app serves it to the browser at /editor/. Without it, the app uses the hosted editor at
+https://edit.chaxus.com.
 
 
-Editor (separate program, downloaded at run time)
--------------------------------------------------
+Editor (separate program, separate package)
+-------------------------------------------
 
 The editor is a trimmed build of ranuts/document (https://github.com/ranuts/document), the web front end that
 embeds the ONLYOFFICE document editors:

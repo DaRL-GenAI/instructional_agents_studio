@@ -1,19 +1,19 @@
 // agents/cli.mjs — Claude Code and Codex as command lines, and their JSON event streams as progress lines.
 // (Ported from the old bridge/studio-bridge.mjs; the agent now runs in the project folder instead of a bwrap jail.)
-import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import fs from 'node:fs';
 import { settings } from '../config.mjs';
+import { findOnPath, run, isWin } from '../platform.mjs';
 
 const HOME = os.homedir();
-// Started from a desktop launcher, PATH can be bare; the agent CLIs usually install into ~/.local/bin.
-export const searchPath = () => [...new Set([...(process.env.PATH || '').split(path.delimiter), path.join(HOME, '.local', 'bin'), path.join(HOME, '.npm-global', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'].filter(Boolean))].join(path.delimiter);
-export function which(bin) {
-  for (const d of searchPath().split(path.delimiter)) { const f = path.join(d, bin); try { fs.accessSync(f, fs.constants.X_OK); return fs.realpathSync(f); } catch { /* next */ } }
-  return null;
-}
-export function version(bin) { const r = spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 10000 }); return r.status === 0 ? r.stdout.trim().split('\n')[0] : null; }
+// Started from a desktop launcher, PATH can be bare; the agent CLIs usually install into ~/.local/bin (Claude Code's
+// installer, also on Windows), npm's global bin, or Homebrew.
+const EXTRA = isWin
+  ? [path.join(HOME, '.local', 'bin'), process.env.APPDATA && path.join(process.env.APPDATA, 'npm'), process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs', 'nodejs')]
+  : [path.join(HOME, '.local', 'bin'), path.join(HOME, '.npm-global', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'];
+export const searchPath = () => [...new Set([...(process.env.PATH || '').split(path.delimiter), ...EXTRA].filter(Boolean))].join(path.delimiter);
+export const which = bin => findOnPath(bin, searchPath());
+export function version(bin) { const r = run(bin, ['--version'], { encoding: 'utf8', timeout: 10000, env: { ...process.env, PATH: searchPath() } }); return r.status === 0 ? String(r.stdout).trim().split('\n')[0] : null; }
 export const available = () => ({ claude: which('claude'), codex: which('codex') });
 
 // An API key in the environment overrides the CLI's own sign-in, even when the key is stale, so it is passed on only
@@ -38,10 +38,13 @@ Slides in scope (1-based, current order): ${slides.join(', ')}.
 - No network access is needed.`;
 }
 
-/** argv for the agent; cwd is the project folder. Write access stays inside it (acceptEdits / workspace-write). */
-export function agentCommand(agent, bin, prompt, cwd) {
-  if (agent === 'claude') return [bin, '-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--permission-prompts', 'none', '--allowedTools', 'Read,Write,Edit,Glob,Grep,Bash', '--disallowedTools', 'WebFetch,WebSearch'];
-  return [bin, 'exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-C', cwd, prompt];
+// The prompt goes to the agent on stdin, not as an argument: Windows limits a command line to 32 767 characters and
+// cmd.exe cannot pass line breaks; Linux limits one argument to 128 KiB.
+/** argv for the agent; cwd is the project folder. Write access stays inside it (acceptEdits / workspace-write). The
+ *  prompt is written to its stdin. */
+export function agentCommand(agent, bin, cwd) {
+  if (agent === 'claude') return [bin, '-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--permission-prompts', 'none', '--allowedTools', 'Read,Write,Edit,Glob,Grep,Bash', '--disallowedTools', 'WebFetch,WebSearch'];
+  return [bin, 'exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-C', cwd, '-'];
 }
 
 // Codex reports each reconnect attempt as an error event; only the last failure is one
@@ -70,12 +73,13 @@ export function progressOf(agent, line) {
 }
 
 // ---------------------------------------------------------------- the agent panel (a chat over a copy of the project)
-/** argv for one panel turn in `cwd` (the job copy); `resume`: the CLI's session id from the previous turn. */
-export function panelCommand(agent, bin, prompt, cwd, resume = null) {
-  if (agent === 'claude') return [bin, '-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--permission-prompts', 'none', '--allowedTools', 'Read,Write,Edit,Glob,Grep,Bash', '--disallowedTools', 'WebFetch,WebSearch', ...(resume ? ['--resume', resume] : [])];
+/** argv for one panel turn in `cwd` (the job copy); `resume`: the CLI's session id from the previous turn. The prompt
+ *  is written to stdin. */
+export function panelCommand(agent, bin, cwd, resume = null) {
+  if (agent === 'claude') return [bin, '-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--permission-prompts', 'none', '--allowedTools', 'Read,Write,Edit,Glob,Grep,Bash', '--disallowedTools', 'WebFetch,WebSearch', ...(resume ? ['--resume', resume] : [])];
   // `exec resume` takes no -C/--sandbox: the cwd comes from the process, the sandbox from a config override
-  if (resume) return [bin, 'exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="workspace-write"', resume, prompt];
-  return [bin, 'exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-C', cwd, prompt];
+  if (resume) return [bin, 'exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="workspace-write"', resume, '-'];
+  return [bin, 'exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-C', cwd, '-'];
 }
 
 /** One event line → { step?, text?, session?, error?, final? } (null when nothing to show). */

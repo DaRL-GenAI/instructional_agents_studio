@@ -13,7 +13,8 @@ import * as media from './media.mjs';
 import * as config from './config.mjs';
 import { guideFiles, isManagedGuide, GUIDE_FILES } from './agents/guide.mjs';
 import * as folders from './folders.mjs';
-import { cloudOf, localDir } from './localstate.mjs';
+import { cloudOf, localDir, windowsDriveRoots } from './localstate.mjs';
+import { isInside } from './platform.mjs';
 
 export class HttpError extends Error { constructor(status, message, body) { super(message); this.status = status; this.body = body; } }
 
@@ -22,16 +23,19 @@ export class HttpError extends Error { constructor(status, message, body) { supe
 export function allowedRoots() {
   const extra = (process.env.IA_ALLOW_ROOTS || '').split(path.delimiter).filter(Boolean);
   if (process.platform === 'darwin' && fs.existsSync('/Volumes/GoogleDrive')) extra.push('/Volumes/GoogleDrive');
-  return [os.homedir(), os.tmpdir(), ...extra].map(p => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } });
+  extra.push(...windowsDriveRoots()); // Google Drive's own drive letter on Windows
+  return [os.homedir(), os.tmpdir(), ...extra].map(p => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } });
 }
 export function checkDir(dir) {
   if (typeof dir !== 'string' || !dir.trim()) throw new HttpError(400, 'Choose a folder');
-  const abs = path.resolve(dir.replace(/^~(?=$|\/)/, os.homedir()));
-  let probe = abs; while (!fs.existsSync(probe)) probe = path.dirname(probe);
-  const real = path.join(fs.realpathSync(probe), path.relative(probe, abs));
-  if (!allowedRoots().some(r => real === r || real.startsWith(r + path.sep))) throw new HttpError(403, 'Projects must live inside your home folder');
+  const abs = path.resolve(dir.trim().replace(/^["']|["']$/g, '').replace(/^~(?=$|[\\/])/, os.homedir()));
+  let probe = abs; while (!fs.existsSync(probe)) { const up = path.dirname(probe); if (up === probe) break; probe = up; }
+  let real; try { real = path.join(fs.realpathSync.native(probe), path.relative(probe, abs)); } catch { throw new HttpError(400, `Cannot open ${abs}`); }
+  if (!allowedRoots().some(r => isInside(real, r))) throw new HttpError(403, 'Projects must live inside your home folder');
   return real;
 }
+/** A course name as a folder name that works on every system (Windows reserves CON, NUL, COM1, …). */
+export function folderName(name) { const s = slugify(name) || 'course'; return /^(con|prn|aux|nul|com\d|lpt\d)$/i.test(s) ? `${s}-course` : s; }
 export const isProjectDir = dir => fs.existsSync(path.join(dir, META));
 
 const COMMIT_KIND = e => e.type === 'slide_revision' && /claude|codex/i.test(e.agent || '') ? 'agent' : e.type === 'import' ? 'import' : ['stage_done', 'auto_repair'].includes(e.type) ? 'gen' : 'edit';
@@ -43,7 +47,7 @@ export class Projects {
 
   /** The state of an opened project folder (read once, then cached). */
   open(dir, { watch = this.watch } = {}) {
-    dir = fs.realpathSync(dir);
+    dir = fs.realpathSync.native(dir);
     for (const s of this.byId.values()) if (s.dir === dir) return s;
     const meta = JSON.parse(readText(dir, META) || 'null'); if (!meta?.project?.id) throw new HttpError(400, `${dir} is not an Instructional Agents project`);
     const s = { id: meta.project.id, dir, head: null, written: new Map(), removed: new Set(), uncommitted: new Set(), lock: Promise.resolve(), auditLen: 0, pending: new Set(), timer: null, watcher: null };
@@ -217,7 +221,7 @@ export class Projects {
 
   // ---------------------------------------------------------------- new folders
   async create(project, dir, { message } = {}) {
-    dir = dir ? checkDir(dir) : uniqueDir(path.join(checkDir(config.projectsRoot()), slugify(project.name) || 'course'));
+    dir = dir ? checkDir(dir) : uniqueDir(path.join(checkDir(config.projectsRoot()), folderName(project.name)));
     if (isProjectDir(dir)) throw new HttpError(409, `${dir} already holds a course`);
     this.drop(dir); fs.mkdirSync(dir, { recursive: true });
     await vcs.init(dir);
@@ -262,7 +266,7 @@ export class Projects {
     if (!p?.course) throw new HttpError(400, 'Not a Studio project file');
     p.id = 'prj_' + uid(); p.updatedAt = new Date().toISOString();
     const decks = p.decks || {}; delete p.decks;
-    const target = dir ? checkDir(dir) : uniqueDir(path.join(checkDir(config.projectsRoot()), slugify(p.name) || 'course'));
+    const target = dir ? checkDir(dir) : uniqueDir(path.join(checkDir(config.projectsRoot()), folderName(p.name)));
     if (isProjectDir(target)) throw new HttpError(409, `${target} already holds a course`);
     fs.mkdirSync(target, { recursive: true });
     writeFile(target, `.studio/backup/${path.basename(source).replace(/[^\w.-]+/g, '_')}`, json);
@@ -283,7 +287,7 @@ export class Projects {
   }
 
   /** Forget the cached state of a folder that no longer holds that course (deleted, about to hold a new one). */
-  drop(dir) { let real = dir; try { real = fs.realpathSync(dir); } catch { /* gone */ } for (const [id, s] of this.byId) if (s.dir === real || s.dir === dir) { s.watcher?.close(); this.byId.delete(id); } }
+  drop(dir) { let real = dir; try { real = fs.realpathSync.native(dir); } catch { /* gone */ } for (const [id, s] of this.byId) if (s.dir === real || s.dir === dir) { s.watcher?.close(); this.byId.delete(id); } }
   forget(id) { const s = this.byId.get(id); s?.watcher?.close(); this.byId.delete(id); config.forget(id); }
   async close() { for (const s of this.byId.values()) await s.watcher?.close(); }
 

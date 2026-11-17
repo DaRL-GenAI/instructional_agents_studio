@@ -48,17 +48,22 @@ test('the TeX log parser: classic "! … l.N" errors with the file they happened
   assert.deepEqual(tex.parseTexLog('Output written on main.pdf (1 page).'), []);
 });
 
-// a fake engine with tectonic's arguments: "\error" in the source fails with a log, "\slow" hangs, else a PDF
+// a fake engine with tectonic's arguments: "\error" in the source fails with a log, "\slow" hangs, else a PDF. A Node
+// script behind a launcher: a sh script here, an npm-style .cmd shim on Windows (as `npm i -g` would make)
 const fakeDir = tmpdir('ia-fake-tex-');
-const FAKE = path.join(fakeDir, 'tectonic');
-fs.writeFileSync(FAKE, `#!/bin/sh
-out=""; while [ $# -gt 1 ]; do [ "$1" = "--outdir" ] && out="$2"; shift; done
-f="$1"; n=$(basename "$f" .tex)
-if grep -q 'slow' "$f"; then sleep 5; fi
-if grep -q 'error' "$f"; then line=$(grep -n 'error' "$f" | head -1 | cut -d: -f1); printf '(./%s\\n! Undefined control sequence.\\nl.%s \\\\error\\n' "$f" "$line" > "$out/$n.log"; echo "error: $f:$line: Undefined control sequence" >&2; exit 1; fi
-[ -f "$(dirname "$f")/fig.txt" ] || [ -f fig.txt ] || { echo "no fig" >&2; exit 1; }
-pwd > "$out/$n.log"; printf '%%PDF-1.4 fake' > "$out/$n.pdf"
-`, { mode: 0o755 });
+fs.writeFileSync(path.join(fakeDir, 'tectonic.js'), `const fs = require('fs'), path = require('path');
+const a = process.argv.slice(2); let out = ''; for (let i = 0; i < a.length - 1; i++) if (a[i] === '--outdir') out = a[i + 1];
+const f = a[a.length - 1], n = path.basename(f, '.tex'), src = fs.readFileSync(f, 'utf8');
+const finish = () => {
+  if (src.includes('error')) { const line = src.split('\\n').findIndex(l => l.includes('error')) + 1; fs.writeFileSync(path.join(out, n + '.log'), '(./' + f + '\\n! Undefined control sequence.\\nl.' + line + ' \\\\error\\n'); console.error('error: ' + f + ':' + line + ': Undefined control sequence'); process.exit(1); }
+  if (!fs.existsSync(path.join(path.dirname(f), 'fig.txt')) && !fs.existsSync('fig.txt')) { console.error('no fig'); process.exit(1); }
+  fs.writeFileSync(path.join(out, n + '.log'), process.cwd().split(path.sep).join('/') + '\\n'); fs.writeFileSync(path.join(out, n + '.pdf'), '%PDF-1.4 fake');
+};
+if (src.includes('slow')) setTimeout(finish, 5000); else finish();
+`);
+const FAKE = process.platform === 'win32' ? path.join(fakeDir, 'tectonic.cmd') : path.join(fakeDir, 'tectonic');
+if (process.platform === 'win32') fs.writeFileSync(FAKE, '@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "node"  "%dp0%\\tectonic.js" %*\r\n');
+else fs.writeFileSync(FAKE, `#!/bin/sh\nexec "${process.execPath}" "${path.join(fakeDir, 'tectonic.js')}" "$@"\n`, { mode: 0o755 });
 
 const root = tmpdir();
 const app = await startServer({ dir: path.join(root, 'course'), port: 0, editorDir: null, watch: false, quiet: true, texEngine: { engine: 'tectonic', bin: FAKE } });
@@ -92,7 +97,7 @@ test('compile: a hung engine is stopped at the time limit; no engine → missing
   const t0 = Date.now(); const r = await tex.compile(dir, 'slow/s.tex', { tex: { engine: 'tectonic', bin: FAKE }, timeout: 400 });
   assert.ok(Date.now() - t0 < 3000); assert.equal(r.ok, false); assert.match(r.errors[0].message, /Stopped after/);
   assert.equal((await tex.compile(dir, 'slow/s.tex', { tex: null })).missing, true);
-  assert.equal(tex.findTex({ IA_TECTONIC: FAKE }).bin, fs.realpathSync(FAKE));
+  assert.equal(tex.findTex({ IA_TECTONIC: FAKE }).bin, fs.realpathSync.native(FAKE));
 });
 
 const real = tex.findTex();

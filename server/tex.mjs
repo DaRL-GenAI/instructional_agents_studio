@@ -7,16 +7,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
+import * as platform from './platform.mjs';
 import { which } from './agents/cli.mjs';
 import { resolveInside } from './workspace.mjs';
 
-const exe = f => { try { fs.accessSync(f, fs.constants.X_OK); return fs.realpathSync(f); } catch { return null; } };
+const exe = f => { try { fs.accessSync(f, fs.constants.X_OK); return fs.realpathSync.native(f); } catch { return null; } };
 
 /** The LaTeX engine on this computer: { engine: 'tectonic' | 'latexmk', bin } or null. */
 export function findTex(env = process.env) {
   if (env.IA_TECTONIC) { const b = exe(env.IA_TECTONIC); if (b) return { engine: 'tectonic', bin: b }; }
-  const t = which('tectonic') || exe(path.join(os.homedir(), 'miniconda3/envs/tex/bin/tectonic')) || exe(path.join(os.homedir(), '.local/bin/tectonic'));
+  const conda = ['miniconda3', 'anaconda3', 'miniforge3'].flatMap(c => ['bin', 'Library/bin', 'Scripts'].map(b => path.join(os.homedir(), c, 'envs', 'tex', b)));
+  const t = which('tectonic') || platform.findOnPath('tectonic', [...conda, path.join(os.homedir(), '.local', 'bin')].join(platform.isWin ? ';' : path.delimiter));
   if (t) return { engine: 'tectonic', bin: t };
   const l = which('latexmk'); if (l) return { engine: 'latexmk', bin: l };
   return null;
@@ -62,10 +63,10 @@ function copyDir(from, to, budget = { bytes: 200 * 1024 * 1024 }) {
 
 function run(bin, args, { cwd, timeout }) {
   return new Promise(resolve => {
-    const p = spawn(bin, args, { cwd, env: { ...process.env, TEXMFOUTPUT: cwd, openout_any: 'p', shell_escape: 'f' }, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
+    const p = platform.spawn(bin, args, { cwd, env: { ...process.env, TEXMFOUTPUT: cwd, openout_any: 'p', shell_escape: 'f' }, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = ''; const take = d => { out += d; if (out.length > 400000) out = out.slice(-300000); };
     p.stdout.on('data', take); p.stderr.on('data', take);
-    const kill = () => { try { process.kill(-p.pid, 'SIGKILL'); } catch { try { p.kill('SIGKILL'); } catch { /* gone */ } } };
+    const kill = () => platform.stop(p, 'SIGKILL');
     const t = setTimeout(() => { kill(); resolve({ code: null, out, timedOut: true }); }, timeout);
     p.on('error', e => { clearTimeout(t); resolve({ code: null, out: `${out}\n${e.message}`, error: e.message }); });
     p.on('close', code => { clearTimeout(t); resolve({ code, out }); });

@@ -95,7 +95,7 @@ bundle or a single standalone HTML file — both work offline. The project ZIP c
 
 The same Studio runs as a local app in which every course is a folder on your computer and a git repository.
 
-**Install.** Node.js 20.19 or newer, on macOS or Linux. No global install is needed:
+**Install.** Node.js 20.19 or newer, on macOS, Linux or Windows (PowerShell or Command Prompt). No global install is needed:
 
 ```bash
 npx instructional-agents [folder] [--port 8790] [--no-open]   # start; opens the browser
@@ -180,15 +180,25 @@ build/                          narration, video, images (not committed)
 Every save is one commit (`gen:`, `edit:`, `import:`, `agent:`). Older deck versions are kept in `.studio/decks/`.
 The server listens on 127.0.0.1 only; the address it opens carries a one-time token that becomes an HttpOnly
 cookie, and requests from any other origin (including other ports on localhost) are refused. Settings live in
-`~/.config/instructional-agents/`. The slides editor is served locally from `IA_EDITOR_DIR` or
-`~/.cache/instructional-agents/editor/<version>/`; without one the app uses https://edit.chaxus.com.
-`node scripts/trim-editor.mjs <editor dist> [out]` makes the trimmed editor package from an ONLYOFFICE web build.
+`~/.config/instructional-agents/` (Windows: `%APPDATA%\instructional-agents\`).
+
+**The editor is installed with the app.** The slides and Word editor (an ONLYOFFICE web build) comes as the npm
+package `instructional-agents-editor` (AGPL-3.0, a separate package from this MIT one), which `npx` / `npm install`
+put next to the app; it is served from this computer at `/editor/`, works offline and needs no download at run time.
+`IA_EDITOR_DIR` points at another build. Only if the package is missing does the app fall back to the hosted editor
+https://edit.chaxus.com (`doctor` reports which one is used). To make the package: `node scripts/trim-editor.mjs
+<editor dist> <out>` trims an ONLYOFFICE web build, `node scripts/editor-npm.mjs <out> --version X.Y.Z --source <fork
+URL> --commit <sha>` wraps it (publish it before the app version that depends on it).
+
+**Windows.** Claude Code and Codex are found as installed by their installers or `npm install -g` (`claude.cmd`,
+`codex.cmd`, `claude.exe`); Google Drive for desktop is found on its own drive letter (`G:\My Drive`), OneDrive and
+iCloud for Windows in your user folder. Courses must be inside your user folder (or on Google Drive's drive).
 
 Tests: `npm test` (Node's test runner); `npm run pack:check` checks what `npm pack` would publish (the app and
 its server, no editor build, tests or scripts); `node scripts/ci-smoke.mjs` starts the server and creates a course in
-Chrome (the CI smoke test, run on Ubuntu and macOS with Node 20 and 22). Tagging `vX.Y.Z` publishes to npm
+Chrome (the CI smoke test, run on Ubuntu, macOS and Windows with Node 20 and 22). Tagging `vX.Y.Z` publishes to npm
 (`.github/workflows/release.yml`, needs the `NPM_TOKEN` secret). See NOTICE for the editor's license (AGPL-3.0,
-downloaded separately, not part of this package).
+its own npm package, not part of this one).
 
 ## Development
 

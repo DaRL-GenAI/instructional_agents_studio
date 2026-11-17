@@ -27,10 +27,6 @@
   "engines": {
     "node": ">=20.19"
   },
-  "os": [
-    "darwin",
-    "linux"
-  ],
   "files": [
     "bin",
     "server",
@@ -51,6 +47,9 @@
     "chokidar": "^5.0.0",
     "isomorphic-git": "^1.44.10",
     "ws": "^8.22.1"
+  },
+  "optionalDependencies": {
+    "instructional-agents-editor": "0.1.0"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.11.1",

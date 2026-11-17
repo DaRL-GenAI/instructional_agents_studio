@@ -80,10 +80,10 @@ test('the job copy leaves out git, build and scratch; sources/ is read-only; cha
 });
 
 test('panel command lines: resume for Claude Code and Codex; events carry the CLI session', () => {
-  const c = panelCommand('claude', 'claude', 'p', '/j', 'sess-1');
+  const c = panelCommand('claude', 'claude', '/j', 'sess-1');
   assert.deepEqual(c.slice(-2), ['--resume', 'sess-1']); assert.equal(c[c.indexOf('--permission-mode') + 1], 'acceptEdits');
-  assert.deepEqual(panelCommand('codex', 'codex', 'p', '/j'), ['codex', 'exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-C', '/j', 'p']);
-  assert.deepEqual(panelCommand('codex', 'codex', 'p', '/j', 't-1'), ['codex', 'exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="workspace-write"', 't-1', 'p']);
+  assert.deepEqual(panelCommand('codex', 'codex', '/j'), ['codex', 'exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-C', '/j', '-']);
+  assert.deepEqual(panelCommand('codex', 'codex', '/j', 't-1'), ['codex', 'exec', 'resume', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="workspace-write"', 't-1', '-']);
   assert.equal(eventOf('claude', JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' })).session, 's1');
   assert.deepEqual(eventOf('claude', JSON.stringify({ type: 'result', result: 'Done.', is_error: false, session_id: 's1' })), { session: 's1', final: true, text: 'Done.' });
   assert.equal(eventOf('codex', JSON.stringify({ type: 'thread.started', thread_id: 't1' })).session, 't1');
@@ -93,7 +93,7 @@ test('panel command lines: resume for Claude Code and Codex; events carry the CL
 });
 
 // a stand-in for Claude Code: edits files in its cwd, reports a session id, and shows the argv it got
-const FAKE = `const fs = require('fs'); const args = process.argv.slice(2);
+const FAKE = `const fs = require('fs'); const args = process.argv.slice(2); const prompt = fs.readFileSync(0, 'utf8'); if (!/Add a question|again/.test(prompt)) process.exit(3);
 fs.writeFileSync('chapters/01/homework.md', fs.readFileSync('chapters/01/homework.md', 'utf8') + '2. added by the agent\\n');
 try { fs.writeFileSync('sources/syllabus.pdf', 'x'); } catch (e) { /* read-only */ }
 const out = o => console.log(JSON.stringify(o));

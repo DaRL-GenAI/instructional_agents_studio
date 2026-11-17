@@ -2,6 +2,7 @@
 // and by the watcher), the agent runs with the project folder as its working directory, and the edited copy streams
 // back as NDJSON events: { type: progress | error | done }.
 import { spawn } from 'node:child_process';
+import * as platform from '../platform.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -29,9 +30,11 @@ export async function revise(root, body, send, { spawnFn = spawn } = {}) {
   fs.mkdirSync(jobDir, { recursive: true, mode: 0o700 });
   const input = Buffer.from(body.pptx, 'base64'); fs.writeFileSync(path.join(jobDir, 'deck.pptx'), input);
   const bin = available()[body.agent];
-  const cmd = agentCommand(body.agent, bin, revisePrompt({ slides: body.slides, instruction: body.instruction.slice(0, 4000), chapter: String(body.chapter || '').slice(0, 200) }, rel), root);
+  const cmd = agentCommand(body.agent, bin, root);
+  const prompt = revisePrompt({ slides: body.slides, instruction: body.instruction.slice(0, 4000), chapter: String(body.chapter || '').slice(0, 200) }, rel);
   // own process group, so cancel stops the agent and everything it started
-  const child = spawnFn(cmd[0], cmd.slice(1), { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: agentEnv() });
+  const child = platform.spawn(cmd[0], cmd.slice(1), { spawnFn, cwd: root, stdio: ['pipe', 'pipe', 'pipe'], env: agentEnv() });
+  child.stdin?.on('error', () => {}); child.stdin?.end(prompt);
   current = { id, child, cancelled: false };
   const timer = setTimeout(() => cancel('timed out after 15 minutes'), JOB_TIMEOUT_MS);
   send({ type: 'progress', text: `${body.agent === 'claude' ? 'Claude Code' : 'Codex'} started` });
@@ -65,6 +68,6 @@ export async function revise(root, body, send, { spawnFn = spawn } = {}) {
 export function cancel(reason = true) {
   if (!current) return false;
   current.cancelled = reason;
-  try { process.kill(-current.child.pid, 'SIGTERM'); } catch { try { current.child.kill('SIGTERM'); } catch { /* gone */ } }
+  platform.stop(current.child);
   return true;
 }

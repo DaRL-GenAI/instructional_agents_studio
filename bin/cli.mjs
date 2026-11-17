@@ -40,7 +40,7 @@ function openBrowser(url) {
 
 async function doctor() {
   const { which, version } = await import('../server/agents/cli.mjs');
-  const { findEditor, EDITOR } = await import('../server/editor-pkg.mjs');
+  const { findEditor } = await import('../server/editor-pkg.mjs');
   const { configDir, projectsRoot } = await import('../server/config.mjs');
   const rows = [];
   const row = (name, ok, detail, need) => rows.push([ok ? 'ok ' : need ? 'MISSING' : '-- ', name, detail]);
@@ -49,7 +49,7 @@ async function doctor() {
   const { findTex } = await import('../server/tex.mjs'); const tex = findTex();
   row('LaTeX', !!tex, tex ? `${tex.engine} (${tex.bin})` : 'tectonic or latexmk not found: needed to compile .tex files (or set IA_TECTONIC)');
   const ed = findEditor();
-  row('Editor', !!ed, ed ? `${ed.version} (${ed.dir})` : `not installed: slides open in https://edit.chaxus.com${EDITOR.url ? '' : ' (set IA_EDITOR_DIR to a local build)'}`);
+  row('Editor', !!ed, ed ? `${ed.version}, ${ed.source} (${ed.dir})` : 'not installed (the optional package instructional-agents-editor is missing: reinstall the app, or set IA_EDITOR_DIR to an editor build); slides open in the hosted editor https://edit.chaxus.com meanwhile (agent edits in place need the local one)', true);
   row('git', true, 'built in (isomorphic-git)');
   console.log(rows.map(r => `  ${r[0].padEnd(7)} ${r[1].padEnd(12)} ${r[2]}`).join('\n'));
   console.log(`\n  config: ${configDir()}\n  new projects: ${projectsRoot()}`);

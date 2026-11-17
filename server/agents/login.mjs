@@ -2,6 +2,7 @@
 // cannot ask for a login itself. Here the CLI's own login command runs: it opens the browser and waits for the
 // callback on localhost. One at a time; events: { type: 'agent-login', agent, status: started | ok | failed | stopped, error? }.
 import { spawn } from 'node:child_process';
+import * as platform from '../platform.mjs';
 import os from 'node:os';
 import { HttpError } from '../projects.mjs';
 import { available, agentEnv } from './cli.mjs';
@@ -17,7 +18,8 @@ export function start(agent, emit, { spawnFn = spawn, bin, timeoutMs = TIMEOUT_M
   if (!Object.hasOwn(LOGIN_ARGS, agent)) throw new HttpError(400, 'Unknown agent');
   if (current) { if (current.agent === agent) return state(); throw new HttpError(409, 'Another sign-in is in progress'); }
   const exe = bin || available()[agent]; if (!exe) throw new HttpError(400, `${agent} is not installed on this machine`);
-  const child = spawnFn(exe, LOGIN_ARGS[agent], { cwd: os.homedir(), detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: agentEnv() });
+  let child; try { child = platform.spawn(exe, LOGIN_ARGS[agent], { spawnFn, cwd: os.homedir(), stdio: ['ignore', 'pipe', 'pipe'], env: agentEnv() }); }
+  catch (e) { throw new HttpError(500, `Could not start the sign-in: ${e.message}`); }
   const me = current = { agent, child, stopped: null };
   const timer = setTimeout(() => cancel('Sign-in timed out'), timeoutMs);
   let output = '', finished = false;
@@ -39,6 +41,6 @@ export function start(agent, emit, { spawnFn = spawn, bin, timeoutMs = TIMEOUT_M
 export function cancel(reason = true) {
   if (!current) return false;
   current.stopped = reason;
-  try { process.kill(-current.child.pid, 'SIGTERM'); } catch { try { current.child.kill('SIGTERM'); } catch { /* gone */ } }
+  platform.stop(current.child);
   return true;
 }

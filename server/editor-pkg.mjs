@@ -1,5 +1,6 @@
 // editor-pkg.mjs — the presentation/document editor (an ONLYOFFICE web build) served at /editor/. Found in
-// IA_EDITOR_DIR, or in the cache (~/.cache/instructional-agents/editor/<version>/) after a verified download.
+// IA_EDITOR_DIR, in the npm package instructional-agents-editor (installed with the app as an optional dependency),
+// or in the cache (~/.cache/instructional-agents/editor/<version>/) after `instructional-agents editor install`.
 // Without one the app falls back to the hosted editor (https://edit.chaxus.com).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,6 +8,7 @@ import zlib from 'node:zlib';
 import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { Readable, Writable } from 'node:stream';
+import { createRequire } from 'node:module';
 import { cacheDir } from './config.mjs';
 
 // The release asset: set when an editor package is published (tar.gz or tar.br of the trimmed build, see
@@ -19,10 +21,21 @@ const looksLikeEditor = d => !!d && fs.existsSync(path.join(d, 'editor.html')) &
 export function findEditor() {
   const env = process.env.IA_EDITOR_DIR;
   if (env) return looksLikeEditor(env) ? { dir: path.resolve(env), version: 'local', source: 'IA_EDITOR_DIR' } : null;
+  const npm = npmEditor(); if (npm) return npm;
   const root = path.join(cacheDir(), 'editor');
   const dirs = (() => { try { return fs.readdirSync(root).sort().reverse(); } catch { return []; } })();
   for (const v of [EDITOR.version, ...dirs]) { const d = path.join(root, v); if (fs.existsSync(path.join(d, MARK)) && looksLikeEditor(d)) return { dir: d, version: v, source: 'cache' }; }
   return null;
+}
+
+/** The editor npm package next to the app (node_modules), or null. */
+export function npmEditor() {
+  if (process.env.IA_NO_EDITOR_PKG) return null; // tests
+  try {
+    const pj = createRequire(import.meta.url).resolve('instructional-agents-editor/package.json');
+    const dir = path.join(path.dirname(pj), 'dist');
+    return looksLikeEditor(dir) ? { dir, version: JSON.parse(fs.readFileSync(pj, 'utf8')).version, source: 'npm' } : null;
+  } catch { return null; }
 }
 
 /** Download, verify (sha-256 of the archive) and unpack the editor into the cache. */

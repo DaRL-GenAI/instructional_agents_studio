@@ -8,7 +8,7 @@ import { folderBackend } from '../fs/backend-folder.js';
 export function pickFolder({ title = 'Choose a folder', start = '', action = 'Choose', rowAction = false } = {}) {
   return new Promise(resolve => {
     const dlg = el('dialog', { class: 'dlg folder-dlg', 'aria-label': title });
-    const path = input({ value: start, spellcheck: 'false', 'aria-label': 'Folder path', placeholder: '~/path/to/folder' });
+    const path = input({ value: start, spellcheck: 'false', 'aria-label': 'Folder path', placeholder: navigator.platform.startsWith('Win') ? 'C:\\Users\\you\\Documents\\course' : '~/path/to/folder' });
     const list = el('ul', { class: 'folder-list', 'aria-label': 'Folders' });
     const places = el('div', { class: 'folder-places', role: 'group', 'aria-label': 'Synced folders' });
     const msg = el('div', {});
@@ -20,9 +20,9 @@ export function pickFolder({ title = 'Choose a folder', start = '', action = 'Ch
       try { got = await folderBackend.browse(p); } catch (e) { if (n === seq) msg.replaceChildren(notice('error', e.message)); return; }
       if (n !== seq) return; cur = got; // a later request (typed path) wins
       path.value = cur.path;
-      places.replaceChildren(...(cur.places || []).map(pl => el('button', { type: 'button', class: 'folder-place', 'aria-pressed': String(cur.path === pl.path || cur.path.startsWith(pl.path + '/')), onClick: () => show(pl.path) }, icon('cloud', 'sm'), pl.label)));
+      places.replaceChildren(...(cur.places || []).map(pl => el('button', { type: 'button', class: 'folder-place', 'aria-pressed': String(cur.path === pl.path || cur.path.startsWith(pl.path + (cur.sep || '/'))), onClick: () => show(pl.path) }, icon('cloud', 'sm'), pl.label)));
       const row = d => {
-        const full = `${cur.path}/${d.name}`;
+        const sep = cur.sep || '/'; const full = cur.path.endsWith(sep) ? cur.path + d.name : `${cur.path}${sep}${d.name}`;
         return el('li', { class: 'folder-row' },
           el('button', { type: 'button', class: 'folder-item', onClick: () => show(full), onDblclick: () => (rowAction || d.isProject) && finish(full) }, icon(d.isProject ? 'presentation' : 'folder', 'sm'), d.name, d.isProject ? el('span', { class: 'meta' }, ' course') : null),
           rowAction ? button({ label: action, size: 'sm', variant: 'ghost', attrs: { 'aria-label': `${action} ${d.name}` }, onClick: () => finish(full) }) : null);

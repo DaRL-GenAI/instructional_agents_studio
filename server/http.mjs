@@ -22,6 +22,7 @@ import * as files from './files.mjs';
 import * as jobs from './agents/jobs.mjs';
 import * as sessions from './agents/sessions.mjs';
 import * as tex from './tex.mjs';
+import { isInside } from './platform.mjs';
 
 export const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PKG = JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8'));
@@ -237,7 +238,7 @@ export async function startServer({ dir = null, port = 8790, token = newToken(),
     let dirPath = start; while (!fs.existsSync(dirPath)) dirPath = path.dirname(dirPath);
     const dirs = fs.readdirSync(dirPath, { withFileTypes: true }).filter(d => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules').map(d => ({ name: d.name, isProject: isProjectDir(path.join(dirPath, d.name)) })).sort((a, b) => a.name.localeCompare(b.name));
     const up = path.dirname(dirPath);
-    return { path: dirPath, isProject: isProjectDir(dirPath), parent: up !== dirPath && roots.some(r => up === r || up.startsWith(r + path.sep)) ? up : null, dirs, places: localstate.places(), cloud: localstate.cloudOf(dirPath) };
+    return { path: dirPath, isProject: isProjectDir(dirPath), parent: up !== dirPath && roots.some(r => isInside(up, r)) ? up : null, sep: path.sep, dirs, places: localstate.places(), cloud: localstate.cloudOf(dirPath) };
   }
 
   async function revise(req, res) {

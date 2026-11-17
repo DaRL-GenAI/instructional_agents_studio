@@ -14,3 +14,4 @@ import './m5.test.mjs';
 import './openfolder.test.mjs';
 import './agentsignin.test.mjs';
 import './cloudfolders.test.mjs';
+import './platform.test.mjs';

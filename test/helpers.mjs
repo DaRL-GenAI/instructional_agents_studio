@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { newProject, emptyStage } from '../js/model.js';
 
-export function tmpdir(prefix = 'ia-test-') { return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix))); }
+export function tmpdir(prefix = 'ia-test-') { return fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix))); }
 export function isolateConfig() { process.env.IA_CONFIG_DIR = tmpdir('ia-config-'); process.env.IA_PROJECTS_ROOT = tmpdir('ia-root-'); }
 
 const done = (output, extra = {}) => ({ ...emptyStage(), status: 'done', output, version: 1, ranAt: '2026-11-01T10:00:00.000Z', outputHash: 'abcd1234', transcript: [{ agent: 'A', role: 'assistant', content: 'hi', usage: { total_tokens: 3 } }], prompt: { user: 'u', agents: [{ name: 'A', system: 's' }] }, history: [{ version: 0, output: 'old', at: null, reason: 'model output' }], ...extra });

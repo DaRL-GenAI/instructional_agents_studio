@@ -16,7 +16,7 @@ const TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.json', '.jsonl', '.yaml'
 
 /** Every file and folder under the project (no .git, no node_modules): [{ path, dir, size, mtime }], sorted. */
 export function tree(root) {
-  const out = []; const real = fs.realpathSync(root);
+  const out = []; const real = fs.realpathSync.native(root);
   const walk = rel => {
     let ents; try { ents = fs.readdirSync(rel ? path.join(real, rel) : real, { withFileTypes: true }); } catch { return; }
     for (const d of ents) {
