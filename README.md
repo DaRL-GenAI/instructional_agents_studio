@@ -1,12 +1,61 @@
 # Instructional Agents Studio
 
-**Live:** <https://darl-genai.github.io/instructional_agents_studio/>
+Turn a course idea, or the slides you already have, into a complete course: syllabus, learning objectives, slides,
+lecture scripts, homework, labs, quizzes and narrated lecture videos. Edit everything yourself, or ask Claude Code or
+Codex to do it for you, and undo any change.
 
-A browser-only edition of [Instructional Agents](https://github.com/DaRL-GenAI/instructional_agents)
-(EACL 2026). Bring your own OpenAI-compatible API key and generate a complete course without installing
-anything. The key is stored in your browser and sent only to the API endpoint you configure.
+**[📖 User guide (step by step, with screenshots)](https://github.com/DaRL-GenAI/instructional_agents_studio/blob/main/docs/user-guide.md)** ·
+[Project homepage](https://darl-genai.github.io/instructional_agents_homepage/) ·
+[Instructional Agents (Python pipeline)](https://github.com/DaRL-GenAI/instructional_agents) ·
+[Try it in the browser](https://darl-genai.github.io/instructional_agents_studio/) ·
+[npm](https://www.npmjs.com/package/instructional-agents)
 
-## How it is organised
+## Get started
+
+1. Install [Node.js](https://nodejs.org) (the LTS version, 20.19 or newer). Windows, macOS and Linux all work.
+2. Open a terminal (Windows: *Command Prompt*; Mac: *Terminal*) and type:
+
+   ```bash
+   npx instructional-agents
+   ```
+
+3. Your browser opens the Studio. Keep the terminal window open while you use it; type the same line next time.
+
+New to it? **Follow the [user guide](https://github.com/DaRL-GenAI/instructional_agents_studio/blob/main/docs/user-guide.md)**. It goes from installation to importing your existing slides,
+rebuilding the course outline from them, editing slides and Word files with Claude Code or Codex, and undoing changes.
+
+## What you can do
+
+| | |
+|---|---|
+| **Start from nothing** | Describe a course; the agents draft the course design (ADDIE), the chapter list, slides, scripts, assessments and videos, one reviewable step at a time. |
+| **Start from what you have** | Open a folder of existing slides, Word files and PDFs. The Studio sorts them, makes a chapter per deck and can rebuild the syllabus and objectives from the slides. Your original files are not changed. |
+| **Edit anything** | PowerPoint and Word files open in a built-in editor (works offline); Markdown, LaTeX and JSON in a code editor; PDFs in a viewer. |
+| **Work with Claude Code or Codex** | Both run in their own terminal inside the Studio, in the course folder, exactly as they do on their own, with large buttons for their questions. |
+| **Never lose work** | Every change, yours or an agent's, is saved as a version. See each file's history and restore any version. |
+| **Easy to read** | Text size setting (default large), large buttons and plain wording, designed with older users in mind. |
+
+Each course is a plain folder on your computer (and a git repository), so you can also open its files in PowerPoint or
+Word. The Studio uploads nothing: prompts go only to the AI service you configure, and to Claude Code or Codex
+when you use them.
+
+## Related
+
+- **[Instructional Agents](https://github.com/DaRL-GenAI/instructional_agents)**: the multi-agent instructional design pipeline (Python) this Studio is built on, with the paper (EACL 2026, [arXiv 2508.19611](https://arxiv.org/abs/2508.19611)).
+- **[Project homepage](https://darl-genai.github.io/instructional_agents_homepage/)**: overview, demo videos and examples.
+- **[EduCAST](https://github.com/DaRL-GenAI/EduCAST)**: the animated lesson videos the Studio's video module is ported from.
+
+## Technical report
+
+How the Studio works, for developers and for anyone who wants the details: the browser edition, the data model and
+audit trail, slide templates and editing, video, the local app (folders, git, agents, the editor) and development.
+
+The **browser edition** (<https://darl-genai.github.io/instructional_agents_studio/>) runs the same pipeline without
+installing anything: bring your own OpenAI-compatible API key, which is stored in your browser and sent only to the
+API endpoint you configure. The **local app** (`npx instructional-agents`) adds course folders, the built-in editor,
+Claude Code / Codex and version history.
+
+### How it is organised
 
 Every **project** is one course. Its modules, in the order you normally work:
 
@@ -27,7 +76,7 @@ Each foundation stage runs the same three-agent deliberation as the Python pipel
 (Teaching Faculty → Instructional Designer / Committee → Summarizer; prompts mirrored from
 `src/ADDIE.py`), or a single call in "quick" mode.
 
-## Transparent, editable, auditable
+### Transparent, editable, auditable
 
 - **Prompt tab**: the exact system and user prompts, editable before every run; defaults are rebuilt from the current inputs.
 - **Transcript tab**: every agent response streamed and kept, with model, tokens and latency.
@@ -36,14 +85,14 @@ Each foundation stage runs the same three-agent deliberation as the Python pipel
 - **Provenance tab**: hashes of every input a stage consumed; stages whose inputs changed are flagged as stale.
 - **Audit trail**: exportable as JSON/Markdown and bundled into the project ZIP.
 
-## Storage
+### Storage
 
 Projects, narration audio and recorded videos are saved in the browser's IndexedDB (with an in-memory
 fallback). Coming back in the same browser restores everything; use *Account → Projects* to export a
 project as JSON and import it elsewhere. *Account → Data & storage* can request persistent storage so the
 browser does not evict the data.
 
-## Slides on your own PowerPoint template
+### Slides on your own PowerPoint template
 
 Upload a `.pptx`/`.potx` under **Slides → Deck template**. Studio reads it in the browser (nothing is uploaded):
 slide size, every slide layout with its placeholders, the master background and text styles, theme fonts and
@@ -53,7 +102,7 @@ downloaded `.pptx` is your template file with the new slides written as real pla
 exactly like the original. Slides that use Studio-only visuals (stat callouts, process flows, grids, charts, code)
 keep the template background and title placeholder and draw their content into the layout's content area.
 
-## Editing and revising slides
+### Editing and revising slides
 
 A chapter's deck is a `.pptx` file. **Edit slides** opens it in an embedded presentation editor (ONLYOFFICE,
 running in the browser; the local app serves its own copy at `/editor/`, the browser edition uses the address under **Account → Slides editor**); every save is a new version in
@@ -69,7 +118,7 @@ History. **Import .pptx** makes an existing PowerPoint the chapter's deck.
   file, see below). It edits a copy of the saved deck under `.studio/jobs/`; Studio previews the result, flags slides changed outside your selection, and keeps it only when
   you click Keep.
 
-## Video
+### Video
 
 Two options per chapter, both produced entirely in the browser:
 
@@ -91,12 +140,9 @@ speech API; captions are WebVTT. The **Lesson player** tab wraps the video with 
 pauses at each check until it is solved), captions, chapter rail, resume and an event log, and exports it as a ZIP
 bundle or a single standalone HTML file — both work offline. The project ZIP contains all of it.
 
-## Local app
+### Local app
 
 The same Studio runs as a local app in which every course is a folder on your computer and a git repository.
-
-**New here?** The [step-by-step user guide](https://github.com/DaRL-GenAI/instructional_agents_studio/blob/main/docs/user-guide.md) walks through installing, importing existing slides,
-rebuilding the course outline, editing with Claude Code or Codex, and undoing changes, with screenshots.
 
 **Install.** Node.js 20.19 or newer, on macOS, Linux or Windows (PowerShell or Command Prompt). No global install is needed:
 
@@ -207,7 +253,7 @@ Chrome (the CI smoke test, run on Ubuntu, macOS and Windows with Node 20 and 22)
 (`.github/workflows/release.yml`, needs the `NPM_TOKEN` secret). See NOTICE for the editor's license (AGPL-3.0,
 its own npm package, not part of this one).
 
-## Development
+### Development
 
 The browser edition has no build step. Serve the folder with any static server and open `index.html`:
 

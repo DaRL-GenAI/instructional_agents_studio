@@ -1,5 +1,7 @@
 # Instructional Agents Studio: User Guide
 
+[Studio README](../README.md) · [Project homepage](https://darl-genai.github.io/instructional_agents_homepage/) · [Instructional Agents](https://github.com/DaRL-GenAI/instructional_agents)
+
 This guide is for instructors using the Studio for the first time. It starts from installation and goes one step at a time. You do not need programming experience. Each step has a screenshot, and the words on the buttons in the screenshots are the words to look for on your screen.
 
 **Contents**
