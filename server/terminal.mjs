@@ -46,8 +46,9 @@ class Term {
     if (program === 'shell') { file = isWin ? (process.env.ComSpec || 'powershell.exe') : (process.env.SHELL || '/bin/bash'); args = []; }
     else {
       const bin = available()[program]; if (!bin) throw new HttpError(400, `${PROGRAMS[program]} is not installed on this computer. Install it, sign in once in a terminal, then try again.`);
-      // Codex asks at start whether to update itself (a global npm install, which often needs an administrator): not here
-      [file, args] = command(bin, program === 'codex' ? ['-c', 'check_for_update_on_startup=false'] : []);
+      // No config overrides (-c/--enable/--disable/--search) for Codex: any of them puts it in embedded mode, off the
+      // shared background server, and it then cannot see the PowerPoint session. Its update prompt can be skipped.
+      [file, args] = command(bin, []);
     }
     this.proc = loadPty().spawn(file, args, { name: 'xterm-256color', cols, rows, cwd: dir, env, useConpty: true });
     this.proc.onData(d => this.output(d));
